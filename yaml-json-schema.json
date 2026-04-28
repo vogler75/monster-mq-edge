@@ -1,0 +1,121 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://monstermq.io/edge/config.schema.json",
+  "title": "MonsterMQ Edge",
+  "description": "Schema for the monster-mq-edge config.yaml. Mirrors internal/config/config.go.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "NodeId": {
+      "type": "string",
+      "description": "Identifier for this broker instance, recorded with sessions and metrics.",
+      "default": "edge"
+    },
+    "TCP":  { "$ref": "#/$defs/Listener", "description": "Plain MQTT TCP listener." },
+    "TCPS": { "$ref": "#/$defs/Listener", "description": "MQTT over TLS listener (uses KeyStorePath/KeyStorePassword)." },
+    "WS":   { "$ref": "#/$defs/Listener", "description": "MQTT over WebSocket listener." },
+    "WSS":  { "$ref": "#/$defs/Listener", "description": "MQTT over WebSocket+TLS listener." },
+    "MaxMessageSize": {
+      "type": "integer",
+      "description": "Maximum MQTT packet size in bytes.",
+      "minimum": 0,
+      "default": 1048576
+    },
+    "DefaultStoreType":  { "$ref": "#/$defs/StoreType", "description": "Backend used by every store unless overridden below." },
+    "SessionStoreType":  { "$ref": "#/$defs/StoreType", "description": "Override for the session store; falls back to DefaultStoreType." },
+    "RetainedStoreType": { "$ref": "#/$defs/StoreType", "description": "Override for the retained-message store; falls back to DefaultStoreType." },
+    "ConfigStoreType":   { "$ref": "#/$defs/StoreType", "description": "Override for the device-config store; falls back to DefaultStoreType." },
+    "SQLite": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "Path": { "type": "string", "description": "Filesystem path to the SQLite database file." }
+      },
+      "required": ["Path"]
+    },
+    "Postgres": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "Url":  { "type": "string", "description": "Postgres connection URL (postgres://host:port/db)." },
+        "User": { "type": "string" },
+        "Pass": { "type": "string" }
+      },
+      "required": ["Url"]
+    },
+    "MongoDB": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "Url":      { "type": "string", "description": "MongoDB connection URL." },
+        "Database": { "type": "string" }
+      },
+      "required": ["Url", "Database"]
+    },
+    "UserManagement": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "Enabled":           { "type": "boolean", "description": "When false, all clients are accepted (anonymous)." },
+        "PasswordAlgorithm": { "type": "string", "enum": ["BCRYPT", "PLAIN"], "default": "BCRYPT" },
+        "AnonymousEnabled":  { "type": "boolean", "description": "When true, missing credentials are allowed even with UserManagement.Enabled=true." },
+        "AclCacheEnabled":   { "type": "boolean" }
+      }
+    },
+    "Metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "Enabled":                   { "type": "boolean" },
+        "CollectionIntervalSeconds": { "type": "integer", "minimum": 1, "default": 1 },
+        "RetentionHours":            { "type": "integer", "minimum": 0, "default": 168, "description": "Hours of metrics to retain. 0 disables retention pruning." }
+      }
+    },
+    "Logging": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "Level":             { "type": "string", "enum": ["DEBUG", "INFO", "WARN", "ERROR"], "default": "INFO" },
+        "MqttSyslogEnabled": { "type": "boolean", "description": "Forward log records to a $SYS/log topic." },
+        "RingBufferSize":    { "type": "integer", "minimum": 0, "default": 1000, "description": "In-memory log ring buffer size, surfaced via GraphQL logTail." }
+      }
+    },
+    "GraphQL": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "Enabled": { "type": "boolean" },
+        "Port":    { "type": "integer", "minimum": 1, "maximum": 65535, "default": 8080 }
+      }
+    },
+    "Features": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Subsystem feature toggles. Mirrors the Features map in the main monster-mq broker.",
+      "properties": {
+        "MqttClient": { "type": "boolean", "description": "Enable the outbound MQTT bridge client manager." }
+      }
+    },
+    "QueuedMessagesEnabled": {
+      "type": "boolean",
+      "description": "true: store messages for offline persistent (clean=false) sessions in the QueueStore so they survive broker restart. false: rely on mochi-mqtt's in-memory inflight buffer (lost on restart).",
+      "default": true
+    }
+  },
+  "$defs": {
+    "Listener": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "Enabled":          { "type": "boolean" },
+        "Port":             { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "KeyStorePath":     { "type": "string", "description": "PKCS#12/JKS keystore path (TLS listeners only)." },
+        "KeyStorePassword": { "type": "string", "description": "Password for the keystore (TLS listeners only)." }
+      }
+    },
+    "StoreType": {
+      "type": "string",
+      "enum": ["NONE", "MEMORY", "SQLITE", "POSTGRES", "MONGODB"]
+    }
+  }
+}

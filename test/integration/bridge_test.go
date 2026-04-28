@@ -28,7 +28,6 @@ func TestMqttBridgeOutboundAndInbound(t *testing.T) {
 	cfgA.NodeID = "broker-a"
 	cfgA.TCP.Port = 24001
 	cfgA.GraphQL.Enabled = false
-	cfgA.Dashboard.Enabled = false
 	cfgA.Metrics.Enabled = false
 	cfgA.SQLite.Path = dbA
 	srvA, err := broker.New(cfgA, slog.New(slog.DiscardHandler), nil)
@@ -69,10 +68,9 @@ func TestMqttBridgeOutboundAndInbound(t *testing.T) {
 	cfgB.NodeID = "broker-b"
 	cfgB.TCP.Port = 24002
 	cfgB.GraphQL.Enabled = false
-	cfgB.Dashboard.Enabled = false
 	cfgB.Metrics.Enabled = false
 	cfgB.SQLite.Path = dbB
-	cfgB.Bridges.Mqtt.Enabled = true
+	cfgB.Features.MqttClient = true
 	srvB, err := broker.New(cfgB, slog.New(slog.DiscardHandler), nil)
 	if err != nil {
 		t.Fatal(err)

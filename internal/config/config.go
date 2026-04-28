@@ -56,15 +56,11 @@ type GraphQLConfig struct {
 	Port    int  `yaml:"Port"`
 }
 
-type DashboardConfig struct {
-	Enabled bool   `yaml:"Enabled"`
-	Path    string `yaml:"Path,omitempty"` // optional: path to dashboard/dist (built UI)
-}
-
-type BridgesConfig struct {
-	Mqtt struct {
-		Enabled bool `yaml:"Enabled"`
-	} `yaml:"Mqtt"`
+// FeaturesConfig is a flat set of feature toggles, mirroring the Features
+// section in the Java monster-mq broker. Each field enables/disables a
+// subsystem at startup. Add new flags here as they come online.
+type FeaturesConfig struct {
+	MqttClient bool `yaml:"MqttClient"`
 }
 
 type Config struct {
@@ -88,8 +84,7 @@ type Config struct {
 	Metrics        MetricsConfig        `yaml:"Metrics"`
 	Logging        LoggingConfig        `yaml:"Logging"`
 	GraphQL        GraphQLConfig        `yaml:"GraphQL"`
-	Dashboard      DashboardConfig      `yaml:"Dashboard"`
-	Bridges        BridgesConfig        `yaml:"Bridges"`
+	Features       FeaturesConfig       `yaml:"Features"`
 
 	// QueuedMessagesEnabled selects how messages for offline persistent (clean=false)
 	// sessions are held until the client reconnects.
@@ -118,7 +113,6 @@ func Default() *Config {
 		Metrics:           MetricsConfig{Enabled: true, CollectionIntervalSeconds: 1, RetentionHours: 168},
 		Logging:           LoggingConfig{Level: "INFO", MqttSyslogEnabled: false, RingBufferSize: 1000},
 		GraphQL:               GraphQLConfig{Enabled: true, Port: 8080},
-		Dashboard:             DashboardConfig{Enabled: true},
 		QueuedMessagesEnabled: true,
 	}
 }

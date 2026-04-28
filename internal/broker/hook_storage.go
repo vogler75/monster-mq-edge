@@ -12,6 +12,7 @@ import (
 
 	"monstermq.io/edge/internal/pubsub"
 	"monstermq.io/edge/internal/stores"
+	"monstermq.io/edge/internal/topic"
 )
 
 // StorageHook persists retained messages, sessions, subscriptions, and dispatches
@@ -23,6 +24,7 @@ type StorageHook struct {
 	mqtt.HookBase
 	store    *stores.Storage
 	bus      *pubsub.Bus
+	subs     *topic.SubscriptionIndex
 	archives ArchiveDispatcher
 	logger   *slog.Logger
 	nodeID   string
@@ -41,8 +43,8 @@ type MetricsCounter interface {
 	IncOut()
 }
 
-func NewStorageHook(s *stores.Storage, bus *pubsub.Bus, dispatcher ArchiveDispatcher, nodeID string, logger *slog.Logger, m MetricsCounter) *StorageHook {
-	return &StorageHook{store: s, bus: bus, archives: dispatcher, logger: logger, nodeID: nodeID, metrics: m}
+func NewStorageHook(s *stores.Storage, bus *pubsub.Bus, subs *topic.SubscriptionIndex, dispatcher ArchiveDispatcher, nodeID string, logger *slog.Logger, m MetricsCounter) *StorageHook {
+	return &StorageHook{store: s, bus: bus, subs: subs, archives: dispatcher, logger: logger, nodeID: nodeID, metrics: m}
 }
 
 func (h *StorageHook) ID() string { return "monstermq-storage" }
@@ -81,9 +83,9 @@ func (h *StorageHook) OnDisconnect(cl *mqtt.Client, _ error, _ bool) {
 }
 
 func (h *StorageHook) OnSubscribed(cl *mqtt.Client, pk packets.Packet, _ []byte) {
-	subs := make([]stores.MqttSubscription, 0, len(pk.Filters))
+	rows := make([]stores.MqttSubscription, 0, len(pk.Filters))
 	for _, f := range pk.Filters {
-		subs = append(subs, stores.MqttSubscription{
+		rows = append(rows, stores.MqttSubscription{
 			ClientID:          cl.ID,
 			TopicFilter:       f.Filter,
 			QoS:               f.Qos,
@@ -91,18 +93,24 @@ func (h *StorageHook) OnSubscribed(cl *mqtt.Client, pk packets.Packet, _ []byte)
 			RetainAsPublished: f.RetainAsPublished,
 			RetainHandling:    f.RetainHandling,
 		})
+		if h.subs != nil {
+			h.subs.Subscribe(cl.ID, f.Filter, f.Qos)
+		}
 	}
-	if err := h.store.Subscriptions.AddSubscriptions(context.Background(), subs); err != nil {
+	if err := h.store.Subscriptions.AddSubscriptions(context.Background(), rows); err != nil {
 		h.logger.Warn("subscriptions persist failed", "client", cl.ID, "err", err)
 	}
 }
 
 func (h *StorageHook) OnUnsubscribed(cl *mqtt.Client, pk packets.Packet) {
-	subs := make([]stores.MqttSubscription, 0, len(pk.Filters))
+	rows := make([]stores.MqttSubscription, 0, len(pk.Filters))
 	for _, f := range pk.Filters {
-		subs = append(subs, stores.MqttSubscription{ClientID: cl.ID, TopicFilter: f.Filter})
+		rows = append(rows, stores.MqttSubscription{ClientID: cl.ID, TopicFilter: f.Filter})
+		if h.subs != nil {
+			h.subs.Unsubscribe(cl.ID, f.Filter)
+		}
 	}
-	if err := h.store.Subscriptions.DelSubscriptions(context.Background(), subs); err != nil {
+	if err := h.store.Subscriptions.DelSubscriptions(context.Background(), rows); err != nil {
 		h.logger.Warn("subscriptions delete failed", "client", cl.ID, "err", err)
 	}
 }

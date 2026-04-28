@@ -30,9 +30,5 @@ GraphQL:
   Enabled: true
   Port: 18080
 
-Dashboard:
-  Enabled: true
-
-Bridges:
-  Mqtt:
-    Enabled: true
+Features:
+  MqttClient: true

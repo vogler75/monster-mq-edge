@@ -27,7 +27,6 @@ func startWithGraphQL(t *testing.T, mqttPort, gqlPort int, cfgFns ...func(*confi
 	cfg.WS.Enabled = false
 	cfg.GraphQL.Enabled = true
 	cfg.GraphQL.Port = gqlPort
-	cfg.Dashboard.Enabled = false
 	cfg.SQLite.Path = filepath.Join(t.TempDir(), "g.db")
 	for _, fn := range cfgFns {
 		fn(cfg)

@@ -24,7 +24,6 @@ func startWithDB(t *testing.T, port int, dbPath string, cfgFn func(*config.Confi
 	cfg.TCP.Port = port
 	cfg.WS.Enabled = false
 	cfg.GraphQL.Enabled = false
-	cfg.Dashboard.Enabled = false
 	cfg.Metrics.Enabled = false
 	cfg.SQLite.Path = dbPath
 	if cfgFn != nil {

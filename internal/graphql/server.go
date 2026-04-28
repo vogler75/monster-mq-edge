@@ -22,8 +22,8 @@ import (
 	"monstermq.io/edge/internal/graphql/resolvers"
 )
 
-// Server hosts the GraphQL HTTP and WebSocket endpoints. The dashboard is
-// optionally served at the root.
+// Server hosts the GraphQL HTTP and WebSocket endpoints. There is no UI
+// served from the edge — an external dashboard talks to /graphql.
 type Server struct {
 	cfg     *config.Config
 	logger  *slog.Logger
@@ -65,12 +65,6 @@ func NewServer(cfg *config.Config, resolver *resolvers.Resolver, logger *slog.Lo
 	return &Server{
 		cfg: cfg, logger: logger, router: r,
 	}
-}
-
-// AttachDashboard mounts a static file handler at /. Called from the broker
-// bootstrap once the dashboard FS has been resolved.
-func (s *Server) AttachDashboard(fs http.Handler) {
-	s.router.Handle("/*", fs)
 }
 
 func (s *Server) Start() error {

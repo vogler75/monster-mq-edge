@@ -43,12 +43,8 @@ GraphQL:
   Enabled: true
   Port: 8080
 
-Dashboard:
-  Enabled: true
-
-Bridges:
-  Mqtt:
-    Enabled: true
+Features:
+  MqttClient: true
 
 # QueuedMessagesEnabled: true  → messages for offline persistent (clean=false)
 # sessions are stored in the QueueStore table and survive broker restarts.

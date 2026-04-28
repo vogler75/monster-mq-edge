@@ -20,6 +20,7 @@ import (
 	"monstermq.io/edge/internal/metrics"
 	"monstermq.io/edge/internal/pubsub"
 	"monstermq.io/edge/internal/stores"
+	"monstermq.io/edge/internal/topic"
 	storemongo "monstermq.io/edge/internal/stores/mongodb"
 	storepg "monstermq.io/edge/internal/stores/postgres"
 	storesqlite "monstermq.io/edge/internal/stores/sqlite"
@@ -32,6 +33,7 @@ type Server struct {
 	mochi       *mqtt.Server
 	storage     *stores.Storage
 	bus         *pubsub.Bus
+	subs        *topic.SubscriptionIndex
 	archives    *archive.Manager
 	authCache   *mauth.Cache
 	collector   *metrics.Collector
@@ -75,8 +77,12 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 	}
 	authCache.StartRefresher(context.Background(), 30*time.Second)
 
-	// 3. Pub/sub bus + archive manager
+	// 3. Pub/sub bus + subscription index + archive manager
 	bus := pubsub.NewBus()
+	subs := topic.NewSubscriptionIndex()
+	if err := hydrateSubscriptionIndex(ctx, subs, storage); err != nil {
+		logger.Warn("subscription index hydrate failed", "err", err)
+	}
 	archives := archive.NewManager(cfg, storage, sqliteDB, pgDB, mongoDB, logger)
 	if err := archives.Load(ctx); err != nil {
 		logger.Warn("archive groups load failed", "err", err)
@@ -109,13 +115,13 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 	if collector != nil {
 		counter = collector
 	}
-	storageHook := NewStorageHook(storage, bus, archives, cfg.NodeID, logger, counter)
+	storageHook := NewStorageHook(storage, bus, subs, archives, cfg.NodeID, logger, counter)
 	if err := server.AddHook(storageHook, nil); err != nil {
 		return nil, fmt.Errorf("add storage hook: %w", err)
 	}
 
 	if cfg.QueuedMessagesEnabled {
-		if err := server.AddHook(NewQueueHook(storage, server, logger), nil); err != nil {
+		if err := server.AddHook(NewQueueHook(storage, subs, server, logger), nil); err != nil {
 			return nil, fmt.Errorf("add queue hook: %w", err)
 		}
 	}
@@ -168,7 +174,7 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 		return server.Publish(topic, payload, retain, qos)
 	}
 	var bridges *mqttclient.Manager
-	if cfg.Bridges.Mqtt.Enabled {
+	if cfg.Features.MqttClient {
 		bridges = mqttclient.NewManager(storage.DeviceConfig, publishFn, &mqttclient.BusAdapter{Bus: bus}, cfg.NodeID, logger)
 	}
 
@@ -177,16 +183,23 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 	if cfg.GraphQL.Enabled {
 		resolver := resolvers.New(cfg, storage, bus, archives, bridges, authCache, collector, logBus, logger, publishFn)
 		gqlSrv = gql.NewServer(cfg, resolver, logger)
-		if cfg.Dashboard.Enabled {
-			gqlSrv.AttachDashboard(gql.DashboardHandler(cfg.Dashboard.Path))
-		}
 	}
 
 	return &Server{
 		cfg: cfg, logger: logger, mochi: server,
-		storage: storage, bus: bus, archives: archives, authCache: authCache,
+		storage: storage, bus: bus, subs: subs, archives: archives, authCache: authCache,
 		collector: collector, bridges: bridges, gqlSrv: gqlSrv,
 	}, nil
+}
+
+// hydrateSubscriptionIndex loads every persisted subscription into the
+// in-memory dual-index so the queue hook can resolve subscribers without
+// scanning the storage layer per published message.
+func hydrateSubscriptionIndex(ctx context.Context, subs *topic.SubscriptionIndex, storage *stores.Storage) error {
+	return storage.Subscriptions.IterateSubscriptions(ctx, func(s stores.MqttSubscription) bool {
+		subs.Subscribe(s.ClientID, s.TopicFilter, s.QoS)
+		return true
+	})
 }
 
 func restoreRetained(ctx context.Context, server *mqtt.Server, storage *stores.Storage) error {
@@ -266,7 +279,8 @@ func (s *Server) Close() error {
 }
 
 // Storage exposes the store stack for GraphQL resolvers (M6+).
-func (s *Server) Storage() *stores.Storage   { return s.storage }
-func (s *Server) Bus() *pubsub.Bus           { return s.bus }
-func (s *Server) Archives() *archive.Manager { return s.archives }
-func (s *Server) Mochi() *mqtt.Server        { return s.mochi }
+func (s *Server) Storage() *stores.Storage          { return s.storage }
+func (s *Server) Bus() *pubsub.Bus                  { return s.bus }
+func (s *Server) Subscriptions() *topic.SubscriptionIndex { return s.subs }
+func (s *Server) Archives() *archive.Manager        { return s.archives }
+func (s *Server) Mochi() *mqtt.Server               { return s.mochi }

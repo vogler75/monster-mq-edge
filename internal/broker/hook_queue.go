@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -12,6 +11,7 @@ import (
 	"github.com/mochi-mqtt/server/v2/packets"
 
 	"monstermq.io/edge/internal/stores"
+	"monstermq.io/edge/internal/topic"
 )
 
 // QueueHook persists publishes for offline persistent (clean=false) subscribers
@@ -25,12 +25,13 @@ import (
 type QueueHook struct {
 	mqtt.HookBase
 	store  *stores.Storage
+	subs   *topic.SubscriptionIndex
 	server *mqtt.Server
 	logger *slog.Logger
 }
 
-func NewQueueHook(s *stores.Storage, server *mqtt.Server, logger *slog.Logger) *QueueHook {
-	return &QueueHook{store: s, server: server, logger: logger}
+func NewQueueHook(s *stores.Storage, subs *topic.SubscriptionIndex, server *mqtt.Server, logger *slog.Logger) *QueueHook {
+	return &QueueHook{store: s, subs: subs, server: server, logger: logger}
 }
 
 func (h *QueueHook) ID() string { return "monstermq-queue" }
@@ -42,8 +43,8 @@ func (h *QueueHook) Provides(b byte) bool {
 	}, []byte{b})
 }
 
-// OnPublished walks every persisted subscription, finds matches for the topic
-// where the owning session is persistent (clean=false) and currently
+// OnPublished resolves matching subscriptions via the in-memory subscription
+// index, filters for persistent (clean=false) sessions that are currently
 // disconnected, and enqueues a copy of the message for each.
 func (h *QueueHook) OnPublished(_ *mqtt.Client, pk packets.Packet) {
 	ctx := context.Background()
@@ -69,41 +70,28 @@ func (h *QueueHook) OnPublished(_ *mqtt.Client, pk packets.Packet) {
 	}
 }
 
-// collectOfflineSubscribers returns the client IDs of persistent sessions whose
-// subscriptions match topic and that are currently not connected.
-func (h *QueueHook) collectOfflineSubscribers(ctx context.Context, topic string) ([]string, error) {
-	var matches []string
-	err := h.store.Subscriptions.IterateSubscriptions(ctx, func(sub stores.MqttSubscription) bool {
-		if !topicMatches(sub.TopicFilter, topic) {
-			return true
-		}
-		matches = append(matches, sub.ClientID)
-		return true
-	})
-	if err != nil {
-		return nil, err
-	}
-	if len(matches) == 0 {
+// collectOfflineSubscribers resolves the persisted subscription set for the
+// topic via the in-memory dual index (O(1) exact + O(depth) wildcard) and
+// keeps only those whose owning session is persistent (clean=false) and
+// currently disconnected.
+func (h *QueueHook) collectOfflineSubscribers(ctx context.Context, topicName string) ([]string, error) {
+	if h.subs == nil {
 		return nil, nil
 	}
-	out := make([]string, 0, len(matches))
-	seen := map[string]bool{}
-	for _, cid := range matches {
-		if seen[cid] {
-			continue
-		}
-		seen[cid] = true
-		info, err := h.store.Sessions.GetSession(ctx, cid)
+	candidates := h.subs.FindSubscribers(topicName)
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+	out := make([]string, 0, len(candidates))
+	for _, c := range candidates {
+		info, err := h.store.Sessions.GetSession(ctx, c.ClientID)
 		if err != nil || info == nil {
 			continue
 		}
-		if info.CleanSession {
+		if info.CleanSession || info.Connected {
 			continue
 		}
-		if info.Connected {
-			continue
-		}
-		out = append(out, cid)
+		out = append(out, c.ClientID)
 	}
 	return out, nil
 }
@@ -177,22 +165,3 @@ func (h *QueueHook) OnSessionEstablished(cl *mqtt.Client, _ packets.Packet) {
 	}
 }
 
-func topicMatches(pattern, topic string) bool {
-	pp := strings.Split(pattern, "/")
-	tt := strings.Split(topic, "/")
-	for i, p := range pp {
-		if p == "#" {
-			return true
-		}
-		if i >= len(tt) {
-			return false
-		}
-		if p == "+" {
-			continue
-		}
-		if p != tt[i] {
-			return false
-		}
-	}
-	return len(pp) == len(tt)
-}

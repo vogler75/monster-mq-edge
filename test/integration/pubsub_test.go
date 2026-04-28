@@ -22,7 +22,6 @@ func startEphemeral(t *testing.T, port int) (*broker.Server, string) {
 	cfg.TCP.Port = port
 	cfg.WS.Enabled = false
 	cfg.GraphQL.Enabled = false
-	cfg.Dashboard.Enabled = false
 	cfg.Metrics.Enabled = false
 	cfg.SQLite.Path = t.TempDir() + "/test.db"
 
