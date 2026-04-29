@@ -21,10 +21,10 @@
       "minimum": 0,
       "default": 1048576
     },
-    "DefaultStoreType":  { "$ref": "#/$defs/StoreType", "description": "Backend used by every store unless overridden below." },
-    "SessionStoreType":  { "$ref": "#/$defs/StoreType", "description": "Override for the session store; falls back to DefaultStoreType." },
-    "RetainedStoreType": { "$ref": "#/$defs/StoreType", "description": "Override for the retained-message store; falls back to DefaultStoreType." },
-    "ConfigStoreType":   { "$ref": "#/$defs/StoreType", "description": "Override for the device-config store; falls back to DefaultStoreType." },
+    "DefaultStoreType":  { "$ref": "#/$defs/StoreBackend", "description": "Backend used by every store unless overridden below." },
+    "SessionStoreType":  { "$ref": "#/$defs/StoreBackend", "description": "Override for the session store; falls back to DefaultStoreType." },
+    "RetainedStoreType": { "$ref": "#/$defs/RetainedStoreBackend", "description": "Override for the retained-message store; falls back to DefaultStoreType. MEMORY = mochi-mqtt's in-memory map only, no DB persistence and no startup load." },
+    "ConfigStoreType":   { "$ref": "#/$defs/StoreBackend", "description": "Override for the device-config store; falls back to DefaultStoreType." },
     "SQLite": {
       "type": "object",
       "additionalProperties": false,
@@ -114,9 +114,13 @@
         "KeyStorePassword": { "type": "string", "description": "Password for the keystore (TLS listeners only)." }
       }
     },
-    "StoreType": {
+    "StoreBackend": {
       "type": "string",
-      "enum": ["NONE", "MEMORY", "SQLITE", "POSTGRES", "MONGODB"]
+      "enum": ["SQLITE", "POSTGRES", "MONGODB"]
+    },
+    "RetainedStoreBackend": {
+      "type": "string",
+      "enum": ["SQLITE", "POSTGRES", "MONGODB", "MEMORY"]
     }
   }
 }

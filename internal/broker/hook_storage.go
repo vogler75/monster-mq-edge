@@ -22,13 +22,14 @@ import (
 //   * the metrics collector (one IncIn per publish, IncOut per Sent packet)
 type StorageHook struct {
 	mqtt.HookBase
-	store    *stores.Storage
-	bus      *pubsub.Bus
-	subs     *topic.SubscriptionIndex
-	archives ArchiveDispatcher
-	logger   *slog.Logger
-	nodeID   string
-	metrics  MetricsCounter
+	store            *stores.Storage
+	bus              *pubsub.Bus
+	subs             *topic.SubscriptionIndex
+	archives         ArchiveDispatcher
+	logger           *slog.Logger
+	nodeID           string
+	metrics          MetricsCounter
+	retainedInMemory bool // when true, OnRetainMessage skips DB persistence
 }
 
 // ArchiveDispatcher receives every published message for archive-group fanout.
@@ -43,8 +44,8 @@ type MetricsCounter interface {
 	IncOut()
 }
 
-func NewStorageHook(s *stores.Storage, bus *pubsub.Bus, subs *topic.SubscriptionIndex, dispatcher ArchiveDispatcher, nodeID string, logger *slog.Logger, m MetricsCounter) *StorageHook {
-	return &StorageHook{store: s, bus: bus, subs: subs, archives: dispatcher, logger: logger, nodeID: nodeID, metrics: m}
+func NewStorageHook(s *stores.Storage, bus *pubsub.Bus, subs *topic.SubscriptionIndex, dispatcher ArchiveDispatcher, nodeID string, logger *slog.Logger, m MetricsCounter, retainedInMemory bool) *StorageHook {
+	return &StorageHook{store: s, bus: bus, subs: subs, archives: dispatcher, logger: logger, nodeID: nodeID, metrics: m, retainedInMemory: retainedInMemory}
 }
 
 func (h *StorageHook) ID() string { return "monstermq-storage" }
@@ -148,6 +149,9 @@ func (h *StorageHook) OnPublished(cl *mqtt.Client, pk packets.Packet) {
 
 // OnRetainMessage is called when a message with retain=true is published. r=1 set, r=-1 clear.
 func (h *StorageHook) OnRetainMessage(cl *mqtt.Client, pk packets.Packet, r int64) {
+	if h.retainedInMemory {
+		return
+	}
 	ctx := context.Background()
 	if r == -1 || len(pk.Payload) == 0 {
 		_ = h.store.Retained.DelAll(ctx, []string{pk.TopicName})

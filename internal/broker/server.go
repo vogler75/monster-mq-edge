@@ -115,7 +115,8 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 	if collector != nil {
 		counter = collector
 	}
-	storageHook := NewStorageHook(storage, bus, subs, archives, cfg.NodeID, logger, counter)
+	retainedInMemory := cfg.RetainedStore() == config.StoreMemory
+	storageHook := NewStorageHook(storage, bus, subs, archives, cfg.NodeID, logger, counter, retainedInMemory)
 	if err := server.AddHook(storageHook, nil); err != nil {
 		return nil, fmt.Errorf("add storage hook: %w", err)
 	}
@@ -127,11 +128,17 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 	}
 
 	// 5. Restore retained messages from storage into mochi's in-memory retained map.
-	logger.Info("loading retained messages...")
-	if err := restoreRetained(ctx, server, storage); err != nil {
-		logger.Warn("retained restore failed", "err", err)
+	// Skipped when RetainedStoreType is MEMORY: nothing is persisted, so there's
+	// nothing to restore — mochi's own in-memory map is the source of truth.
+	if retainedInMemory {
+		logger.Info("retained messages: in-memory mode (no DB persistence)")
+	} else {
+		logger.Info("loading retained messages...")
+		if err := restoreRetained(ctx, server, storage); err != nil {
+			logger.Warn("retained restore failed", "err", err)
+		}
+		logger.Info("retained messages loaded")
 	}
-	logger.Info("retained messages loaded")
 
 	// 6. Listeners
 	if cfg.TCP.Enabled {

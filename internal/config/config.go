@@ -1,5 +1,7 @@
 package config
 
+import "fmt"
+
 type StoreType string
 
 const (
@@ -9,6 +11,33 @@ const (
 	StorePostgres StoreType = "POSTGRES"
 	StoreMongoDB  StoreType = "MONGODB"
 )
+
+// validBackends is the set of store types that can back the persistent storage
+// stack (sessions, config, etc.). MEMORY is allowed for retained only.
+var validBackends = []StoreType{StoreSQLite, StorePostgres, StoreMongoDB}
+
+// validRetainedBackends extends validBackends with MEMORY: when set, retained
+// messages are not persisted to a database and not pre-loaded at startup —
+// mochi-mqtt keeps them in its own in-memory map only.
+var validRetainedBackends = []StoreType{StoreSQLite, StorePostgres, StoreMongoDB, StoreMemory}
+
+func (s StoreType) isValidBackend() bool {
+	for _, v := range validBackends {
+		if s == v {
+			return true
+		}
+	}
+	return false
+}
+
+func (s StoreType) isValidRetainedBackend() bool {
+	for _, v := range validRetainedBackends {
+		if s == v {
+			return true
+		}
+	}
+	return false
+}
 
 type Listener struct {
 	Enabled          bool   `yaml:"Enabled"`
@@ -147,4 +176,32 @@ func (c *Config) ConfigStore() StoreType {
 		return c.ConfigStoreType
 	}
 	return c.DefaultStoreType
+}
+
+// Validate checks that all settings are recognised and self-consistent.
+// Called after the YAML is parsed so the broker fails fast on bad config
+// instead of silently falling back to a default.
+func (c *Config) Validate() error {
+	if c.DefaultStoreType == "" {
+		return fmt.Errorf("DefaultStoreType is required")
+	}
+	if !c.DefaultStoreType.isValidBackend() {
+		return fmt.Errorf("invalid DefaultStoreType %q (must be one of SQLITE, POSTGRES, MONGODB)", c.DefaultStoreType)
+	}
+	overrides := []struct {
+		name  string
+		value StoreType
+	}{
+		{"SessionStoreType", c.SessionStoreType},
+		{"ConfigStoreType", c.ConfigStoreType},
+	}
+	for _, f := range overrides {
+		if f.value != "" && !f.value.isValidBackend() {
+			return fmt.Errorf("invalid %s %q (must be one of SQLITE, POSTGRES, MONGODB)", f.name, f.value)
+		}
+	}
+	if c.RetainedStoreType != "" && !c.RetainedStoreType.isValidRetainedBackend() {
+		return fmt.Errorf("invalid RetainedStoreType %q (must be one of SQLITE, POSTGRES, MONGODB, MEMORY)", c.RetainedStoreType)
+	}
+	return nil
 }
