@@ -7,7 +7,7 @@ on devices like the Raspberry Pi 4/5.
 ## Highlights
 
 - **Single static binary** (~25 MB), zero CGO. Pure-Go SQLite via `modernc.org/sqlite`.
-- **MQTT 3.1 / 3.1.1 / 5.0** via [mochi-mqtt/server](https://github.com/mochi-mqtt/server) — TCP, WebSocket, TLS, WSS.
+- **MQTT 3.1 / 3.1.1 / 5.0** via [vogler75/mochi-mqtt-server](https://github.com/vogler75/mochi-mqtt-server) (fork) — TCP, WebSocket, TLS, WSS.
 - **Storage**: SQLite (default), PostgreSQL, MongoDB. Schemas are byte-compatible with the Kotlin broker, so the same DB can be opened by either implementation.
 - **Archive groups** (last-value + history fanout, retention purging) — same model as the Kotlin broker.
 - **GraphQL API** with subscriptions, schema-parity with the existing dashboard.
@@ -15,6 +15,38 @@ on devices like the Raspberry Pi 4/5.
 - **Users + ACL** with bcrypt password hashing.
 - **Periodic metrics** persisted to the `metrics` table; surfaced via `Broker.metrics`/`metricsHistory`.
 - No clustering, no OPC UA / Kafka / WinCC / Sparkplug / GenAI / flows.
+
+## Getting Started
+
+The mochi-mqtt fork is included as a git submodule. You must initialise it before compiling.
+
+**Clone (first time):**
+```bash
+git clone --recurse-submodules https://github.com/vogler75/monster-mq-edge
+cd monster-mq-edge
+```
+
+**If you already cloned without `--recurse-submodules`:**
+```bash
+git submodule update --init
+```
+
+**Install Go** (1.22+): https://go.dev/dl/
+
+Then build and run:
+```bash
+# Linux / macOS
+./run.sh -b
+
+# Windows
+run.bat -b
+```
+
+Or use Make directly:
+```bash
+make build
+./bin/monstermq-edge -config config.yaml.example
+```
 
 ## Quickstart
 

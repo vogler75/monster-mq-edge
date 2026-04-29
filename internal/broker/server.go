@@ -133,14 +133,14 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 
 	// 6. Listeners
 	if cfg.TCP.Enabled {
-		l := listeners.NewTCP(listeners.Config{ID: "tcp", Address: fmt.Sprintf(":%d", cfg.TCP.Port)})
+		l := listeners.NewTCP(listeners.Config{ID: "tcp", Address: fmt.Sprintf("%s:%d", cfg.TCP.ListenAddress(), cfg.TCP.Port)})
 		if err := server.AddListener(l); err != nil {
 			return nil, fmt.Errorf("add tcp listener: %w", err)
 		}
 		logger.Info("mqtt listener", "type", "tcp", "port", cfg.TCP.Port)
 	}
 	if cfg.WS.Enabled {
-		l := listeners.NewWebsocket(listeners.Config{ID: "ws", Address: fmt.Sprintf(":%d", cfg.WS.Port)})
+		l := listeners.NewWebsocket(listeners.Config{ID: "ws", Address: fmt.Sprintf("%s:%d", cfg.WS.ListenAddress(), cfg.WS.Port)})
 		if err := server.AddListener(l); err != nil {
 			return nil, fmt.Errorf("add ws listener: %w", err)
 		}
@@ -151,7 +151,7 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 		if err != nil {
 			return nil, fmt.Errorf("tls config: %w", err)
 		}
-		l := listeners.NewTCP(listeners.Config{ID: "tcps", Address: fmt.Sprintf(":%d", cfg.TCPS.Port), TLSConfig: tlsCfg})
+		l := listeners.NewTCP(listeners.Config{ID: "tcps", Address: fmt.Sprintf("%s:%d", cfg.TCPS.ListenAddress(), cfg.TCPS.Port), TLSConfig: tlsCfg})
 		if err := server.AddListener(l); err != nil {
 			return nil, fmt.Errorf("add tcps listener: %w", err)
 		}
@@ -162,7 +162,7 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 		if err != nil {
 			return nil, fmt.Errorf("wss tls config: %w", err)
 		}
-		l := listeners.NewWebsocket(listeners.Config{ID: "wss", Address: fmt.Sprintf(":%d", cfg.WSS.Port), TLSConfig: tlsCfg})
+		l := listeners.NewWebsocket(listeners.Config{ID: "wss", Address: fmt.Sprintf("%s:%d", cfg.WSS.ListenAddress(), cfg.WSS.Port), TLSConfig: tlsCfg})
 		if err := server.AddListener(l); err != nil {
 			return nil, fmt.Errorf("add wss listener: %w", err)
 		}

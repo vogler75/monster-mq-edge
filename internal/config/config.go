@@ -12,9 +12,19 @@ const (
 
 type Listener struct {
 	Enabled          bool   `yaml:"Enabled"`
+	Address          string `yaml:"Address,omitempty"`
 	Port             int    `yaml:"Port"`
 	KeyStorePath     string `yaml:"KeyStorePath,omitempty"`
 	KeyStorePassword string `yaml:"KeyStorePassword,omitempty"`
+}
+
+// ListenAddress returns the address to bind, defaulting to 0.0.0.0 when unset.
+// An explicit empty string in config.yaml would still fall back to 0.0.0.0.
+func (l *Listener) ListenAddress() string {
+	if l.Address == "" {
+		return "0.0.0.0"
+	}
+	return l.Address
 }
 
 type SQLiteConfig struct {
