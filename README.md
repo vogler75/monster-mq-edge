@@ -7,7 +7,7 @@ on devices like the Raspberry Pi 4/5.
 ## Highlights
 
 - **Single static binary** (~25 MB), zero CGO. Pure-Go SQLite via `modernc.org/sqlite`.
-- **MQTT 3.1 / 3.1.1 / 5.0** via [vogler75/mochi-mqtt-server](https://github.com/vogler75/mochi-mqtt-server) (fork) — TCP, WebSocket, TLS, WSS.
+- **MQTT 3.1 / 3.1.1 / 5.0** via [mochi-mqtt/server](https://github.com/mochi-mqtt/server) (locally vendored fork at [vogler75/mochi-mqtt-server](https://github.com/vogler75/mochi-mqtt-server)) — TCP, WebSocket, TLS, WSS.
 - **Storage**: SQLite (default), PostgreSQL, MongoDB. Schemas are byte-compatible with the Kotlin broker, so the same DB can be opened by either implementation.
 - **Archive groups** (last-value + history fanout, retention purging) — same model as the Kotlin broker.
 - **GraphQL API** with subscriptions, schema-parity with the existing dashboard.
