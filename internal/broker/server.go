@@ -126,10 +126,12 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 		}
 	}
 
-	// 5. Restore retained messages from SQLite into mochi's in-memory retained map.
+	// 5. Restore retained messages from storage into mochi's in-memory retained map.
+	logger.Info("loading retained messages...")
 	if err := restoreRetained(ctx, server, storage); err != nil {
 		logger.Warn("retained restore failed", "err", err)
 	}
+	logger.Info("retained messages loaded")
 
 	// 6. Listeners
 	if cfg.TCP.Enabled {
@@ -203,23 +205,10 @@ func hydrateSubscriptionIndex(ctx context.Context, subs *topic.SubscriptionIndex
 }
 
 func restoreRetained(ctx context.Context, server *mqtt.Server, storage *stores.Storage) error {
-	// Collect topics first so the read iterator is fully drained before we issue
-	// per-topic Get calls (which acquire their own connections).
-	topics := []string{}
-	if err := storage.Retained.FindMatchingTopics(ctx, "#", func(topic string) bool {
-		topics = append(topics, topic)
+	return storage.Retained.FindMatchingMessages(ctx, "#", func(msg stores.BrokerMessage) bool {
+		_ = server.Publish(msg.TopicName, msg.Payload, true, msg.QoS)
 		return true
-	}); err != nil {
-		return err
-	}
-	for _, topic := range topics {
-		msg, err := storage.Retained.Get(ctx, topic)
-		if err != nil || msg == nil {
-			continue
-		}
-		_ = server.Publish(topic, msg.Payload, true, msg.QoS)
-	}
-	return nil
+	})
 }
 
 func (s *Server) Serve() error {
