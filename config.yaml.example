@@ -46,7 +46,7 @@ GraphQL:
 Features:
   MqttClient: true
 
-# QueuedMessagesEnabled: true  → messages for offline persistent (clean=false)
+# QueuedMessagesEnabled: true  -> messages for offline persistent (clean=false)
 # sessions are stored in the QueueStore table and survive broker restarts.
-# false → rely on mochi-mqtt's in-memory inflight buffer (lost on restart).
+# false -> rely on mochi-mqtt's in-memory inflight buffer (lost on restart).
 QueuedMessagesEnabled: true
