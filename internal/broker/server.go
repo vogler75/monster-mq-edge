@@ -13,6 +13,7 @@ import (
 	mauth "monstermq.io/edge/internal/auth"
 	"monstermq.io/edge/internal/archive"
 	"monstermq.io/edge/internal/bridge/mqttclient"
+	"monstermq.io/edge/internal/bridge/winccua"
 	"monstermq.io/edge/internal/config"
 	gql "monstermq.io/edge/internal/graphql"
 	"monstermq.io/edge/internal/graphql/resolvers"
@@ -38,6 +39,7 @@ type Server struct {
 	authCache   *mauth.Cache
 	collector   *metrics.Collector
 	bridges     *mqttclient.Manager
+	winCCUa     *winccua.Manager
 	gqlSrv      *gql.Server
 	metricsCtx  context.Context
 	metricsStop context.CancelFunc
@@ -187,17 +189,24 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 		bridges = mqttclient.NewManager(storage.DeviceConfig, publishFn, &mqttclient.BusAdapter{Bus: bus}, cfg.NodeID, logger)
 	}
 
+	// 7b. WinCC Unified bridge manager (deploys one connector per device,
+	// either GraphQL/WebSocket or local Open Pipe IPC depending on config).
+	var winCCUa *winccua.Manager
+	if cfg.Features.WinCCUa {
+		winCCUa = winccua.NewManager(storage.DeviceConfig, publishFn, cfg.NodeID, logger)
+	}
+
 	// 8. GraphQL server (HTTP + WebSocket)
 	var gqlSrv *gql.Server
 	if cfg.GraphQL.Enabled {
-		resolver := resolvers.New(cfg, storage, bus, archives, bridges, authCache, collector, logBus, logger, publishFn)
+		resolver := resolvers.New(cfg, storage, bus, archives, bridges, winCCUa, authCache, collector, logBus, logger, publishFn)
 		gqlSrv = gql.NewServer(cfg, resolver, logger)
 	}
 
 	return &Server{
 		cfg: cfg, logger: logger, mochi: server,
 		storage: storage, bus: bus, subs: subs, archives: archives, authCache: authCache,
-		collector: collector, bridges: bridges, gqlSrv: gqlSrv,
+		collector: collector, bridges: bridges, winCCUa: winCCUa, gqlSrv: gqlSrv,
 	}, nil
 }
 
@@ -237,6 +246,11 @@ func (s *Server) Serve() error {
 			s.logger.Warn("bridges start error", "err", err)
 		}
 	}
+	if s.winCCUa != nil {
+		if err := s.winCCUa.Start(context.Background()); err != nil {
+			s.logger.Warn("winccua start error", "err", err)
+		}
+	}
 	if s.gqlSrv != nil {
 		go func() {
 			if err := s.gqlSrv.Start(); err != nil {
@@ -250,6 +264,9 @@ func (s *Server) Serve() error {
 func (s *Server) Close() error {
 	if s.bridges != nil {
 		s.bridges.Stop()
+	}
+	if s.winCCUa != nil {
+		s.winCCUa.Stop()
 	}
 	if s.metricsStop != nil {
 		s.metricsStop()

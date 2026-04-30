@@ -12,6 +12,7 @@ import (
 	"monstermq.io/edge/internal/archive"
 	"monstermq.io/edge/internal/auth"
 	"monstermq.io/edge/internal/bridge/mqttclient"
+	"monstermq.io/edge/internal/bridge/winccua"
 	"monstermq.io/edge/internal/config"
 	"monstermq.io/edge/internal/graphql/generated"
 	mlog "monstermq.io/edge/internal/log"
@@ -29,6 +30,7 @@ type Resolver struct {
 	Bus       *pubsub.Bus
 	Archives  *archive.Manager
 	Bridges   *mqttclient.Manager
+	WinCCUa   *winccua.Manager
 	AuthCache *auth.Cache
 	Collector *metrics.Collector
 	LogBus    *mlog.Bus
@@ -41,7 +43,8 @@ type Resolver struct {
 }
 
 func New(cfg *config.Config, storage *stores.Storage, bus *pubsub.Bus, archives *archive.Manager,
-	bridges *mqttclient.Manager, authCache *auth.Cache, collector *metrics.Collector,
+	bridges *mqttclient.Manager, winCCUa *winccua.Manager,
+	authCache *auth.Cache, collector *metrics.Collector,
 	logBus *mlog.Bus, logger *slog.Logger,
 	publish func(string, []byte, bool, byte) error) *Resolver {
 	return &Resolver{
@@ -50,6 +53,7 @@ func New(cfg *config.Config, storage *stores.Storage, bus *pubsub.Bus, archives 
 		Bus:       bus,
 		Archives:  archives,
 		Bridges:   bridges,
+		WinCCUa:   winCCUa,
 		AuthCache: authCache,
 		Collector: collector,
 		LogBus:    logBus,
@@ -58,6 +62,20 @@ func New(cfg *config.Config, storage *stores.Storage, bus *pubsub.Bus, archives 
 		Version:   version.Version,
 		Publish:   publish,
 	}
+}
+
+// enabledFeatures lists the subsystems active on this node, in the same
+// shape the Java broker reports them (the dashboard uses this to hide
+// pages for absent features).
+func (r *Resolver) enabledFeatures() []string {
+	out := []string{}
+	if r.Cfg.Features.MqttClient {
+		out = append(out, "MqttClient")
+	}
+	if r.Cfg.Features.WinCCUa {
+		out = append(out, "WinCCUa")
+	}
+	return out
 }
 
 // ResolverRoot wiring -------------------------------------------------------
@@ -84,6 +102,12 @@ func (r *Resolver) MqttClient() generated.MqttClientResolver { return &mqttClien
 func (r *Resolver) MqttClientMutations() generated.MqttClientMutationsResolver {
 	return &mqttClientMutationsResolver{r}
 }
+func (r *Resolver) WinCCUaClient() generated.WinCCUaClientResolver {
+	return &winCCUaClientResolver{r}
+}
+func (r *Resolver) WinCCUaDeviceMutations() generated.WinCCUaDeviceMutationsResolver {
+	return &winCCUaDeviceMutationsResolver{r}
+}
 func (r *Resolver) Topic() generated.TopicResolver { return &topicResolver{r} }
 
 type mutationResolver struct{ *Resolver }
@@ -98,6 +122,8 @@ type userManagementMutationsResolver struct{ *Resolver }
 type sessionMutationsResolver struct{ *Resolver }
 type mqttClientResolver struct{ *Resolver }
 type mqttClientMutationsResolver struct{ *Resolver }
+type winCCUaClientResolver struct{ *Resolver }
+type winCCUaDeviceMutationsResolver struct{ *Resolver }
 type topicResolver struct{ *Resolver }
 
 func (r *topicResolver) Value(ctx context.Context, obj *generated.Topic, format *generated.DataFormat) (*generated.TopicValue, error) {
@@ -302,6 +328,9 @@ func (r *mutationResolver) ArchiveGroup(ctx context.Context) (*generated.Archive
 func (r *mutationResolver) MqttClient(ctx context.Context) (*generated.MqttClientMutations, error) {
 	return &generated.MqttClientMutations{}, nil
 }
+func (r *mutationResolver) WinCCUaDevice(ctx context.Context) (*generated.WinCCUaDeviceMutations, error) {
+	return &generated.WinCCUaDeviceMutations{}, nil
+}
 
 // Queries -------------------------------------------------------------------
 
@@ -352,7 +381,7 @@ func (r *Resolver) brokerObj() *generated.Broker {
 		UserManagementEnabled: r.Cfg.UserManagement.Enabled,
 		AnonymousEnabled:      r.Cfg.UserManagement.AnonymousEnabled,
 		IsLeader:              true, IsCurrent: true,
-		EnabledFeatures: []string{"MqttClient"},
+		EnabledFeatures: r.enabledFeatures(),
 	}
 }
 

@@ -39,6 +39,8 @@ type ResolverRoot interface {
 	Topic() TopicResolver
 	UserInfo() UserInfoResolver
 	UserManagementMutations() UserManagementMutationsResolver
+	WinCCUaClient() WinCCUaClientResolver
+	WinCCUaDeviceMutations() WinCCUaDeviceMutationsResolver
 }
 
 type DirectiveRoot struct {
@@ -89,6 +91,7 @@ type MutationResolver interface {
 	Session(ctx context.Context) (*SessionMutations, error)
 	ArchiveGroup(ctx context.Context) (*ArchiveGroupMutations, error)
 	MqttClient(ctx context.Context) (*MqttClientMutations, error)
+	WinCCUaDevice(ctx context.Context) (*WinCCUaDeviceMutations, error)
 }
 type QueryResolver interface {
 	CurrentUser(ctx context.Context) (*CurrentUser, error)
@@ -110,6 +113,7 @@ type QueryResolver interface {
 	ArchiveGroups(ctx context.Context, enabled *bool, lastValTypeEquals *MessageStoreType, lastValTypeNotEquals *MessageStoreType) ([]*ArchiveGroupInfo, error)
 	ArchiveGroup(ctx context.Context, name string) (*ArchiveGroupInfo, error)
 	MqttClients(ctx context.Context, name *string, node *string) ([]*MqttClient, error)
+	WinCCUaClients(ctx context.Context, name *string, node *string) ([]*WinCCUaClient, error)
 }
 type SessionResolver interface {
 	Metrics(ctx context.Context, obj *Session) ([]*SessionMetrics, error)
@@ -140,6 +144,22 @@ type UserManagementMutationsResolver interface {
 	CreateACLRule(ctx context.Context, obj *UserManagementMutations, input CreateACLRuleInput) (*UserManagementResult, error)
 	UpdateACLRule(ctx context.Context, obj *UserManagementMutations, input UpdateACLRuleInput) (*UserManagementResult, error)
 	DeleteACLRule(ctx context.Context, obj *UserManagementMutations, id string) (*UserManagementResult, error)
+}
+type WinCCUaClientResolver interface {
+	Metrics(ctx context.Context, obj *WinCCUaClient) ([]*WinCCUaClientMetrics, error)
+	MetricsHistory(ctx context.Context, obj *WinCCUaClient, from *string, to *string, lastMinutes *int) ([]*WinCCUaClientMetrics, error)
+}
+type WinCCUaDeviceMutationsResolver interface {
+	Create(ctx context.Context, obj *WinCCUaDeviceMutations, input WinCCUaClientInput) (*WinCCUaClientResult, error)
+	Update(ctx context.Context, obj *WinCCUaDeviceMutations, name string, input WinCCUaClientInput) (*WinCCUaClientResult, error)
+	Delete(ctx context.Context, obj *WinCCUaDeviceMutations, name string) (bool, error)
+	Start(ctx context.Context, obj *WinCCUaDeviceMutations, name string) (*WinCCUaClientResult, error)
+	Stop(ctx context.Context, obj *WinCCUaDeviceMutations, name string) (*WinCCUaClientResult, error)
+	Toggle(ctx context.Context, obj *WinCCUaDeviceMutations, name string, enabled bool) (*WinCCUaClientResult, error)
+	Reassign(ctx context.Context, obj *WinCCUaDeviceMutations, name string, nodeID string) (*WinCCUaClientResult, error)
+	AddAddress(ctx context.Context, obj *WinCCUaDeviceMutations, deviceName string, input WinCCUaAddressInput) (*WinCCUaClientResult, error)
+	UpdateAddress(ctx context.Context, obj *WinCCUaDeviceMutations, deviceName string, topic string, input WinCCUaAddressInput) (*WinCCUaClientResult, error)
+	DeleteAddress(ctx context.Context, obj *WinCCUaDeviceMutations, deviceName string, topic string) (*WinCCUaClientResult, error)
 }
 
 type executableSchema graphql.ExecutableSchemaState[ResolverRoot, DirectiveRoot, ComplexityRoot]
@@ -174,6 +194,10 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 		ec.unmarshalInputUpdateArchiveGroupInput,
 		ec.unmarshalInputUpdateUserInput,
 		ec.unmarshalInputUserPropertyInput,
+		ec.unmarshalInputWinCCUaAddressInput,
+		ec.unmarshalInputWinCCUaClientInput,
+		ec.unmarshalInputWinCCUaConnectionConfigInput,
+		ec.unmarshalInputWinCCUaTransformConfigInput,
 	)
 	first := true
 
@@ -930,6 +954,146 @@ type Subscription {
     ): SystemLogEntry!
 }
 `, BuiltIn: false},
+	{Name: "../schema/winccua.graphqls", Input: `# WinCC Unified — verbatim subset of the Kotlin schema in
+# ../monster-mq/broker/src/main/resources/schema-{queries,mutations}.graphqls.
+# Names, enums, argument names and nullability must stay identical so the
+# external dashboard can talk to either backend unchanged.
+
+enum WinCCUaAddressType {
+    TAG_VALUES
+    ACTIVE_ALARMS
+}
+
+enum WinCCUaMessageFormat {
+    JSON_ISO
+    JSON_MS
+    RAW_VALUE
+}
+
+enum WinCCUaDataAccessMode {
+    GRAPHQL
+    OPENPIPE
+}
+
+type WinCCUaAddress {
+    type: WinCCUaAddressType!
+    topic: String!
+    description: String
+    retained: Boolean!
+    nameFilters: [String!]
+    includeQuality: Boolean
+    systemNames: [String!]
+    filterString: String
+    pipeTagMode: String
+}
+
+type WinCCUaTransformConfig {
+    convertDotToSlash: Boolean!
+    convertUnderscoreToSlash: Boolean!
+    regexPattern: String
+    regexReplacement: String
+}
+
+type WinCCUaConnectionConfig {
+    dataAccessMode: WinCCUaDataAccessMode!
+    graphqlEndpoint: String
+    websocketEndpoint: String
+    username: String
+    password: String
+    pipePath: String
+    reconnectDelay: Long!
+    connectionTimeout: Long!
+    messageFormat: WinCCUaMessageFormat!
+    transformConfig: WinCCUaTransformConfig!
+    addresses: [WinCCUaAddress!]!
+}
+
+type WinCCUaClientMetrics {
+    messagesIn: Float!
+    connected: Boolean!
+    timestamp: String!
+}
+
+type WinCCUaClient {
+    name: String!
+    namespace: String!
+    nodeId: String!
+    config: WinCCUaConnectionConfig!
+    enabled: Boolean!
+    createdAt: String!
+    updatedAt: String!
+    isOnCurrentNode: Boolean!
+    metrics: [WinCCUaClientMetrics!]!
+    metricsHistory(from: String, to: String, lastMinutes: Int): [WinCCUaClientMetrics!]!
+}
+
+extend type Query {
+    winCCUaClients(name: String, node: String): [WinCCUaClient!]!
+}
+
+input WinCCUaTransformConfigInput {
+    convertDotToSlash: Boolean = true
+    convertUnderscoreToSlash: Boolean = false
+    regexPattern: String
+    regexReplacement: String
+}
+
+input WinCCUaConnectionConfigInput {
+    dataAccessMode: WinCCUaDataAccessMode = GRAPHQL
+    graphqlEndpoint: String
+    websocketEndpoint: String
+    username: String
+    password: String
+    pipePath: String
+    reconnectDelay: Long = 5000
+    connectionTimeout: Long = 10000
+    messageFormat: String = "JSON_ISO"
+    transformConfig: WinCCUaTransformConfigInput
+}
+
+input WinCCUaAddressInput {
+    type: WinCCUaAddressType!
+    topic: String!
+    description: String
+    retained: Boolean = false
+    nameFilters: [String!]
+    includeQuality: Boolean = false
+    systemNames: [String!]
+    filterString: String
+    pipeTagMode: String = "SINGLE"
+}
+
+input WinCCUaClientInput {
+    name: String!
+    namespace: String!
+    nodeId: String!
+    enabled: Boolean = true
+    config: WinCCUaConnectionConfigInput!
+}
+
+type WinCCUaClientResult {
+    success: Boolean!
+    client: WinCCUaClient
+    errors: [String!]!
+}
+
+type WinCCUaDeviceMutations {
+    create(input: WinCCUaClientInput!): WinCCUaClientResult!
+    update(name: String!, input: WinCCUaClientInput!): WinCCUaClientResult!
+    delete(name: String!): Boolean!
+    start(name: String!): WinCCUaClientResult!
+    stop(name: String!): WinCCUaClientResult!
+    toggle(name: String!, enabled: Boolean!): WinCCUaClientResult!
+    reassign(name: String!, nodeId: String!): WinCCUaClientResult!
+    addAddress(deviceName: String!, input: WinCCUaAddressInput!): WinCCUaClientResult!
+    updateAddress(deviceName: String!, topic: String!, input: WinCCUaAddressInput!): WinCCUaClientResult!
+    deleteAddress(deviceName: String!, topic: String!): WinCCUaClientResult!
+}
+
+extend type Mutation {
+    winCCUaDevice: WinCCUaDeviceMutations!
+}
+`, BuiltIn: false},
 }
 var parsedSchema = gqlparser.MustLoadSchema(sources...)
 
@@ -1647,6 +1811,22 @@ func (ec *executionContext) field_Query_users_args(ctx context.Context, rawArgs 
 	return args, nil
 }
 
+func (ec *executionContext) field_Query_winCCUaClients_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name", ec.unmarshalOString2ᚖstring)
+	if err != nil {
+		return nil, err
+	}
+	args["name"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "node", ec.unmarshalOString2ᚖstring)
+	if err != nil {
+		return nil, err
+	}
+	args["node"] = arg1
+	return args, nil
+}
+
 func (ec *executionContext) field_SessionMutations_removeSessions_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
@@ -1847,6 +2027,172 @@ func (ec *executionContext) field_UserManagementMutations_updateUser_args(ctx co
 		return nil, err
 	}
 	args["input"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_WinCCUaClient_metricsHistory_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "from", ec.unmarshalOString2ᚖstring)
+	if err != nil {
+		return nil, err
+	}
+	args["from"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "to", ec.unmarshalOString2ᚖstring)
+	if err != nil {
+		return nil, err
+	}
+	args["to"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "lastMinutes", ec.unmarshalOInt2ᚖint)
+	if err != nil {
+		return nil, err
+	}
+	args["lastMinutes"] = arg2
+	return args, nil
+}
+
+func (ec *executionContext) field_WinCCUaDeviceMutations_addAddress_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "deviceName", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["deviceName"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "input", ec.unmarshalNWinCCUaAddressInput2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaAddressInput)
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg1
+	return args, nil
+}
+
+func (ec *executionContext) field_WinCCUaDeviceMutations_create_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input", ec.unmarshalNWinCCUaClientInput2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaClientInput)
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_WinCCUaDeviceMutations_deleteAddress_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "deviceName", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["deviceName"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "topic", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["topic"] = arg1
+	return args, nil
+}
+
+func (ec *executionContext) field_WinCCUaDeviceMutations_delete_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["name"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_WinCCUaDeviceMutations_reassign_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["name"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "nodeId", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["nodeId"] = arg1
+	return args, nil
+}
+
+func (ec *executionContext) field_WinCCUaDeviceMutations_start_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["name"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_WinCCUaDeviceMutations_stop_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["name"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_WinCCUaDeviceMutations_toggle_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["name"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "enabled", ec.unmarshalNBoolean2bool)
+	if err != nil {
+		return nil, err
+	}
+	args["enabled"] = arg1
+	return args, nil
+}
+
+func (ec *executionContext) field_WinCCUaDeviceMutations_updateAddress_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "deviceName", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["deviceName"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "topic", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["topic"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "input", ec.unmarshalNWinCCUaAddressInput2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaAddressInput)
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg2
+	return args, nil
+}
+
+func (ec *executionContext) field_WinCCUaDeviceMutations_update_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["name"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "input", ec.unmarshalNWinCCUaClientInput2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaClientInput)
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg1
 	return args, nil
 }
 
@@ -8347,6 +8693,57 @@ func (ec *executionContext) fieldContext_Mutation_mqttClient(_ context.Context, 
 	return fc, nil
 }
 
+func (ec *executionContext) _Mutation_winCCUaDevice(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Mutation_winCCUaDevice,
+		func(ctx context.Context) (any, error) {
+			return ec.Resolvers.Mutation().WinCCUaDevice(ctx)
+		},
+		nil,
+		ec.marshalNWinCCUaDeviceMutations2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaDeviceMutations,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Mutation_winCCUaDevice(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "create":
+				return ec.fieldContext_WinCCUaDeviceMutations_create(ctx, field)
+			case "update":
+				return ec.fieldContext_WinCCUaDeviceMutations_update(ctx, field)
+			case "delete":
+				return ec.fieldContext_WinCCUaDeviceMutations_delete(ctx, field)
+			case "start":
+				return ec.fieldContext_WinCCUaDeviceMutations_start(ctx, field)
+			case "stop":
+				return ec.fieldContext_WinCCUaDeviceMutations_stop(ctx, field)
+			case "toggle":
+				return ec.fieldContext_WinCCUaDeviceMutations_toggle(ctx, field)
+			case "reassign":
+				return ec.fieldContext_WinCCUaDeviceMutations_reassign(ctx, field)
+			case "addAddress":
+				return ec.fieldContext_WinCCUaDeviceMutations_addAddress(ctx, field)
+			case "updateAddress":
+				return ec.fieldContext_WinCCUaDeviceMutations_updateAddress(ctx, field)
+			case "deleteAddress":
+				return ec.fieldContext_WinCCUaDeviceMutations_deleteAddress(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type WinCCUaDeviceMutations", field.Name)
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _NodeConnectionStatus_nodeId(ctx context.Context, field graphql.CollectedField, obj *NodeConnectionStatus) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -9845,6 +10242,69 @@ func (ec *executionContext) fieldContext_Query_mqttClients(ctx context.Context, 
 	}()
 	ctx = graphql.WithFieldContext(ctx, fc)
 	if fc.Args, err = ec.field_Query_mqttClients_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_winCCUaClients(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Query_winCCUaClients,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().WinCCUaClients(ctx, fc.Args["name"].(*string), fc.Args["node"].(*string))
+		},
+		nil,
+		ec.marshalNWinCCUaClient2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaClientᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Query_winCCUaClients(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "name":
+				return ec.fieldContext_WinCCUaClient_name(ctx, field)
+			case "namespace":
+				return ec.fieldContext_WinCCUaClient_namespace(ctx, field)
+			case "nodeId":
+				return ec.fieldContext_WinCCUaClient_nodeId(ctx, field)
+			case "config":
+				return ec.fieldContext_WinCCUaClient_config(ctx, field)
+			case "enabled":
+				return ec.fieldContext_WinCCUaClient_enabled(ctx, field)
+			case "createdAt":
+				return ec.fieldContext_WinCCUaClient_createdAt(ctx, field)
+			case "updatedAt":
+				return ec.fieldContext_WinCCUaClient_updatedAt(ctx, field)
+			case "isOnCurrentNode":
+				return ec.fieldContext_WinCCUaClient_isOnCurrentNode(ctx, field)
+			case "metrics":
+				return ec.fieldContext_WinCCUaClient_metrics(ctx, field)
+			case "metricsHistory":
+				return ec.fieldContext_WinCCUaClient_metricsHistory(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type WinCCUaClient", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_winCCUaClients_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
 	}
@@ -13088,6 +13548,1752 @@ func (ec *executionContext) fieldContext_UserProperty_value(_ context.Context, f
 	return fc, nil
 }
 
+func (ec *executionContext) _WinCCUaAddress_type(ctx context.Context, field graphql.CollectedField, obj *WinCCUaAddress) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaAddress_type,
+		func(ctx context.Context) (any, error) {
+			return obj.Type, nil
+		},
+		nil,
+		ec.marshalNWinCCUaAddressType2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaAddressType,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaAddress_type(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaAddress",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type WinCCUaAddressType does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaAddress_topic(ctx context.Context, field graphql.CollectedField, obj *WinCCUaAddress) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaAddress_topic,
+		func(ctx context.Context) (any, error) {
+			return obj.Topic, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaAddress_topic(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaAddress",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaAddress_description(ctx context.Context, field graphql.CollectedField, obj *WinCCUaAddress) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaAddress_description,
+		func(ctx context.Context) (any, error) {
+			return obj.Description, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaAddress_description(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaAddress",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaAddress_retained(ctx context.Context, field graphql.CollectedField, obj *WinCCUaAddress) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaAddress_retained,
+		func(ctx context.Context) (any, error) {
+			return obj.Retained, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaAddress_retained(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaAddress",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaAddress_nameFilters(ctx context.Context, field graphql.CollectedField, obj *WinCCUaAddress) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaAddress_nameFilters,
+		func(ctx context.Context) (any, error) {
+			return obj.NameFilters, nil
+		},
+		nil,
+		ec.marshalOString2ᚕstringᚄ,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaAddress_nameFilters(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaAddress",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaAddress_includeQuality(ctx context.Context, field graphql.CollectedField, obj *WinCCUaAddress) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaAddress_includeQuality,
+		func(ctx context.Context) (any, error) {
+			return obj.IncludeQuality, nil
+		},
+		nil,
+		ec.marshalOBoolean2ᚖbool,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaAddress_includeQuality(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaAddress",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaAddress_systemNames(ctx context.Context, field graphql.CollectedField, obj *WinCCUaAddress) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaAddress_systemNames,
+		func(ctx context.Context) (any, error) {
+			return obj.SystemNames, nil
+		},
+		nil,
+		ec.marshalOString2ᚕstringᚄ,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaAddress_systemNames(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaAddress",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaAddress_filterString(ctx context.Context, field graphql.CollectedField, obj *WinCCUaAddress) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaAddress_filterString,
+		func(ctx context.Context) (any, error) {
+			return obj.FilterString, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaAddress_filterString(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaAddress",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaAddress_pipeTagMode(ctx context.Context, field graphql.CollectedField, obj *WinCCUaAddress) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaAddress_pipeTagMode,
+		func(ctx context.Context) (any, error) {
+			return obj.PipeTagMode, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaAddress_pipeTagMode(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaAddress",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaClient_name(ctx context.Context, field graphql.CollectedField, obj *WinCCUaClient) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaClient_name,
+		func(ctx context.Context) (any, error) {
+			return obj.Name, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaClient_name(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaClient",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaClient_namespace(ctx context.Context, field graphql.CollectedField, obj *WinCCUaClient) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaClient_namespace,
+		func(ctx context.Context) (any, error) {
+			return obj.Namespace, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaClient_namespace(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaClient",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaClient_nodeId(ctx context.Context, field graphql.CollectedField, obj *WinCCUaClient) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaClient_nodeId,
+		func(ctx context.Context) (any, error) {
+			return obj.NodeID, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaClient_nodeId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaClient",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaClient_config(ctx context.Context, field graphql.CollectedField, obj *WinCCUaClient) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaClient_config,
+		func(ctx context.Context) (any, error) {
+			return obj.Config, nil
+		},
+		nil,
+		ec.marshalNWinCCUaConnectionConfig2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaConnectionConfig,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaClient_config(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaClient",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "dataAccessMode":
+				return ec.fieldContext_WinCCUaConnectionConfig_dataAccessMode(ctx, field)
+			case "graphqlEndpoint":
+				return ec.fieldContext_WinCCUaConnectionConfig_graphqlEndpoint(ctx, field)
+			case "websocketEndpoint":
+				return ec.fieldContext_WinCCUaConnectionConfig_websocketEndpoint(ctx, field)
+			case "username":
+				return ec.fieldContext_WinCCUaConnectionConfig_username(ctx, field)
+			case "password":
+				return ec.fieldContext_WinCCUaConnectionConfig_password(ctx, field)
+			case "pipePath":
+				return ec.fieldContext_WinCCUaConnectionConfig_pipePath(ctx, field)
+			case "reconnectDelay":
+				return ec.fieldContext_WinCCUaConnectionConfig_reconnectDelay(ctx, field)
+			case "connectionTimeout":
+				return ec.fieldContext_WinCCUaConnectionConfig_connectionTimeout(ctx, field)
+			case "messageFormat":
+				return ec.fieldContext_WinCCUaConnectionConfig_messageFormat(ctx, field)
+			case "transformConfig":
+				return ec.fieldContext_WinCCUaConnectionConfig_transformConfig(ctx, field)
+			case "addresses":
+				return ec.fieldContext_WinCCUaConnectionConfig_addresses(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type WinCCUaConnectionConfig", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaClient_enabled(ctx context.Context, field graphql.CollectedField, obj *WinCCUaClient) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaClient_enabled,
+		func(ctx context.Context) (any, error) {
+			return obj.Enabled, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaClient_enabled(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaClient",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaClient_createdAt(ctx context.Context, field graphql.CollectedField, obj *WinCCUaClient) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaClient_createdAt,
+		func(ctx context.Context) (any, error) {
+			return obj.CreatedAt, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaClient_createdAt(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaClient",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaClient_updatedAt(ctx context.Context, field graphql.CollectedField, obj *WinCCUaClient) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaClient_updatedAt,
+		func(ctx context.Context) (any, error) {
+			return obj.UpdatedAt, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaClient_updatedAt(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaClient",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaClient_isOnCurrentNode(ctx context.Context, field graphql.CollectedField, obj *WinCCUaClient) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaClient_isOnCurrentNode,
+		func(ctx context.Context) (any, error) {
+			return obj.IsOnCurrentNode, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaClient_isOnCurrentNode(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaClient",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaClient_metrics(ctx context.Context, field graphql.CollectedField, obj *WinCCUaClient) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaClient_metrics,
+		func(ctx context.Context) (any, error) {
+			return ec.Resolvers.WinCCUaClient().Metrics(ctx, obj)
+		},
+		nil,
+		ec.marshalNWinCCUaClientMetrics2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaClientMetricsᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaClient_metrics(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaClient",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "messagesIn":
+				return ec.fieldContext_WinCCUaClientMetrics_messagesIn(ctx, field)
+			case "connected":
+				return ec.fieldContext_WinCCUaClientMetrics_connected(ctx, field)
+			case "timestamp":
+				return ec.fieldContext_WinCCUaClientMetrics_timestamp(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type WinCCUaClientMetrics", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaClient_metricsHistory(ctx context.Context, field graphql.CollectedField, obj *WinCCUaClient) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaClient_metricsHistory,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.WinCCUaClient().MetricsHistory(ctx, obj, fc.Args["from"].(*string), fc.Args["to"].(*string), fc.Args["lastMinutes"].(*int))
+		},
+		nil,
+		ec.marshalNWinCCUaClientMetrics2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaClientMetricsᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaClient_metricsHistory(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaClient",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "messagesIn":
+				return ec.fieldContext_WinCCUaClientMetrics_messagesIn(ctx, field)
+			case "connected":
+				return ec.fieldContext_WinCCUaClientMetrics_connected(ctx, field)
+			case "timestamp":
+				return ec.fieldContext_WinCCUaClientMetrics_timestamp(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type WinCCUaClientMetrics", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_WinCCUaClient_metricsHistory_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaClientMetrics_messagesIn(ctx context.Context, field graphql.CollectedField, obj *WinCCUaClientMetrics) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaClientMetrics_messagesIn,
+		func(ctx context.Context) (any, error) {
+			return obj.MessagesIn, nil
+		},
+		nil,
+		ec.marshalNFloat2float64,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaClientMetrics_messagesIn(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaClientMetrics",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Float does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaClientMetrics_connected(ctx context.Context, field graphql.CollectedField, obj *WinCCUaClientMetrics) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaClientMetrics_connected,
+		func(ctx context.Context) (any, error) {
+			return obj.Connected, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaClientMetrics_connected(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaClientMetrics",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaClientMetrics_timestamp(ctx context.Context, field graphql.CollectedField, obj *WinCCUaClientMetrics) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaClientMetrics_timestamp,
+		func(ctx context.Context) (any, error) {
+			return obj.Timestamp, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaClientMetrics_timestamp(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaClientMetrics",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaClientResult_success(ctx context.Context, field graphql.CollectedField, obj *WinCCUaClientResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaClientResult_success,
+		func(ctx context.Context) (any, error) {
+			return obj.Success, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaClientResult_success(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaClientResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaClientResult_client(ctx context.Context, field graphql.CollectedField, obj *WinCCUaClientResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaClientResult_client,
+		func(ctx context.Context) (any, error) {
+			return obj.Client, nil
+		},
+		nil,
+		ec.marshalOWinCCUaClient2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaClient,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaClientResult_client(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaClientResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "name":
+				return ec.fieldContext_WinCCUaClient_name(ctx, field)
+			case "namespace":
+				return ec.fieldContext_WinCCUaClient_namespace(ctx, field)
+			case "nodeId":
+				return ec.fieldContext_WinCCUaClient_nodeId(ctx, field)
+			case "config":
+				return ec.fieldContext_WinCCUaClient_config(ctx, field)
+			case "enabled":
+				return ec.fieldContext_WinCCUaClient_enabled(ctx, field)
+			case "createdAt":
+				return ec.fieldContext_WinCCUaClient_createdAt(ctx, field)
+			case "updatedAt":
+				return ec.fieldContext_WinCCUaClient_updatedAt(ctx, field)
+			case "isOnCurrentNode":
+				return ec.fieldContext_WinCCUaClient_isOnCurrentNode(ctx, field)
+			case "metrics":
+				return ec.fieldContext_WinCCUaClient_metrics(ctx, field)
+			case "metricsHistory":
+				return ec.fieldContext_WinCCUaClient_metricsHistory(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type WinCCUaClient", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaClientResult_errors(ctx context.Context, field graphql.CollectedField, obj *WinCCUaClientResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaClientResult_errors,
+		func(ctx context.Context) (any, error) {
+			return obj.Errors, nil
+		},
+		nil,
+		ec.marshalNString2ᚕstringᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaClientResult_errors(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaClientResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaConnectionConfig_dataAccessMode(ctx context.Context, field graphql.CollectedField, obj *WinCCUaConnectionConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaConnectionConfig_dataAccessMode,
+		func(ctx context.Context) (any, error) {
+			return obj.DataAccessMode, nil
+		},
+		nil,
+		ec.marshalNWinCCUaDataAccessMode2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaDataAccessMode,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaConnectionConfig_dataAccessMode(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaConnectionConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type WinCCUaDataAccessMode does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaConnectionConfig_graphqlEndpoint(ctx context.Context, field graphql.CollectedField, obj *WinCCUaConnectionConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaConnectionConfig_graphqlEndpoint,
+		func(ctx context.Context) (any, error) {
+			return obj.GraphqlEndpoint, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaConnectionConfig_graphqlEndpoint(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaConnectionConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaConnectionConfig_websocketEndpoint(ctx context.Context, field graphql.CollectedField, obj *WinCCUaConnectionConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaConnectionConfig_websocketEndpoint,
+		func(ctx context.Context) (any, error) {
+			return obj.WebsocketEndpoint, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaConnectionConfig_websocketEndpoint(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaConnectionConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaConnectionConfig_username(ctx context.Context, field graphql.CollectedField, obj *WinCCUaConnectionConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaConnectionConfig_username,
+		func(ctx context.Context) (any, error) {
+			return obj.Username, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaConnectionConfig_username(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaConnectionConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaConnectionConfig_password(ctx context.Context, field graphql.CollectedField, obj *WinCCUaConnectionConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaConnectionConfig_password,
+		func(ctx context.Context) (any, error) {
+			return obj.Password, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaConnectionConfig_password(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaConnectionConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaConnectionConfig_pipePath(ctx context.Context, field graphql.CollectedField, obj *WinCCUaConnectionConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaConnectionConfig_pipePath,
+		func(ctx context.Context) (any, error) {
+			return obj.PipePath, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaConnectionConfig_pipePath(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaConnectionConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaConnectionConfig_reconnectDelay(ctx context.Context, field graphql.CollectedField, obj *WinCCUaConnectionConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaConnectionConfig_reconnectDelay,
+		func(ctx context.Context) (any, error) {
+			return obj.ReconnectDelay, nil
+		},
+		nil,
+		ec.marshalNLong2int64,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaConnectionConfig_reconnectDelay(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaConnectionConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Long does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaConnectionConfig_connectionTimeout(ctx context.Context, field graphql.CollectedField, obj *WinCCUaConnectionConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaConnectionConfig_connectionTimeout,
+		func(ctx context.Context) (any, error) {
+			return obj.ConnectionTimeout, nil
+		},
+		nil,
+		ec.marshalNLong2int64,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaConnectionConfig_connectionTimeout(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaConnectionConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Long does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaConnectionConfig_messageFormat(ctx context.Context, field graphql.CollectedField, obj *WinCCUaConnectionConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaConnectionConfig_messageFormat,
+		func(ctx context.Context) (any, error) {
+			return obj.MessageFormat, nil
+		},
+		nil,
+		ec.marshalNWinCCUaMessageFormat2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaMessageFormat,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaConnectionConfig_messageFormat(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaConnectionConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type WinCCUaMessageFormat does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaConnectionConfig_transformConfig(ctx context.Context, field graphql.CollectedField, obj *WinCCUaConnectionConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaConnectionConfig_transformConfig,
+		func(ctx context.Context) (any, error) {
+			return obj.TransformConfig, nil
+		},
+		nil,
+		ec.marshalNWinCCUaTransformConfig2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaTransformConfig,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaConnectionConfig_transformConfig(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaConnectionConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "convertDotToSlash":
+				return ec.fieldContext_WinCCUaTransformConfig_convertDotToSlash(ctx, field)
+			case "convertUnderscoreToSlash":
+				return ec.fieldContext_WinCCUaTransformConfig_convertUnderscoreToSlash(ctx, field)
+			case "regexPattern":
+				return ec.fieldContext_WinCCUaTransformConfig_regexPattern(ctx, field)
+			case "regexReplacement":
+				return ec.fieldContext_WinCCUaTransformConfig_regexReplacement(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type WinCCUaTransformConfig", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaConnectionConfig_addresses(ctx context.Context, field graphql.CollectedField, obj *WinCCUaConnectionConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaConnectionConfig_addresses,
+		func(ctx context.Context) (any, error) {
+			return obj.Addresses, nil
+		},
+		nil,
+		ec.marshalNWinCCUaAddress2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaAddressᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaConnectionConfig_addresses(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaConnectionConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "type":
+				return ec.fieldContext_WinCCUaAddress_type(ctx, field)
+			case "topic":
+				return ec.fieldContext_WinCCUaAddress_topic(ctx, field)
+			case "description":
+				return ec.fieldContext_WinCCUaAddress_description(ctx, field)
+			case "retained":
+				return ec.fieldContext_WinCCUaAddress_retained(ctx, field)
+			case "nameFilters":
+				return ec.fieldContext_WinCCUaAddress_nameFilters(ctx, field)
+			case "includeQuality":
+				return ec.fieldContext_WinCCUaAddress_includeQuality(ctx, field)
+			case "systemNames":
+				return ec.fieldContext_WinCCUaAddress_systemNames(ctx, field)
+			case "filterString":
+				return ec.fieldContext_WinCCUaAddress_filterString(ctx, field)
+			case "pipeTagMode":
+				return ec.fieldContext_WinCCUaAddress_pipeTagMode(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type WinCCUaAddress", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaDeviceMutations_create(ctx context.Context, field graphql.CollectedField, obj *WinCCUaDeviceMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaDeviceMutations_create,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.WinCCUaDeviceMutations().Create(ctx, obj, fc.Args["input"].(WinCCUaClientInput))
+		},
+		nil,
+		ec.marshalNWinCCUaClientResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaClientResult,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaDeviceMutations_create(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaDeviceMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "success":
+				return ec.fieldContext_WinCCUaClientResult_success(ctx, field)
+			case "client":
+				return ec.fieldContext_WinCCUaClientResult_client(ctx, field)
+			case "errors":
+				return ec.fieldContext_WinCCUaClientResult_errors(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type WinCCUaClientResult", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_WinCCUaDeviceMutations_create_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaDeviceMutations_update(ctx context.Context, field graphql.CollectedField, obj *WinCCUaDeviceMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaDeviceMutations_update,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.WinCCUaDeviceMutations().Update(ctx, obj, fc.Args["name"].(string), fc.Args["input"].(WinCCUaClientInput))
+		},
+		nil,
+		ec.marshalNWinCCUaClientResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaClientResult,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaDeviceMutations_update(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaDeviceMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "success":
+				return ec.fieldContext_WinCCUaClientResult_success(ctx, field)
+			case "client":
+				return ec.fieldContext_WinCCUaClientResult_client(ctx, field)
+			case "errors":
+				return ec.fieldContext_WinCCUaClientResult_errors(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type WinCCUaClientResult", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_WinCCUaDeviceMutations_update_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaDeviceMutations_delete(ctx context.Context, field graphql.CollectedField, obj *WinCCUaDeviceMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaDeviceMutations_delete,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.WinCCUaDeviceMutations().Delete(ctx, obj, fc.Args["name"].(string))
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaDeviceMutations_delete(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaDeviceMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_WinCCUaDeviceMutations_delete_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaDeviceMutations_start(ctx context.Context, field graphql.CollectedField, obj *WinCCUaDeviceMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaDeviceMutations_start,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.WinCCUaDeviceMutations().Start(ctx, obj, fc.Args["name"].(string))
+		},
+		nil,
+		ec.marshalNWinCCUaClientResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaClientResult,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaDeviceMutations_start(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaDeviceMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "success":
+				return ec.fieldContext_WinCCUaClientResult_success(ctx, field)
+			case "client":
+				return ec.fieldContext_WinCCUaClientResult_client(ctx, field)
+			case "errors":
+				return ec.fieldContext_WinCCUaClientResult_errors(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type WinCCUaClientResult", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_WinCCUaDeviceMutations_start_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaDeviceMutations_stop(ctx context.Context, field graphql.CollectedField, obj *WinCCUaDeviceMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaDeviceMutations_stop,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.WinCCUaDeviceMutations().Stop(ctx, obj, fc.Args["name"].(string))
+		},
+		nil,
+		ec.marshalNWinCCUaClientResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaClientResult,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaDeviceMutations_stop(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaDeviceMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "success":
+				return ec.fieldContext_WinCCUaClientResult_success(ctx, field)
+			case "client":
+				return ec.fieldContext_WinCCUaClientResult_client(ctx, field)
+			case "errors":
+				return ec.fieldContext_WinCCUaClientResult_errors(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type WinCCUaClientResult", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_WinCCUaDeviceMutations_stop_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaDeviceMutations_toggle(ctx context.Context, field graphql.CollectedField, obj *WinCCUaDeviceMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaDeviceMutations_toggle,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.WinCCUaDeviceMutations().Toggle(ctx, obj, fc.Args["name"].(string), fc.Args["enabled"].(bool))
+		},
+		nil,
+		ec.marshalNWinCCUaClientResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaClientResult,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaDeviceMutations_toggle(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaDeviceMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "success":
+				return ec.fieldContext_WinCCUaClientResult_success(ctx, field)
+			case "client":
+				return ec.fieldContext_WinCCUaClientResult_client(ctx, field)
+			case "errors":
+				return ec.fieldContext_WinCCUaClientResult_errors(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type WinCCUaClientResult", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_WinCCUaDeviceMutations_toggle_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaDeviceMutations_reassign(ctx context.Context, field graphql.CollectedField, obj *WinCCUaDeviceMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaDeviceMutations_reassign,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.WinCCUaDeviceMutations().Reassign(ctx, obj, fc.Args["name"].(string), fc.Args["nodeId"].(string))
+		},
+		nil,
+		ec.marshalNWinCCUaClientResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaClientResult,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaDeviceMutations_reassign(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaDeviceMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "success":
+				return ec.fieldContext_WinCCUaClientResult_success(ctx, field)
+			case "client":
+				return ec.fieldContext_WinCCUaClientResult_client(ctx, field)
+			case "errors":
+				return ec.fieldContext_WinCCUaClientResult_errors(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type WinCCUaClientResult", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_WinCCUaDeviceMutations_reassign_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaDeviceMutations_addAddress(ctx context.Context, field graphql.CollectedField, obj *WinCCUaDeviceMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaDeviceMutations_addAddress,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.WinCCUaDeviceMutations().AddAddress(ctx, obj, fc.Args["deviceName"].(string), fc.Args["input"].(WinCCUaAddressInput))
+		},
+		nil,
+		ec.marshalNWinCCUaClientResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaClientResult,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaDeviceMutations_addAddress(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaDeviceMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "success":
+				return ec.fieldContext_WinCCUaClientResult_success(ctx, field)
+			case "client":
+				return ec.fieldContext_WinCCUaClientResult_client(ctx, field)
+			case "errors":
+				return ec.fieldContext_WinCCUaClientResult_errors(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type WinCCUaClientResult", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_WinCCUaDeviceMutations_addAddress_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaDeviceMutations_updateAddress(ctx context.Context, field graphql.CollectedField, obj *WinCCUaDeviceMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaDeviceMutations_updateAddress,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.WinCCUaDeviceMutations().UpdateAddress(ctx, obj, fc.Args["deviceName"].(string), fc.Args["topic"].(string), fc.Args["input"].(WinCCUaAddressInput))
+		},
+		nil,
+		ec.marshalNWinCCUaClientResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaClientResult,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaDeviceMutations_updateAddress(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaDeviceMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "success":
+				return ec.fieldContext_WinCCUaClientResult_success(ctx, field)
+			case "client":
+				return ec.fieldContext_WinCCUaClientResult_client(ctx, field)
+			case "errors":
+				return ec.fieldContext_WinCCUaClientResult_errors(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type WinCCUaClientResult", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_WinCCUaDeviceMutations_updateAddress_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaDeviceMutations_deleteAddress(ctx context.Context, field graphql.CollectedField, obj *WinCCUaDeviceMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaDeviceMutations_deleteAddress,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.WinCCUaDeviceMutations().DeleteAddress(ctx, obj, fc.Args["deviceName"].(string), fc.Args["topic"].(string))
+		},
+		nil,
+		ec.marshalNWinCCUaClientResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaClientResult,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaDeviceMutations_deleteAddress(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaDeviceMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "success":
+				return ec.fieldContext_WinCCUaClientResult_success(ctx, field)
+			case "client":
+				return ec.fieldContext_WinCCUaClientResult_client(ctx, field)
+			case "errors":
+				return ec.fieldContext_WinCCUaClientResult_errors(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type WinCCUaClientResult", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_WinCCUaDeviceMutations_deleteAddress_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaTransformConfig_convertDotToSlash(ctx context.Context, field graphql.CollectedField, obj *WinCCUaTransformConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaTransformConfig_convertDotToSlash,
+		func(ctx context.Context) (any, error) {
+			return obj.ConvertDotToSlash, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaTransformConfig_convertDotToSlash(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaTransformConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaTransformConfig_convertUnderscoreToSlash(ctx context.Context, field graphql.CollectedField, obj *WinCCUaTransformConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaTransformConfig_convertUnderscoreToSlash,
+		func(ctx context.Context) (any, error) {
+			return obj.ConvertUnderscoreToSlash, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaTransformConfig_convertUnderscoreToSlash(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaTransformConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaTransformConfig_regexPattern(ctx context.Context, field graphql.CollectedField, obj *WinCCUaTransformConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaTransformConfig_regexPattern,
+		func(ctx context.Context) (any, error) {
+			return obj.RegexPattern, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaTransformConfig_regexPattern(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaTransformConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCUaTransformConfig_regexReplacement(ctx context.Context, field graphql.CollectedField, obj *WinCCUaTransformConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCUaTransformConfig_regexReplacement,
+		func(ctx context.Context) (any, error) {
+			return obj.RegexReplacement, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCUaTransformConfig_regexReplacement(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCUaTransformConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) ___Directive_name(ctx context.Context, field graphql.CollectedField, obj *introspection.Directive) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -15490,6 +17696,328 @@ func (ec *executionContext) unmarshalInputUserPropertyInput(ctx context.Context,
 	return it, nil
 }
 
+func (ec *executionContext) unmarshalInputWinCCUaAddressInput(ctx context.Context, obj any) (WinCCUaAddressInput, error) {
+	var it WinCCUaAddressInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	if _, present := asMap["retained"]; !present {
+		asMap["retained"] = false
+	}
+	if _, present := asMap["includeQuality"]; !present {
+		asMap["includeQuality"] = false
+	}
+	if _, present := asMap["pipeTagMode"]; !present {
+		asMap["pipeTagMode"] = "SINGLE"
+	}
+
+	fieldsInOrder := [...]string{"type", "topic", "description", "retained", "nameFilters", "includeQuality", "systemNames", "filterString", "pipeTagMode"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "type":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("type"))
+			data, err := ec.unmarshalNWinCCUaAddressType2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaAddressType(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Type = data
+		case "topic":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("topic"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Topic = data
+		case "description":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("description"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Description = data
+		case "retained":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("retained"))
+			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Retained = data
+		case "nameFilters":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("nameFilters"))
+			data, err := ec.unmarshalOString2ᚕstringᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.NameFilters = data
+		case "includeQuality":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("includeQuality"))
+			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.IncludeQuality = data
+		case "systemNames":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("systemNames"))
+			data, err := ec.unmarshalOString2ᚕstringᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.SystemNames = data
+		case "filterString":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("filterString"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.FilterString = data
+		case "pipeTagMode":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("pipeTagMode"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.PipeTagMode = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputWinCCUaClientInput(ctx context.Context, obj any) (WinCCUaClientInput, error) {
+	var it WinCCUaClientInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	if _, present := asMap["enabled"]; !present {
+		asMap["enabled"] = true
+	}
+
+	fieldsInOrder := [...]string{"name", "namespace", "nodeId", "enabled", "config"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "name":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("name"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Name = data
+		case "namespace":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("namespace"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Namespace = data
+		case "nodeId":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("nodeId"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.NodeID = data
+		case "enabled":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("enabled"))
+			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Enabled = data
+		case "config":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("config"))
+			data, err := ec.unmarshalNWinCCUaConnectionConfigInput2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaConnectionConfigInput(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Config = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputWinCCUaConnectionConfigInput(ctx context.Context, obj any) (WinCCUaConnectionConfigInput, error) {
+	var it WinCCUaConnectionConfigInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	if _, present := asMap["dataAccessMode"]; !present {
+		asMap["dataAccessMode"] = "GRAPHQL"
+	}
+	if _, present := asMap["reconnectDelay"]; !present {
+		asMap["reconnectDelay"] = 5000
+	}
+	if _, present := asMap["connectionTimeout"]; !present {
+		asMap["connectionTimeout"] = 10000
+	}
+	if _, present := asMap["messageFormat"]; !present {
+		asMap["messageFormat"] = "JSON_ISO"
+	}
+
+	fieldsInOrder := [...]string{"dataAccessMode", "graphqlEndpoint", "websocketEndpoint", "username", "password", "pipePath", "reconnectDelay", "connectionTimeout", "messageFormat", "transformConfig"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "dataAccessMode":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("dataAccessMode"))
+			data, err := ec.unmarshalOWinCCUaDataAccessMode2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaDataAccessMode(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.DataAccessMode = data
+		case "graphqlEndpoint":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("graphqlEndpoint"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.GraphqlEndpoint = data
+		case "websocketEndpoint":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("websocketEndpoint"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.WebsocketEndpoint = data
+		case "username":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("username"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Username = data
+		case "password":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("password"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Password = data
+		case "pipePath":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("pipePath"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.PipePath = data
+		case "reconnectDelay":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("reconnectDelay"))
+			data, err := ec.unmarshalOLong2ᚖint64(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ReconnectDelay = data
+		case "connectionTimeout":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("connectionTimeout"))
+			data, err := ec.unmarshalOLong2ᚖint64(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ConnectionTimeout = data
+		case "messageFormat":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("messageFormat"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.MessageFormat = data
+		case "transformConfig":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("transformConfig"))
+			data, err := ec.unmarshalOWinCCUaTransformConfigInput2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaTransformConfigInput(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.TransformConfig = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputWinCCUaTransformConfigInput(ctx context.Context, obj any) (WinCCUaTransformConfigInput, error) {
+	var it WinCCUaTransformConfigInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	if _, present := asMap["convertDotToSlash"]; !present {
+		asMap["convertDotToSlash"] = true
+	}
+	if _, present := asMap["convertUnderscoreToSlash"]; !present {
+		asMap["convertUnderscoreToSlash"] = false
+	}
+
+	fieldsInOrder := [...]string{"convertDotToSlash", "convertUnderscoreToSlash", "regexPattern", "regexReplacement"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "convertDotToSlash":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("convertDotToSlash"))
+			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ConvertDotToSlash = data
+		case "convertUnderscoreToSlash":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("convertUnderscoreToSlash"))
+			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ConvertUnderscoreToSlash = data
+		case "regexPattern":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("regexPattern"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.RegexPattern = data
+		case "regexReplacement":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("regexReplacement"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.RegexReplacement = data
+		}
+	}
+	return it, nil
+}
+
 // endregion **************************** input.gotpl *****************************
 
 // region    ************************** interface.gotpl ***************************
@@ -17784,6 +20312,13 @@ func (ec *executionContext) _Mutation(ctx context.Context, sel ast.SelectionSet)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
+		case "winCCUaDevice":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_winCCUaDevice(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}
@@ -18356,6 +20891,28 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 					}
 				}()
 				res = ec._Query_mqttClients(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "winCCUaClients":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_winCCUaClients(ctx, field)
 				if res == graphql.Null {
 					atomic.AddUint32(&fs.Invalids, 1)
 				}
@@ -19664,6 +22221,824 @@ func (ec *executionContext) _UserProperty(ctx context.Context, sel ast.Selection
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var winCCUaAddressImplementors = []string{"WinCCUaAddress"}
+
+func (ec *executionContext) _WinCCUaAddress(ctx context.Context, sel ast.SelectionSet, obj *WinCCUaAddress) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, winCCUaAddressImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("WinCCUaAddress")
+		case "type":
+			out.Values[i] = ec._WinCCUaAddress_type(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "topic":
+			out.Values[i] = ec._WinCCUaAddress_topic(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "description":
+			out.Values[i] = ec._WinCCUaAddress_description(ctx, field, obj)
+		case "retained":
+			out.Values[i] = ec._WinCCUaAddress_retained(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "nameFilters":
+			out.Values[i] = ec._WinCCUaAddress_nameFilters(ctx, field, obj)
+		case "includeQuality":
+			out.Values[i] = ec._WinCCUaAddress_includeQuality(ctx, field, obj)
+		case "systemNames":
+			out.Values[i] = ec._WinCCUaAddress_systemNames(ctx, field, obj)
+		case "filterString":
+			out.Values[i] = ec._WinCCUaAddress_filterString(ctx, field, obj)
+		case "pipeTagMode":
+			out.Values[i] = ec._WinCCUaAddress_pipeTagMode(ctx, field, obj)
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var winCCUaClientImplementors = []string{"WinCCUaClient"}
+
+func (ec *executionContext) _WinCCUaClient(ctx context.Context, sel ast.SelectionSet, obj *WinCCUaClient) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, winCCUaClientImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("WinCCUaClient")
+		case "name":
+			out.Values[i] = ec._WinCCUaClient_name(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "namespace":
+			out.Values[i] = ec._WinCCUaClient_namespace(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "nodeId":
+			out.Values[i] = ec._WinCCUaClient_nodeId(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "config":
+			out.Values[i] = ec._WinCCUaClient_config(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "enabled":
+			out.Values[i] = ec._WinCCUaClient_enabled(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "createdAt":
+			out.Values[i] = ec._WinCCUaClient_createdAt(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "updatedAt":
+			out.Values[i] = ec._WinCCUaClient_updatedAt(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "isOnCurrentNode":
+			out.Values[i] = ec._WinCCUaClient_isOnCurrentNode(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "metrics":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._WinCCUaClient_metrics(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "metricsHistory":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._WinCCUaClient_metricsHistory(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var winCCUaClientMetricsImplementors = []string{"WinCCUaClientMetrics"}
+
+func (ec *executionContext) _WinCCUaClientMetrics(ctx context.Context, sel ast.SelectionSet, obj *WinCCUaClientMetrics) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, winCCUaClientMetricsImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("WinCCUaClientMetrics")
+		case "messagesIn":
+			out.Values[i] = ec._WinCCUaClientMetrics_messagesIn(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "connected":
+			out.Values[i] = ec._WinCCUaClientMetrics_connected(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "timestamp":
+			out.Values[i] = ec._WinCCUaClientMetrics_timestamp(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var winCCUaClientResultImplementors = []string{"WinCCUaClientResult"}
+
+func (ec *executionContext) _WinCCUaClientResult(ctx context.Context, sel ast.SelectionSet, obj *WinCCUaClientResult) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, winCCUaClientResultImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("WinCCUaClientResult")
+		case "success":
+			out.Values[i] = ec._WinCCUaClientResult_success(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "client":
+			out.Values[i] = ec._WinCCUaClientResult_client(ctx, field, obj)
+		case "errors":
+			out.Values[i] = ec._WinCCUaClientResult_errors(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var winCCUaConnectionConfigImplementors = []string{"WinCCUaConnectionConfig"}
+
+func (ec *executionContext) _WinCCUaConnectionConfig(ctx context.Context, sel ast.SelectionSet, obj *WinCCUaConnectionConfig) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, winCCUaConnectionConfigImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("WinCCUaConnectionConfig")
+		case "dataAccessMode":
+			out.Values[i] = ec._WinCCUaConnectionConfig_dataAccessMode(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "graphqlEndpoint":
+			out.Values[i] = ec._WinCCUaConnectionConfig_graphqlEndpoint(ctx, field, obj)
+		case "websocketEndpoint":
+			out.Values[i] = ec._WinCCUaConnectionConfig_websocketEndpoint(ctx, field, obj)
+		case "username":
+			out.Values[i] = ec._WinCCUaConnectionConfig_username(ctx, field, obj)
+		case "password":
+			out.Values[i] = ec._WinCCUaConnectionConfig_password(ctx, field, obj)
+		case "pipePath":
+			out.Values[i] = ec._WinCCUaConnectionConfig_pipePath(ctx, field, obj)
+		case "reconnectDelay":
+			out.Values[i] = ec._WinCCUaConnectionConfig_reconnectDelay(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "connectionTimeout":
+			out.Values[i] = ec._WinCCUaConnectionConfig_connectionTimeout(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "messageFormat":
+			out.Values[i] = ec._WinCCUaConnectionConfig_messageFormat(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "transformConfig":
+			out.Values[i] = ec._WinCCUaConnectionConfig_transformConfig(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "addresses":
+			out.Values[i] = ec._WinCCUaConnectionConfig_addresses(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var winCCUaDeviceMutationsImplementors = []string{"WinCCUaDeviceMutations"}
+
+func (ec *executionContext) _WinCCUaDeviceMutations(ctx context.Context, sel ast.SelectionSet, obj *WinCCUaDeviceMutations) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, winCCUaDeviceMutationsImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("WinCCUaDeviceMutations")
+		case "create":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._WinCCUaDeviceMutations_create(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "update":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._WinCCUaDeviceMutations_update(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "delete":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._WinCCUaDeviceMutations_delete(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "start":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._WinCCUaDeviceMutations_start(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "stop":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._WinCCUaDeviceMutations_stop(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "toggle":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._WinCCUaDeviceMutations_toggle(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "reassign":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._WinCCUaDeviceMutations_reassign(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "addAddress":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._WinCCUaDeviceMutations_addAddress(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "updateAddress":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._WinCCUaDeviceMutations_updateAddress(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "deleteAddress":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._WinCCUaDeviceMutations_deleteAddress(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var winCCUaTransformConfigImplementors = []string{"WinCCUaTransformConfig"}
+
+func (ec *executionContext) _WinCCUaTransformConfig(ctx context.Context, sel ast.SelectionSet, obj *WinCCUaTransformConfig) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, winCCUaTransformConfigImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("WinCCUaTransformConfig")
+		case "convertDotToSlash":
+			out.Values[i] = ec._WinCCUaTransformConfig_convertDotToSlash(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "convertUnderscoreToSlash":
+			out.Values[i] = ec._WinCCUaTransformConfig_convertUnderscoreToSlash(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "regexPattern":
+			out.Values[i] = ec._WinCCUaTransformConfig_regexPattern(ctx, field, obj)
+		case "regexReplacement":
+			out.Values[i] = ec._WinCCUaTransformConfig_regexReplacement(ctx, field, obj)
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}
@@ -21045,6 +24420,177 @@ func (ec *executionContext) unmarshalNUserPropertyInput2ᚖmonstermqᚗioᚋedge
 	return &res, graphql.ErrorOnPath(ctx, err)
 }
 
+func (ec *executionContext) marshalNWinCCUaAddress2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaAddressᚄ(ctx context.Context, sel ast.SelectionSet, v []*WinCCUaAddress) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNWinCCUaAddress2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaAddress(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNWinCCUaAddress2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaAddress(ctx context.Context, sel ast.SelectionSet, v *WinCCUaAddress) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._WinCCUaAddress(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalNWinCCUaAddressInput2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaAddressInput(ctx context.Context, v any) (WinCCUaAddressInput, error) {
+	res, err := ec.unmarshalInputWinCCUaAddressInput(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNWinCCUaAddressType2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaAddressType(ctx context.Context, v any) (WinCCUaAddressType, error) {
+	var res WinCCUaAddressType
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNWinCCUaAddressType2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaAddressType(ctx context.Context, sel ast.SelectionSet, v WinCCUaAddressType) graphql.Marshaler {
+	return v
+}
+
+func (ec *executionContext) marshalNWinCCUaClient2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaClientᚄ(ctx context.Context, sel ast.SelectionSet, v []*WinCCUaClient) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNWinCCUaClient2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaClient(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNWinCCUaClient2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaClient(ctx context.Context, sel ast.SelectionSet, v *WinCCUaClient) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._WinCCUaClient(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalNWinCCUaClientInput2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaClientInput(ctx context.Context, v any) (WinCCUaClientInput, error) {
+	res, err := ec.unmarshalInputWinCCUaClientInput(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNWinCCUaClientMetrics2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaClientMetricsᚄ(ctx context.Context, sel ast.SelectionSet, v []*WinCCUaClientMetrics) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNWinCCUaClientMetrics2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaClientMetrics(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNWinCCUaClientMetrics2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaClientMetrics(ctx context.Context, sel ast.SelectionSet, v *WinCCUaClientMetrics) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._WinCCUaClientMetrics(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNWinCCUaClientResult2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaClientResult(ctx context.Context, sel ast.SelectionSet, v WinCCUaClientResult) graphql.Marshaler {
+	return ec._WinCCUaClientResult(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNWinCCUaClientResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaClientResult(ctx context.Context, sel ast.SelectionSet, v *WinCCUaClientResult) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._WinCCUaClientResult(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNWinCCUaConnectionConfig2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaConnectionConfig(ctx context.Context, sel ast.SelectionSet, v *WinCCUaConnectionConfig) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._WinCCUaConnectionConfig(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalNWinCCUaConnectionConfigInput2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaConnectionConfigInput(ctx context.Context, v any) (*WinCCUaConnectionConfigInput, error) {
+	res, err := ec.unmarshalInputWinCCUaConnectionConfigInput(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNWinCCUaDataAccessMode2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaDataAccessMode(ctx context.Context, v any) (WinCCUaDataAccessMode, error) {
+	var res WinCCUaDataAccessMode
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNWinCCUaDataAccessMode2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaDataAccessMode(ctx context.Context, sel ast.SelectionSet, v WinCCUaDataAccessMode) graphql.Marshaler {
+	return v
+}
+
+func (ec *executionContext) marshalNWinCCUaDeviceMutations2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaDeviceMutations(ctx context.Context, sel ast.SelectionSet, v WinCCUaDeviceMutations) graphql.Marshaler {
+	return ec._WinCCUaDeviceMutations(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNWinCCUaDeviceMutations2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaDeviceMutations(ctx context.Context, sel ast.SelectionSet, v *WinCCUaDeviceMutations) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._WinCCUaDeviceMutations(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalNWinCCUaMessageFormat2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaMessageFormat(ctx context.Context, v any) (WinCCUaMessageFormat, error) {
+	var res WinCCUaMessageFormat
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNWinCCUaMessageFormat2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaMessageFormat(ctx context.Context, sel ast.SelectionSet, v WinCCUaMessageFormat) graphql.Marshaler {
+	return v
+}
+
+func (ec *executionContext) marshalNWinCCUaTransformConfig2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaTransformConfig(ctx context.Context, sel ast.SelectionSet, v *WinCCUaTransformConfig) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._WinCCUaTransformConfig(ctx, sel, v)
+}
+
 func (ec *executionContext) marshalN__Directive2githubᚗcomᚋ99designsᚋgqlgenᚋgraphqlᚋintrospectionᚐDirective(ctx context.Context, sel ast.SelectionSet, v introspection.Directive) graphql.Marshaler {
 	return ec.___Directive(ctx, sel, &v)
 }
@@ -21527,6 +25073,37 @@ func (ec *executionContext) unmarshalOUserPropertyInput2ᚕᚖmonstermqᚗioᚋe
 		}
 	}
 	return res, nil
+}
+
+func (ec *executionContext) marshalOWinCCUaClient2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaClient(ctx context.Context, sel ast.SelectionSet, v *WinCCUaClient) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._WinCCUaClient(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalOWinCCUaDataAccessMode2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaDataAccessMode(ctx context.Context, v any) (*WinCCUaDataAccessMode, error) {
+	if v == nil {
+		return nil, nil
+	}
+	var res = new(WinCCUaDataAccessMode)
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalOWinCCUaDataAccessMode2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaDataAccessMode(ctx context.Context, sel ast.SelectionSet, v *WinCCUaDataAccessMode) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return v
+}
+
+func (ec *executionContext) unmarshalOWinCCUaTransformConfigInput2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaTransformConfigInput(ctx context.Context, v any) (*WinCCUaTransformConfigInput, error) {
+	if v == nil {
+		return nil, nil
+	}
+	res, err := ec.unmarshalInputWinCCUaTransformConfigInput(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
 }
 
 func (ec *executionContext) marshalO__EnumValue2ᚕgithubᚗcomᚋ99designsᚋgqlgenᚋgraphqlᚋintrospectionᚐEnumValueᚄ(ctx context.Context, sel ast.SelectionSet, v []introspection.EnumValue) graphql.Marshaler {

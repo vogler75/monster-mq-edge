@@ -93,7 +93,8 @@
       "additionalProperties": false,
       "description": "Subsystem feature toggles. Mirrors the Features map in the main monster-mq broker.",
       "properties": {
-        "MqttClient": { "type": "boolean", "description": "Enable the outbound MQTT bridge client manager." }
+        "MqttClient": { "type": "boolean", "description": "Enable the outbound MQTT bridge client manager." },
+        "WinCCUa":    { "type": "boolean", "description": "Enable the WinCC Unified bridge (GraphQL or Open Pipe transports)." }
       }
     },
     "QueuedMessagesEnabled": {

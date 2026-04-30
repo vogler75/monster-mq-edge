@@ -17,8 +17,13 @@ read it if you have access). The short version:
 - GraphQL API via [`99designs/gqlgen`](https://github.com/99designs/gqlgen).
 - Storage backends: SQLite (`modernc.org/sqlite`, no CGO), PostgreSQL (`pgx/v5`),
   MongoDB (`mongo-driver/v2`).
-- MQTT bridge only — no OPC UA, Kafka, WinCC, NATS, Redis, Neo4j, Sparkplug,
-  PLC4X, GenAI, flow engine, MCP, JDBC/InfluxDB/TimeBase loggers.
+- Lightweight subset of the Java broker's device subsystems. Currently:
+  MQTT bridge (`bridge/mqttclient/`) and WinCC Unified bridge
+  (`bridge/winccua/`, GraphQL or Open Pipe transports). Heavyweight ones
+  (Kafka, NATS, Redis, Neo4j, Sparkplug, PLC4X, GenAI, flow engine, MCP,
+  JDBC/InfluxDB/TimeBase loggers, OPC UA) remain off-limits unless the
+  user signs off on adding them — see the parity rule below before
+  introducing any new device type.
 - No clustering — single node only.
 - No UI is hosted. An external dashboard talks to `/graphql`.
 
@@ -86,6 +91,7 @@ internal/
                            # doesn't scan the subscription table per publish.
   archive/                 # ArchiveGroup orchestrator + retention loop
   bridge/mqttclient/       # paho-based outbound MQTT bridge
+  bridge/winccua/          # WinCC Unified bridge (GraphQL ws + Open Pipe)
   auth/                    # bcrypt + ACL cache
   graphql/                 # gqlgen schema, generated, resolvers, server
   pubsub/                  # in-process bus for `topicUpdates` subscription

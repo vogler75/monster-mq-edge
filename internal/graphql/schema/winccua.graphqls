@@ -1,0 +1,139 @@
+# WinCC Unified — verbatim subset of the Kotlin schema in
+# ../monster-mq/broker/src/main/resources/schema-{queries,mutations}.graphqls.
+# Names, enums, argument names and nullability must stay identical so the
+# external dashboard can talk to either backend unchanged.
+
+enum WinCCUaAddressType {
+    TAG_VALUES
+    ACTIVE_ALARMS
+}
+
+enum WinCCUaMessageFormat {
+    JSON_ISO
+    JSON_MS
+    RAW_VALUE
+}
+
+enum WinCCUaDataAccessMode {
+    GRAPHQL
+    OPENPIPE
+}
+
+type WinCCUaAddress {
+    type: WinCCUaAddressType!
+    topic: String!
+    description: String
+    retained: Boolean!
+    nameFilters: [String!]
+    includeQuality: Boolean
+    systemNames: [String!]
+    filterString: String
+    pipeTagMode: String
+}
+
+type WinCCUaTransformConfig {
+    convertDotToSlash: Boolean!
+    convertUnderscoreToSlash: Boolean!
+    regexPattern: String
+    regexReplacement: String
+}
+
+type WinCCUaConnectionConfig {
+    dataAccessMode: WinCCUaDataAccessMode!
+    graphqlEndpoint: String
+    websocketEndpoint: String
+    username: String
+    password: String
+    pipePath: String
+    reconnectDelay: Long!
+    connectionTimeout: Long!
+    messageFormat: WinCCUaMessageFormat!
+    transformConfig: WinCCUaTransformConfig!
+    addresses: [WinCCUaAddress!]!
+}
+
+type WinCCUaClientMetrics {
+    messagesIn: Float!
+    connected: Boolean!
+    timestamp: String!
+}
+
+type WinCCUaClient {
+    name: String!
+    namespace: String!
+    nodeId: String!
+    config: WinCCUaConnectionConfig!
+    enabled: Boolean!
+    createdAt: String!
+    updatedAt: String!
+    isOnCurrentNode: Boolean!
+    metrics: [WinCCUaClientMetrics!]!
+    metricsHistory(from: String, to: String, lastMinutes: Int): [WinCCUaClientMetrics!]!
+}
+
+extend type Query {
+    winCCUaClients(name: String, node: String): [WinCCUaClient!]!
+}
+
+input WinCCUaTransformConfigInput {
+    convertDotToSlash: Boolean = true
+    convertUnderscoreToSlash: Boolean = false
+    regexPattern: String
+    regexReplacement: String
+}
+
+input WinCCUaConnectionConfigInput {
+    dataAccessMode: WinCCUaDataAccessMode = GRAPHQL
+    graphqlEndpoint: String
+    websocketEndpoint: String
+    username: String
+    password: String
+    pipePath: String
+    reconnectDelay: Long = 5000
+    connectionTimeout: Long = 10000
+    messageFormat: String = "JSON_ISO"
+    transformConfig: WinCCUaTransformConfigInput
+}
+
+input WinCCUaAddressInput {
+    type: WinCCUaAddressType!
+    topic: String!
+    description: String
+    retained: Boolean = false
+    nameFilters: [String!]
+    includeQuality: Boolean = false
+    systemNames: [String!]
+    filterString: String
+    pipeTagMode: String = "SINGLE"
+}
+
+input WinCCUaClientInput {
+    name: String!
+    namespace: String!
+    nodeId: String!
+    enabled: Boolean = true
+    config: WinCCUaConnectionConfigInput!
+}
+
+type WinCCUaClientResult {
+    success: Boolean!
+    client: WinCCUaClient
+    errors: [String!]!
+}
+
+type WinCCUaDeviceMutations {
+    create(input: WinCCUaClientInput!): WinCCUaClientResult!
+    update(name: String!, input: WinCCUaClientInput!): WinCCUaClientResult!
+    delete(name: String!): Boolean!
+    start(name: String!): WinCCUaClientResult!
+    stop(name: String!): WinCCUaClientResult!
+    toggle(name: String!, enabled: Boolean!): WinCCUaClientResult!
+    reassign(name: String!, nodeId: String!): WinCCUaClientResult!
+    addAddress(deviceName: String!, input: WinCCUaAddressInput!): WinCCUaClientResult!
+    updateAddress(deviceName: String!, topic: String!, input: WinCCUaAddressInput!): WinCCUaClientResult!
+    deleteAddress(deviceName: String!, topic: String!): WinCCUaClientResult!
+}
+
+extend type Mutation {
+    winCCUaDevice: WinCCUaDeviceMutations!
+}

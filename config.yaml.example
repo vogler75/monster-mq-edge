@@ -45,6 +45,7 @@ GraphQL:
 
 Features:
   MqttClient: true
+  WinCCUa: false
 
 # QueuedMessagesEnabled: true  -> messages for offline persistent (clean=false)
 # sessions are stored in the QueueStore table and survive broker restarts.

@@ -100,6 +100,7 @@ type GraphQLConfig struct {
 // subsystem at startup. Add new flags here as they come online.
 type FeaturesConfig struct {
 	MqttClient bool `yaml:"MqttClient"`
+	WinCCUa    bool `yaml:"WinCCUa"`
 }
 
 type Config struct {

@@ -541,6 +541,117 @@ type UserPropertyInput struct {
 	Value string `json:"value"`
 }
 
+type WinCCUaAddress struct {
+	Type           WinCCUaAddressType `json:"type"`
+	Topic          string             `json:"topic"`
+	Description    *string            `json:"description,omitempty"`
+	Retained       bool               `json:"retained"`
+	NameFilters    []string           `json:"nameFilters,omitempty"`
+	IncludeQuality *bool              `json:"includeQuality,omitempty"`
+	SystemNames    []string           `json:"systemNames,omitempty"`
+	FilterString   *string            `json:"filterString,omitempty"`
+	PipeTagMode    *string            `json:"pipeTagMode,omitempty"`
+}
+
+type WinCCUaAddressInput struct {
+	Type           WinCCUaAddressType `json:"type"`
+	Topic          string             `json:"topic"`
+	Description    *string            `json:"description,omitempty"`
+	Retained       *bool              `json:"retained,omitempty"`
+	NameFilters    []string           `json:"nameFilters,omitempty"`
+	IncludeQuality *bool              `json:"includeQuality,omitempty"`
+	SystemNames    []string           `json:"systemNames,omitempty"`
+	FilterString   *string            `json:"filterString,omitempty"`
+	PipeTagMode    *string            `json:"pipeTagMode,omitempty"`
+}
+
+type WinCCUaClient struct {
+	Name            string                   `json:"name"`
+	Namespace       string                   `json:"namespace"`
+	NodeID          string                   `json:"nodeId"`
+	Config          *WinCCUaConnectionConfig `json:"config"`
+	Enabled         bool                     `json:"enabled"`
+	CreatedAt       string                   `json:"createdAt"`
+	UpdatedAt       string                   `json:"updatedAt"`
+	IsOnCurrentNode bool                     `json:"isOnCurrentNode"`
+	Metrics         []*WinCCUaClientMetrics  `json:"metrics"`
+	MetricsHistory  []*WinCCUaClientMetrics  `json:"metricsHistory"`
+}
+
+type WinCCUaClientInput struct {
+	Name      string                        `json:"name"`
+	Namespace string                        `json:"namespace"`
+	NodeID    string                        `json:"nodeId"`
+	Enabled   *bool                         `json:"enabled,omitempty"`
+	Config    *WinCCUaConnectionConfigInput `json:"config"`
+}
+
+type WinCCUaClientMetrics struct {
+	MessagesIn float64 `json:"messagesIn"`
+	Connected  bool    `json:"connected"`
+	Timestamp  string  `json:"timestamp"`
+}
+
+type WinCCUaClientResult struct {
+	Success bool           `json:"success"`
+	Client  *WinCCUaClient `json:"client,omitempty"`
+	Errors  []string       `json:"errors"`
+}
+
+type WinCCUaConnectionConfig struct {
+	DataAccessMode    WinCCUaDataAccessMode   `json:"dataAccessMode"`
+	GraphqlEndpoint   *string                 `json:"graphqlEndpoint,omitempty"`
+	WebsocketEndpoint *string                 `json:"websocketEndpoint,omitempty"`
+	Username          *string                 `json:"username,omitempty"`
+	Password          *string                 `json:"password,omitempty"`
+	PipePath          *string                 `json:"pipePath,omitempty"`
+	ReconnectDelay    int64                   `json:"reconnectDelay"`
+	ConnectionTimeout int64                   `json:"connectionTimeout"`
+	MessageFormat     WinCCUaMessageFormat    `json:"messageFormat"`
+	TransformConfig   *WinCCUaTransformConfig `json:"transformConfig"`
+	Addresses         []*WinCCUaAddress       `json:"addresses"`
+}
+
+type WinCCUaConnectionConfigInput struct {
+	DataAccessMode    *WinCCUaDataAccessMode       `json:"dataAccessMode,omitempty"`
+	GraphqlEndpoint   *string                      `json:"graphqlEndpoint,omitempty"`
+	WebsocketEndpoint *string                      `json:"websocketEndpoint,omitempty"`
+	Username          *string                      `json:"username,omitempty"`
+	Password          *string                      `json:"password,omitempty"`
+	PipePath          *string                      `json:"pipePath,omitempty"`
+	ReconnectDelay    *int64                       `json:"reconnectDelay,omitempty"`
+	ConnectionTimeout *int64                       `json:"connectionTimeout,omitempty"`
+	MessageFormat     *string                      `json:"messageFormat,omitempty"`
+	TransformConfig   *WinCCUaTransformConfigInput `json:"transformConfig,omitempty"`
+}
+
+type WinCCUaDeviceMutations struct {
+	Create        *WinCCUaClientResult `json:"create"`
+	Update        *WinCCUaClientResult `json:"update"`
+	Delete        bool                 `json:"delete"`
+	Start         *WinCCUaClientResult `json:"start"`
+	Stop          *WinCCUaClientResult `json:"stop"`
+	Toggle        *WinCCUaClientResult `json:"toggle"`
+	Reassign      *WinCCUaClientResult `json:"reassign"`
+	AddAddress    *WinCCUaClientResult `json:"addAddress"`
+	UpdateAddress *WinCCUaClientResult `json:"updateAddress"`
+	DeleteAddress *WinCCUaClientResult `json:"deleteAddress"`
+}
+
+type WinCCUaTransformConfig struct {
+	ConvertDotToSlash        bool    `json:"convertDotToSlash"`
+	ConvertUnderscoreToSlash bool    `json:"convertUnderscoreToSlash"`
+	RegexPattern             *string `json:"regexPattern,omitempty"`
+	RegexReplacement         *string `json:"regexReplacement,omitempty"`
+}
+
+type WinCCUaTransformConfigInput struct {
+	ConvertDotToSlash        *bool   `json:"convertDotToSlash,omitempty"`
+	ConvertUnderscoreToSlash *bool   `json:"convertUnderscoreToSlash,omitempty"`
+	RegexPattern             *string `json:"regexPattern,omitempty"`
+	RegexReplacement         *string `json:"regexReplacement,omitempty"`
+}
+
 type DataFormat string
 
 const (
@@ -829,6 +940,173 @@ func (e *PayloadFormat) UnmarshalJSON(b []byte) error {
 }
 
 func (e PayloadFormat) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type WinCCUaAddressType string
+
+const (
+	WinCCUaAddressTypeTagValues    WinCCUaAddressType = "TAG_VALUES"
+	WinCCUaAddressTypeActiveAlarms WinCCUaAddressType = "ACTIVE_ALARMS"
+)
+
+var AllWinCCUaAddressType = []WinCCUaAddressType{
+	WinCCUaAddressTypeTagValues,
+	WinCCUaAddressTypeActiveAlarms,
+}
+
+func (e WinCCUaAddressType) IsValid() bool {
+	switch e {
+	case WinCCUaAddressTypeTagValues, WinCCUaAddressTypeActiveAlarms:
+		return true
+	}
+	return false
+}
+
+func (e WinCCUaAddressType) String() string {
+	return string(e)
+}
+
+func (e *WinCCUaAddressType) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = WinCCUaAddressType(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid WinCCUaAddressType", str)
+	}
+	return nil
+}
+
+func (e WinCCUaAddressType) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *WinCCUaAddressType) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e WinCCUaAddressType) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type WinCCUaDataAccessMode string
+
+const (
+	WinCCUaDataAccessModeGraphql  WinCCUaDataAccessMode = "GRAPHQL"
+	WinCCUaDataAccessModeOpenpipe WinCCUaDataAccessMode = "OPENPIPE"
+)
+
+var AllWinCCUaDataAccessMode = []WinCCUaDataAccessMode{
+	WinCCUaDataAccessModeGraphql,
+	WinCCUaDataAccessModeOpenpipe,
+}
+
+func (e WinCCUaDataAccessMode) IsValid() bool {
+	switch e {
+	case WinCCUaDataAccessModeGraphql, WinCCUaDataAccessModeOpenpipe:
+		return true
+	}
+	return false
+}
+
+func (e WinCCUaDataAccessMode) String() string {
+	return string(e)
+}
+
+func (e *WinCCUaDataAccessMode) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = WinCCUaDataAccessMode(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid WinCCUaDataAccessMode", str)
+	}
+	return nil
+}
+
+func (e WinCCUaDataAccessMode) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *WinCCUaDataAccessMode) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e WinCCUaDataAccessMode) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type WinCCUaMessageFormat string
+
+const (
+	WinCCUaMessageFormatJSONIso  WinCCUaMessageFormat = "JSON_ISO"
+	WinCCUaMessageFormatJSONMs   WinCCUaMessageFormat = "JSON_MS"
+	WinCCUaMessageFormatRawValue WinCCUaMessageFormat = "RAW_VALUE"
+)
+
+var AllWinCCUaMessageFormat = []WinCCUaMessageFormat{
+	WinCCUaMessageFormatJSONIso,
+	WinCCUaMessageFormatJSONMs,
+	WinCCUaMessageFormatRawValue,
+}
+
+func (e WinCCUaMessageFormat) IsValid() bool {
+	switch e {
+	case WinCCUaMessageFormatJSONIso, WinCCUaMessageFormatJSONMs, WinCCUaMessageFormatRawValue:
+		return true
+	}
+	return false
+}
+
+func (e WinCCUaMessageFormat) String() string {
+	return string(e)
+}
+
+func (e *WinCCUaMessageFormat) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = WinCCUaMessageFormat(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid WinCCUaMessageFormat", str)
+	}
+	return nil
+}
+
+func (e WinCCUaMessageFormat) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *WinCCUaMessageFormat) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e WinCCUaMessageFormat) MarshalJSON() ([]byte, error) {
 	var buf bytes.Buffer
 	e.MarshalGQL(&buf)
 	return buf.Bytes(), nil

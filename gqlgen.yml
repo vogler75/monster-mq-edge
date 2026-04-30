@@ -81,6 +81,22 @@ models:
     fields:
       metrics:        { resolver: true }
       metricsHistory: { resolver: true }
+  WinCCUaDeviceMutations:
+    fields:
+      create:        { resolver: true }
+      update:        { resolver: true }
+      delete:        { resolver: true }
+      start:         { resolver: true }
+      stop:          { resolver: true }
+      toggle:        { resolver: true }
+      reassign:      { resolver: true }
+      addAddress:    { resolver: true }
+      updateAddress: { resolver: true }
+      deleteAddress: { resolver: true }
+  WinCCUaClient:
+    fields:
+      metrics:        { resolver: true }
+      metricsHistory: { resolver: true }
   UserInfo:
     fields:
       aclRules: { resolver: true }
