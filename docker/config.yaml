@@ -14,15 +14,6 @@ ConfigStoreType: SQLITE
 SQLite:
   Path: /data/monstermq.db
 
-Postgres:
-  Url: "postgres://localhost:5432/monstermq"
-  User: monstermq
-  Pass: monstermq
-
-MongoDB:
-  Url: "mongodb://localhost:27017"
-  Database: monstermq
-
 UserManagement:
   Enabled: false
   PasswordAlgorithm: BCRYPT
@@ -41,10 +32,10 @@ Logging:
 
 GraphQL:
   Enabled: true
-  Port: 8080
+  Port: 4000
 
 Features:
   MqttClient: true
-  WinCCUa: false
+  WinCCUa: true
 
 QueuedMessagesEnabled: true
