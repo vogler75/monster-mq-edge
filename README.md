@@ -152,3 +152,10 @@ end-to-end MQTT bridging between two brokers.
 
 Single-node. No clustering. Production-ready for edge use on Pi 4/5;
 PostgreSQL/MongoDB backends compile but require a live DB to integration test.
+
+## License
+
+GNU General Public License v3.0.
+
+The vendored `mochi-mqtt-server` subtree remains under its original MIT license;
+see `mochi-mqtt-server/LICENSE.md`.
