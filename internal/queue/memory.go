@@ -48,7 +48,11 @@ func (q *MemoryQueue) IsQueueFull() bool {
 	return q.queueFull
 }
 
-func (q *MemoryQueue) Size() int { return len(q.queue) }
+func (q *MemoryQueue) Size() int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return len(q.queue) + len(q.outputBlock)
+}
 
 func (q *MemoryQueue) Capacity() int { return q.capacity }
 
@@ -58,9 +62,13 @@ func (q *MemoryQueue) Add(message stores.BrokerMessage) {
 		q.mu.Lock()
 		if q.queueFull {
 			q.queueFull = false
+			size := len(q.queue) + len(q.outputBlock)
+			dropped := q.droppedMessages
+			q.mu.Unlock()
 			if q.logger != nil {
-				q.logger.Warn("queue not full anymore", "size", q.Size(), "capacity", q.Capacity(), "dropped", q.droppedMessages)
+				q.logger.Warn("queue not full anymore", "size", size, "capacity", q.Capacity(), "dropped", dropped)
 			}
+			return
 		}
 		q.mu.Unlock()
 	default:
@@ -69,12 +77,13 @@ func (q *MemoryQueue) Add(message stores.BrokerMessage) {
 		dropped := q.droppedMessages
 		wasFull := q.queueFull
 		q.queueFull = true
+		size := len(q.queue) + len(q.outputBlock)
 		q.mu.Unlock()
 		if q.logger != nil {
 			if !wasFull {
-				q.logger.Warn("queue is full; dropping messages", "size", q.Size(), "capacity", q.Capacity(), "topic", message.TopicName)
+				q.logger.Warn("queue is full; dropping messages", "size", size, "capacity", q.Capacity(), "topic", message.TopicName)
 			} else if dropped%1000 == 0 {
-				q.logger.Warn("queue still full; dropping messages", "size", q.Size(), "capacity", q.Capacity(), "dropped", dropped)
+				q.logger.Warn("queue still full; dropping messages", "size", size, "capacity", q.Capacity(), "dropped", dropped)
 			}
 		}
 	}

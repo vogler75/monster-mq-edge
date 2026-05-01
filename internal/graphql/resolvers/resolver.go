@@ -1610,9 +1610,10 @@ func mqttClientConfigInputToMap(in *generated.MqttClientConnectionConfigInput) m
 		"reconnectDelay":       int64Ptr(in.ReconnectDelay, 5000),
 		"connectionTimeout":    int64Ptr(in.ConnectionTimeout, 30000),
 		"bufferEnabled":        boolPtr(in.BufferEnabled, false),
+		"bufferImplementation": stringPtr(in.BufferImplementation, "MONSTER"),
 		"bufferSize":           intPtr(in.BufferSize, 5000),
 		"persistBuffer":        boolPtr(in.PersistBuffer, false),
-		"deleteOldestMessages": boolPtr(in.DeleteOldestMessages, true),
+		"deleteOldestMessages": boolPtr(in.DeleteOldestMessages, false),
 		"sslVerifyCertificate": boolPtr(in.SslVerifyCertificate, true),
 		"protocolVersion":      intPtr(in.ProtocolVersion, 4),
 	}
@@ -1693,9 +1694,10 @@ func mapToConnectionConfig(m map[string]any) *generated.MqttClientConnectionConf
 		ReconnectDelay:       asInt64(m["reconnectDelay"], 5000),
 		ConnectionTimeout:    asInt64(m["connectionTimeout"], 30000),
 		BufferEnabled:        asBool(m["bufferEnabled"], false),
+		BufferImplementation: asStringDefault(m["bufferImplementation"], "MONSTER"),
 		BufferSize:           asInt(m["bufferSize"], 5000),
 		PersistBuffer:        asBool(m["persistBuffer"], false),
-		DeleteOldestMessages: asBool(m["deleteOldestMessages"], true),
+		DeleteOldestMessages: asBool(m["deleteOldestMessages"], false),
 		SslVerifyCertificate: asBool(m["sslVerifyCertificate"], true),
 	}
 	if v := asString(m["username"]); v != "" {
@@ -1790,6 +1792,13 @@ func asString(v any) string {
 		return s
 	}
 	return ""
+}
+
+func asStringDefault(v any, def string) string {
+	if s := asString(v); s != "" {
+		return s
+	}
+	return def
 }
 
 func asBool(v any, def bool) bool {

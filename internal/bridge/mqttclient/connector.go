@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -40,6 +41,7 @@ type Config struct {
 	ReconnectDelay       int       `json:"reconnectDelay,omitempty"`
 	Addresses            []Address `json:"addresses"`
 	BufferEnabled        bool      `json:"bufferEnabled"`
+	BufferImplementation string    `json:"bufferImplementation,omitempty"`
 	BufferSize           int       `json:"bufferSize,omitempty"`
 	PersistBuffer        bool      `json:"persistBuffer,omitempty"`
 	DeleteOldestMessages bool      `json:"deleteOldestMessages,omitempty"`
@@ -115,12 +117,23 @@ func (c *Connector) Start(ctx context.Context) error {
 		opts.SetMaxReconnectInterval(30 * time.Second)
 	}
 	opts.SetAutoReconnect(true)
+	if c.usesPahoBuffer() {
+		if c.cfg.PersistBuffer {
+			opts.SetStore(paho.NewFileStore(pahoBufferDir(c.name)))
+		} else {
+			opts.SetStore(paho.NewMemoryStore())
+		}
+		c.logger.Info("bridge message buffering enabled", "name", c.name, "type", "PAHO", "persisted", c.cfg.PersistBuffer, "size", c.bufferSize())
+	}
 	if strings.HasPrefix(c.cfg.BrokerURL, "ssl://") || strings.HasPrefix(c.cfg.BrokerURL, "tls://") || strings.HasPrefix(c.cfg.BrokerURL, "wss://") {
 		opts.SetTLSConfig(&tls.Config{MinVersion: tls.VersionTLS12})
 	}
 
 	opts.SetOnConnectHandler(func(client paho.Client) {
 		c.logger.Info("bridge connected", "name", c.name, "url", c.cfg.BrokerURL)
+		if c.queue != nil {
+			c.logger.Debug("bridge queue ready to flush", "name", c.name, "queued", c.queue.Size(), "capacity", c.queue.Capacity())
+		}
 		c.subscribeInbound(client)
 	})
 	opts.SetConnectionLostHandler(func(_ paho.Client, err error) {
@@ -207,13 +220,10 @@ func (c *Connector) startConnectRetry(ctx context.Context) {
 }
 
 func (c *Connector) initQueue() error {
-	if !c.cfg.BufferEnabled {
+	if !c.usesMonsterBuffer() {
 		return nil
 	}
-	size := c.cfg.BufferSize
-	if size <= 0 {
-		size = 5000
-	}
+	size := c.bufferSize()
 	blockSize := min(100, max(1, size))
 	if c.cfg.PersistBuffer {
 		q, err := queue.NewDiskQueue("mqtt-bridge", c.name, c.logger, size, blockSize, 100*time.Millisecond, "./buffer/mqttbridge")
@@ -226,6 +236,37 @@ func (c *Connector) initQueue() error {
 	}
 	c.logger.Info("bridge message buffering enabled", "name", c.name, "type", map[bool]string{true: "DISK", false: "MEMORY"}[c.cfg.PersistBuffer], "size", size)
 	return nil
+}
+
+func (c *Connector) usesMonsterBuffer() bool {
+	return c.cfg.BufferEnabled && c.bufferImplementation() == "MONSTER"
+}
+
+func (c *Connector) usesPahoBuffer() bool {
+	return c.cfg.BufferEnabled && c.bufferImplementation() == "PAHO"
+}
+
+func (c *Connector) bufferImplementation() string {
+	impl := strings.ToUpper(strings.TrimSpace(c.cfg.BufferImplementation))
+	if impl == "PAHO" {
+		return "PAHO"
+	}
+	return "MONSTER"
+}
+
+func (c *Connector) bufferSize() int {
+	if c.cfg.BufferSize <= 0 {
+		return 5000
+	}
+	if c.cfg.BufferSize > 100000 {
+		return 100000
+	}
+	return c.cfg.BufferSize
+}
+
+func pahoBufferDir(name string) string {
+	safe := strings.NewReplacer("/", "_", "\\", "_", ":", "_").Replace(name)
+	return filepath.Join(".", "buffer", "mqttbridge", "paho-"+safe)
 }
 
 func configMillisOrSeconds(value int) time.Duration {
@@ -313,7 +354,7 @@ func (c *Connector) startOutbound(ctx context.Context) {
 					c.logger.Warn("bridge outbound topic mapping failed", "name", c.name, "localTopic", msg.Topic)
 					continue
 				}
-				if c.cfg.BufferEnabled {
+				if c.usesMonsterBuffer() {
 					c.enqueueLocalMessage(localMessageToBrokerMessage(msg))
 					continue
 				}
@@ -353,6 +394,15 @@ func (c *Connector) enqueueLocalMessage(msg stores.BrokerMessage) {
 		return
 	}
 	c.queue.Add(msg)
+	if c.logger != nil {
+		c.logger.Debug("bridge outbound queued",
+			"name", c.name,
+			"localTopic", msg.TopicName,
+			"queued", c.queue.Size(),
+			"capacity", c.queue.Capacity(),
+			"full", c.queue.IsQueueFull(),
+		)
+	}
 }
 
 func (c *Connector) startQueueWriter(ctx context.Context) {
@@ -386,6 +436,14 @@ func (c *Connector) startQueueWriter(ctx context.Context) {
 				continue
 			}
 
+			if c.logger != nil {
+				c.logger.Debug("bridge queue flush started",
+					"name", c.name,
+					"count", count,
+					"queued", c.queue.Size(),
+					"capacity", c.queue.Capacity(),
+				)
+			}
 			allPublished := true
 		publishLoop:
 			for _, message := range messages {
@@ -403,7 +461,21 @@ func (c *Connector) startQueueWriter(ctx context.Context) {
 			}
 			if allPublished {
 				c.queue.PollCommit()
+				if c.logger != nil {
+					c.logger.Debug("bridge queue flush committed",
+						"name", c.name,
+						"count", count,
+						"remaining", c.queue.Size(),
+					)
+				}
 			} else {
+				if c.logger != nil {
+					c.logger.Debug("bridge queue flush retained for retry",
+						"name", c.name,
+						"count", count,
+						"queued", c.queue.Size(),
+					)
+				}
 				time.Sleep(time.Second)
 			}
 		}
@@ -420,33 +492,90 @@ func (c *Connector) publishLocalMessage(addr Address, msg stores.BrokerMessage, 
 	c.mu.Lock()
 	client := c.client
 	c.mu.Unlock()
-	if client == nil || !client.IsConnected() {
-		if !buffered && c.cfg.BufferEnabled {
+	if client == nil || !c.canPublishToPaho(client) {
+		if !buffered && c.usesMonsterBuffer() {
 			c.enqueueLocalMessage(msg)
+		} else if c.logger != nil {
+			c.logger.Debug("bridge outbound publish skipped; remote disconnected",
+				"name", c.name,
+				"localTopic", msg.TopicName,
+				"remoteTopic", remote,
+				"buffered", buffered,
+				"bufferEnabled", c.cfg.BufferEnabled,
+				"bufferImplementation", c.bufferImplementation(),
+			)
 		}
 		return false
 	}
 
-	qos := byte(addr.QoS)
+	qos := outboundQoS(addr, msg)
 	tok := client.Publish(remote, qos, addr.Retain || msg.IsRetain, msg.Payload)
 	if !tok.WaitTimeout(5 * time.Second) {
 		c.logger.Warn("bridge outbound publish timeout", "name", c.name, "topic", remote)
-		if !buffered && c.cfg.BufferEnabled {
+		if !buffered && c.usesMonsterBuffer() {
 			c.enqueueLocalMessage(msg)
+		} else if c.logger != nil {
+			c.logger.Debug("bridge outbound publish not queued after timeout",
+				"name", c.name,
+				"localTopic", msg.TopicName,
+				"remoteTopic", remote,
+				"buffered", buffered,
+				"bufferEnabled", c.cfg.BufferEnabled,
+				"bufferImplementation", c.bufferImplementation(),
+			)
 		}
 		return false
 	}
 	if err := tok.Error(); err != nil {
 		c.logger.Warn("bridge outbound publish failed", "name", c.name, "topic", remote, "err", err)
-		if !buffered && c.cfg.BufferEnabled {
+		if !buffered && c.usesMonsterBuffer() {
 			c.enqueueLocalMessage(msg)
+		} else if c.logger != nil {
+			c.logger.Debug("bridge outbound publish not queued after failure",
+				"name", c.name,
+				"localTopic", msg.TopicName,
+				"remoteTopic", remote,
+				"buffered", buffered,
+				"bufferEnabled", c.cfg.BufferEnabled,
+				"bufferImplementation", c.bufferImplementation(),
+			)
 		}
 		return false
 	}
 	if c.IncOut != nil {
 		c.IncOut()
 	}
+	if c.logger != nil {
+		c.logger.Debug("bridge outbound published",
+			"name", c.name,
+			"localTopic", msg.TopicName,
+			"remoteTopic", remote,
+			"qos", qos,
+			"retain", addr.Retain || msg.IsRetain,
+			"buffered", buffered,
+		)
+	}
 	return true
+}
+
+func outboundQoS(addr Address, msg stores.BrokerMessage) byte {
+	if addr.QoS == -1 {
+		return msg.QoS
+	}
+	if addr.QoS < 0 {
+		return 0
+	}
+	if addr.QoS > 2 {
+		return 2
+	}
+	return byte(addr.QoS)
+}
+
+func (c *Connector) canPublishToPaho(client paho.Client) bool {
+	if c.usesPahoBuffer() {
+		return client.IsConnected()
+	}
+	return client.IsConnectionOpen()
 }
 
 // mapOutboundTopic maps a locally-published topic to the topic to forward to

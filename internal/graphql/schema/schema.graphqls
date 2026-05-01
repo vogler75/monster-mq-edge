@@ -363,6 +363,7 @@ type MqttClientAddress {
     remoteTopic: String!
     localTopic: String!
     removePath: Boolean!
+    # QoS level for MQTT messages (-1=Keep origin for PUBLISH mappings only, 0, 1, or 2)
     qos: Int
     noLocal: Boolean
     retainHandling: Int
@@ -384,6 +385,7 @@ type MqttClientConnectionConfig {
     connectionTimeout: Long!
     addresses: [MqttClientAddress!]!
     bufferEnabled: Boolean!
+    bufferImplementation: String!
     bufferSize: Int!
     persistBuffer: Boolean!
     deleteOldestMessages: Boolean!
@@ -418,6 +420,7 @@ input MqttClientAddressInput {
     remoteTopic: String!
     localTopic: String!
     removePath: Boolean = true
+    # QoS level for MQTT messages (-1=Keep origin for PUBLISH mappings only, 0, 1, or 2)
     qos: Int = 0
     noLocal: Boolean = false
     retainHandling: Int = 0
@@ -440,9 +443,10 @@ input MqttClientConnectionConfigInput {
     connectionTimeout: Long = 30000
     addresses: [MqttClientAddressInput!]
     bufferEnabled: Boolean = false
+    bufferImplementation: String = "MONSTER"
     bufferSize: Int = 5000
     persistBuffer: Boolean = false
-    deleteOldestMessages: Boolean = true
+    deleteOldestMessages: Boolean = false
     sslVerifyCertificate: Boolean = true
     protocolVersion: Int = 4
     sessionExpiryInterval: Long

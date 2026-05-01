@@ -5,6 +5,7 @@ import (
 	"time"
 
 	paho "github.com/eclipse/paho.mqtt.golang"
+	"monstermq.io/edge/internal/queue"
 	"monstermq.io/edge/internal/stores"
 )
 
@@ -90,7 +91,7 @@ func TestConfigMillisOrSecondsSupportsOldSecondValues(t *testing.T) {
 }
 
 func TestPublishLocalMessageUsesConfiguredAddressQoS(t *testing.T) {
-	client := &fakePahoClient{connected: true}
+	client := &fakePahoClient{connected: true, open: true}
 	c := NewConnector("test", Config{}, nil, nil, nil)
 	c.client = client
 
@@ -115,19 +116,95 @@ func TestPublishLocalMessageUsesConfiguredAddressQoS(t *testing.T) {
 	}
 }
 
+func TestPublishLocalMessageKeepsOriginQoS(t *testing.T) {
+	client := &fakePahoClient{connected: true, open: true}
+	c := NewConnector("test", Config{}, nil, nil, nil)
+	c.client = client
+
+	ok := c.publishLocalMessage(Address{
+		LocalTopic:  "local/#",
+		RemoteTopic: "remote/#",
+		RemovePath:  true,
+		QoS:         -1,
+	}, stores.BrokerMessage{
+		TopicName: "local/a",
+		Payload:   []byte("x"),
+		QoS:       2,
+	}, false)
+	if !ok {
+		t.Fatal("publishLocalMessage returned false")
+	}
+	if client.qos != 2 {
+		t.Fatalf("published qos = %d, want origin qos 2", client.qos)
+	}
+}
+
+func TestPublishLocalMessageQueuesWhenClientIsReconnecting(t *testing.T) {
+	client := &fakePahoClient{connected: true, open: false}
+	c := NewConnector("test", Config{BufferEnabled: true}, nil, nil, nil)
+	c.client = client
+	c.queue = queue.NewMemoryQueue(nil, 10, 10, 10*time.Millisecond)
+
+	ok := c.publishLocalMessage(Address{
+		LocalTopic:  "local/#",
+		RemoteTopic: "remote/#",
+		RemovePath:  true,
+		QoS:         0,
+	}, stores.BrokerMessage{
+		TopicName: "local/a",
+		Payload:   []byte("x"),
+		QoS:       0,
+	}, false)
+	if ok {
+		t.Fatal("publishLocalMessage returned true while connection was not open")
+	}
+	if client.publishCount != 0 {
+		t.Fatalf("Publish called %d times, want 0", client.publishCount)
+	}
+	if got := c.queue.Size(); got != 1 {
+		t.Fatalf("queue size = %d, want 1", got)
+	}
+}
+
+func TestPublishLocalMessageUsesPahoBufferWhenConfigured(t *testing.T) {
+	client := &fakePahoClient{connected: true, open: false}
+	c := NewConnector("test", Config{BufferEnabled: true, BufferImplementation: "PAHO"}, nil, nil, nil)
+	c.client = client
+
+	ok := c.publishLocalMessage(Address{
+		LocalTopic:  "local/#",
+		RemoteTopic: "remote/#",
+		RemovePath:  true,
+		QoS:         0,
+	}, stores.BrokerMessage{
+		TopicName: "local/a",
+		Payload:   []byte("x"),
+		QoS:       0,
+	}, false)
+	if !ok {
+		t.Fatal("publishLocalMessage returned false for PAHO reconnect buffering")
+	}
+	if client.publishCount != 1 {
+		t.Fatalf("Publish called %d times, want 1", client.publishCount)
+	}
+}
+
 type fakePahoClient struct {
-	connected bool
-	topic     string
-	qos       byte
-	retained  bool
-	payload   interface{}
+	connected    bool
+	open         bool
+	topic        string
+	qos          byte
+	retained     bool
+	payload      interface{}
+	publishCount int
 }
 
 func (f *fakePahoClient) IsConnected() bool      { return f.connected }
-func (f *fakePahoClient) IsConnectionOpen() bool { return f.connected }
+func (f *fakePahoClient) IsConnectionOpen() bool { return f.open }
 func (f *fakePahoClient) Connect() paho.Token    { return fakeToken{} }
 func (f *fakePahoClient) Disconnect(uint)        {}
 func (f *fakePahoClient) Publish(topic string, qos byte, retained bool, payload interface{}) paho.Token {
+	f.publishCount++
 	f.topic = topic
 	f.qos = qos
 	f.retained = retained

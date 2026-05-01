@@ -655,6 +655,7 @@ type MqttClientAddress {
     remoteTopic: String!
     localTopic: String!
     removePath: Boolean!
+    # QoS level for MQTT messages (-1=Keep origin for PUBLISH mappings only, 0, 1, or 2)
     qos: Int
     noLocal: Boolean
     retainHandling: Int
@@ -676,6 +677,7 @@ type MqttClientConnectionConfig {
     connectionTimeout: Long!
     addresses: [MqttClientAddress!]!
     bufferEnabled: Boolean!
+    bufferImplementation: String!
     bufferSize: Int!
     persistBuffer: Boolean!
     deleteOldestMessages: Boolean!
@@ -710,6 +712,7 @@ input MqttClientAddressInput {
     remoteTopic: String!
     localTopic: String!
     removePath: Boolean = true
+    # QoS level for MQTT messages (-1=Keep origin for PUBLISH mappings only, 0, 1, or 2)
     qos: Int = 0
     noLocal: Boolean = false
     retainHandling: Int = 0
@@ -732,9 +735,10 @@ input MqttClientConnectionConfigInput {
     connectionTimeout: Long = 30000
     addresses: [MqttClientAddressInput!]
     bufferEnabled: Boolean = false
+    bufferImplementation: String = "MONSTER"
     bufferSize: Int = 5000
     persistBuffer: Boolean = false
-    deleteOldestMessages: Boolean = true
+    deleteOldestMessages: Boolean = false
     sslVerifyCertificate: Boolean = true
     protocolVersion: Int = 4
     sessionExpiryInterval: Long
@@ -6340,6 +6344,8 @@ func (ec *executionContext) fieldContext_MqttClient_config(_ context.Context, fi
 				return ec.fieldContext_MqttClientConnectionConfig_addresses(ctx, field)
 			case "bufferEnabled":
 				return ec.fieldContext_MqttClientConnectionConfig_bufferEnabled(ctx, field)
+			case "bufferImplementation":
+				return ec.fieldContext_MqttClientConnectionConfig_bufferImplementation(ctx, field)
 			case "bufferSize":
 				return ec.fieldContext_MqttClientConnectionConfig_bufferSize(ctx, field)
 			case "persistBuffer":
@@ -7234,6 +7240,35 @@ func (ec *executionContext) fieldContext_MqttClientConnectionConfig_bufferEnable
 		IsResolver: false,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _MqttClientConnectionConfig_bufferImplementation(ctx context.Context, field graphql.CollectedField, obj *MqttClientConnectionConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_MqttClientConnectionConfig_bufferImplementation,
+		func(ctx context.Context) (any, error) {
+			return obj.BufferImplementation, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_MqttClientConnectionConfig_bufferImplementation(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "MqttClientConnectionConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
 		},
 	}
 	return fc, nil
@@ -17118,6 +17153,9 @@ func (ec *executionContext) unmarshalInputMqttClientConnectionConfigInput(ctx co
 	if _, present := asMap["bufferEnabled"]; !present {
 		asMap["bufferEnabled"] = false
 	}
+	if _, present := asMap["bufferImplementation"]; !present {
+		asMap["bufferImplementation"] = "MONSTER"
+	}
 	if _, present := asMap["bufferSize"]; !present {
 		asMap["bufferSize"] = 5000
 	}
@@ -17125,7 +17163,7 @@ func (ec *executionContext) unmarshalInputMqttClientConnectionConfigInput(ctx co
 		asMap["persistBuffer"] = false
 	}
 	if _, present := asMap["deleteOldestMessages"]; !present {
-		asMap["deleteOldestMessages"] = true
+		asMap["deleteOldestMessages"] = false
 	}
 	if _, present := asMap["sslVerifyCertificate"]; !present {
 		asMap["sslVerifyCertificate"] = true
@@ -17134,7 +17172,7 @@ func (ec *executionContext) unmarshalInputMqttClientConnectionConfigInput(ctx co
 		asMap["protocolVersion"] = 4
 	}
 
-	fieldsInOrder := [...]string{"brokerUrl", "username", "password", "clientId", "cleanSession", "keepAlive", "reconnectDelay", "connectionTimeout", "addresses", "bufferEnabled", "bufferSize", "persistBuffer", "deleteOldestMessages", "sslVerifyCertificate", "protocolVersion", "sessionExpiryInterval", "receiveMaximum", "maximumPacketSize", "topicAliasMaximum"}
+	fieldsInOrder := [...]string{"brokerUrl", "username", "password", "clientId", "cleanSession", "keepAlive", "reconnectDelay", "connectionTimeout", "addresses", "bufferEnabled", "bufferImplementation", "bufferSize", "persistBuffer", "deleteOldestMessages", "sslVerifyCertificate", "protocolVersion", "sessionExpiryInterval", "receiveMaximum", "maximumPacketSize", "topicAliasMaximum"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -17211,6 +17249,13 @@ func (ec *executionContext) unmarshalInputMqttClientConnectionConfigInput(ctx co
 				return it, err
 			}
 			it.BufferEnabled = data
+		case "bufferImplementation":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("bufferImplementation"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.BufferImplementation = data
 		case "bufferSize":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("bufferSize"))
 			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
@@ -19645,6 +19690,11 @@ func (ec *executionContext) _MqttClientConnectionConfig(ctx context.Context, sel
 			}
 		case "bufferEnabled":
 			out.Values[i] = ec._MqttClientConnectionConfig_bufferEnabled(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "bufferImplementation":
+			out.Values[i] = ec._MqttClientConnectionConfig_bufferImplementation(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}

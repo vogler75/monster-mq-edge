@@ -108,11 +108,7 @@ func (q *DiskQueue) IsQueueFull() bool {
 func (q *DiskQueue) Size() int {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	size := q.writePos - q.readPos
-	if size >= 0 {
-		return int(size / diskBytesPerMessage)
-	}
-	return int((q.fileSize - diskHeaderSize + size) / diskBytesPerMessage)
+	return q.sizeLocked() + len(q.outputBlock)
 }
 
 func (q *DiskQueue) Capacity() int { return q.capacity }

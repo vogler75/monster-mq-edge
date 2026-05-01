@@ -257,6 +257,7 @@ type MqttClientConnectionConfig struct {
 	ConnectionTimeout     int64                `json:"connectionTimeout"`
 	Addresses             []*MqttClientAddress `json:"addresses"`
 	BufferEnabled         bool                 `json:"bufferEnabled"`
+	BufferImplementation  string               `json:"bufferImplementation"`
 	BufferSize            int                  `json:"bufferSize"`
 	PersistBuffer         bool                 `json:"persistBuffer"`
 	DeleteOldestMessages  bool                 `json:"deleteOldestMessages"`
@@ -279,6 +280,7 @@ type MqttClientConnectionConfigInput struct {
 	ConnectionTimeout     *int64                    `json:"connectionTimeout,omitempty"`
 	Addresses             []*MqttClientAddressInput `json:"addresses,omitempty"`
 	BufferEnabled         *bool                     `json:"bufferEnabled,omitempty"`
+	BufferImplementation  *string                   `json:"bufferImplementation,omitempty"`
 	BufferSize            *int                      `json:"bufferSize,omitempty"`
 	PersistBuffer         *bool                     `json:"persistBuffer,omitempty"`
 	DeleteOldestMessages  *bool                     `json:"deleteOldestMessages,omitempty"`
