@@ -1,9 +1,9 @@
 NodeId: edge-rpi-01
 
 TCP:  { Enabled: true,  Port: 1883, Address: "0.0.0.0" }  # use "::" for IPv6
-TCPS: { Enabled: false, Port: 8883, Address: "0.0.0.0", KeyStorePath: "", KeyStorePassword: "" }
+TCPS: { Enabled: false, Port: 8883, Address: "0.0.0.0", KeyStorePath: "data/keystore", KeyStorePassword: "" }
 WS:   { Enabled: true,  Port: 1884, Address: "0.0.0.0" }
-WSS:  { Enabled: false, Port: 8884, Address: "0.0.0.0" }
+WSS:  { Enabled: false, Port: 8884, Address: "0.0.0.0", KeyStorePath: "data/keystore", KeyStorePassword: "" }
 MaxMessageSize: 1048576
 
 DefaultStoreType: SQLITE
