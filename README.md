@@ -89,6 +89,22 @@ MongoDB:  { Url: "mongodb://localhost:27017", Database: monstermq }
 All seven stores (retained, sessions, subscriptions, queue, users, archive
 config, device config, metrics) live on the chosen backend.
 
+## User management
+
+When `UserManagement.Enabled` is `true`, the broker ensures a default admin
+user exists during startup:
+
+```text
+username: Admin
+password: Admin
+```
+
+Change this password immediately after first login. If the user already exists,
+startup leaves it unchanged.
+
+With `AnonymousEnabled: true`, GraphQL login and MQTT clients can still use
+anonymous access. Set `AnonymousEnabled: false` to require configured users.
+
 ## Dashboard
 
 Set `Dashboard.Path` to a built `dashboard/dist` directory to serve the existing

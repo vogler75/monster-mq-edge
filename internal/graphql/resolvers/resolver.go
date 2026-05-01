@@ -135,12 +135,32 @@ func (r *topicResolver) Value(ctx context.Context, obj *generated.Topic, format 
 
 func ptr[T any](v T) *T { return &v }
 
-func nowISO() string                  { return time.Now().UTC().Format(time.RFC3339Nano) }
-func formatTime(t time.Time) string   { return t.UTC().Format(time.RFC3339Nano) }
-func boolPtr(p *bool, def bool) bool  { if p == nil { return def }; return *p }
-func intPtr(p *int, def int) int      { if p == nil { return def }; return *p }
-func ptrIfNotEmpty(s string) *string  { if s == "" { return nil }; return &s }
-func derefStr(s *string) string       { if s == nil { return "" }; return *s }
+func nowISO() string                { return time.Now().UTC().Format(time.RFC3339Nano) }
+func formatTime(t time.Time) string { return t.UTC().Format(time.RFC3339Nano) }
+func boolPtr(p *bool, def bool) bool {
+	if p == nil {
+		return def
+	}
+	return *p
+}
+func intPtr(p *int, def int) int {
+	if p == nil {
+		return def
+	}
+	return *p
+}
+func ptrIfNotEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+func derefStr(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
 
 // encodePayload returns the payload string and the format it was encoded in,
 // matching the JVM broker's contract:
@@ -967,8 +987,17 @@ func logEntryMatches(e mlog.Entry, node *string, level []string, logger *string,
 	if sourceMethod != nil && *sourceMethod != "" && !strings.Contains(e.SourceMethod, *sourceMethod) {
 		return false
 	}
-	if message != nil && *message != "" && !strings.Contains(e.Message, *message) {
-		return false
+	if message != nil && *message != "" {
+		haystack := e.Message
+		if len(e.Parameters) > 0 {
+			haystack += " " + strings.Join(e.Parameters, " ")
+		}
+		if e.Exception != nil {
+			haystack += " " + e.Exception.Message
+		}
+		if !strings.Contains(haystack, *message) {
+			return false
+		}
 	}
 	if from != nil && e.Timestamp.Before(*from) {
 		return false
@@ -1052,7 +1081,7 @@ func snapshotToBrokerMetrics(s metrics.BrokerSnapshot) *generated.BrokerMetrics 
 	return &generated.BrokerMetrics{
 		MessagesIn: s.MessagesIn, MessagesOut: s.MessagesOut,
 		MqttClientIn: s.MqttClientIn, MqttClientOut: s.MqttClientOut,
-		NodeSessionCount:  s.NodeSessionCount,
+		NodeSessionCount:    s.NodeSessionCount,
 		ClusterSessionCount: s.NodeSessionCount,
 		QueuedMessagesCount: s.QueuedMessages,
 		SubscriptionCount:   s.SubscriptionCount,
@@ -1502,14 +1531,14 @@ func (r *mqttClientMutationsResolver) mutateAddresses(ctx context.Context, devic
 
 func addressInputToMap(in generated.MqttClientAddressInput) map[string]any {
 	m := map[string]any{
-		"mode":        in.Mode,
-		"remoteTopic": in.RemoteTopic,
-		"localTopic":  in.LocalTopic,
-		"removePath":  boolPtr(in.RemovePath, true),
-		"qos":         intPtr(in.Qos, 0),
-		"noLocal":     boolPtr(in.NoLocal, false),
-		"retainHandling":   intPtr(in.RetainHandling, 0),
-		"retainAsPublished": boolPtr(in.RetainAsPublished, false),
+		"mode":                   in.Mode,
+		"remoteTopic":            in.RemoteTopic,
+		"localTopic":             in.LocalTopic,
+		"removePath":             boolPtr(in.RemovePath, true),
+		"qos":                    intPtr(in.Qos, 0),
+		"noLocal":                boolPtr(in.NoLocal, false),
+		"retainHandling":         intPtr(in.RetainHandling, 0),
+		"retainAsPublished":      boolPtr(in.RetainAsPublished, false),
 		"payloadFormatIndicator": boolPtr(in.PayloadFormatIndicator, false),
 	}
 	if in.MessageExpiryInterval != nil {

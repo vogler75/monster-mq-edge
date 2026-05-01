@@ -216,7 +216,11 @@ func TestGraphQLUserManagement(t *testing.T) {
 	// List users
 	data = gqlQuery(t, url, `{ users { username isAdmin } }`, nil)
 	users := data["users"].([]any)
-	if len(users) != 1 || users[0].(map[string]any)["username"] != "bob" {
+	seen := map[string]bool{}
+	for _, raw := range users {
+		seen[raw.(map[string]any)["username"].(string)] = true
+	}
+	if !seen["Admin"] || !seen["bob"] {
 		t.Fatalf("users %v", users)
 	}
 }

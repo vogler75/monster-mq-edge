@@ -10,8 +10,8 @@ import (
 	"github.com/mochi-mqtt/server/v2/hooks/auth"
 	"github.com/mochi-mqtt/server/v2/listeners"
 
-	mauth "monstermq.io/edge/internal/auth"
 	"monstermq.io/edge/internal/archive"
+	mauth "monstermq.io/edge/internal/auth"
 	"monstermq.io/edge/internal/bridge/mqttclient"
 	"monstermq.io/edge/internal/bridge/winccua"
 	"monstermq.io/edge/internal/config"
@@ -21,10 +21,10 @@ import (
 	"monstermq.io/edge/internal/metrics"
 	"monstermq.io/edge/internal/pubsub"
 	"monstermq.io/edge/internal/stores"
-	"monstermq.io/edge/internal/topic"
 	storemongo "monstermq.io/edge/internal/stores/mongodb"
 	storepg "monstermq.io/edge/internal/stores/postgres"
 	storesqlite "monstermq.io/edge/internal/stores/sqlite"
+	"monstermq.io/edge/internal/topic"
 )
 
 // Server is the top-level lifecycle holder for the edge broker.
@@ -70,6 +70,9 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 	}
 	if err != nil {
 		return nil, fmt.Errorf("storage init: %w", err)
+	}
+	if err := ensureDefaultAdmin(ctx, cfg, storage, logger); err != nil {
+		return nil, fmt.Errorf("default admin init: %w", err)
 	}
 
 	// 2. Auth cache
@@ -292,8 +295,8 @@ func (s *Server) Close() error {
 }
 
 // Storage exposes the store stack for GraphQL resolvers (M6+).
-func (s *Server) Storage() *stores.Storage          { return s.storage }
-func (s *Server) Bus() *pubsub.Bus                  { return s.bus }
+func (s *Server) Storage() *stores.Storage                { return s.storage }
+func (s *Server) Bus() *pubsub.Bus                        { return s.bus }
 func (s *Server) Subscriptions() *topic.SubscriptionIndex { return s.subs }
-func (s *Server) Archives() *archive.Manager        { return s.archives }
-func (s *Server) Mochi() *mqtt.Server               { return s.mochi }
+func (s *Server) Archives() *archive.Manager              { return s.archives }
+func (s *Server) Mochi() *mqtt.Server                     { return s.mochi }

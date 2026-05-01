@@ -2,7 +2,9 @@ package log
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 )
@@ -30,12 +32,12 @@ type Exception struct {
 // Bus distributes log entries to subscribed listeners and keeps a ring buffer
 // of recent ones for the systemLogs query (history).
 type Bus struct {
-	mu         sync.RWMutex
-	ring       []Entry
-	ringHead   int
-	ringSize   int
-	subs       map[int]chan Entry
-	nextSubID  int
+	mu        sync.RWMutex
+	ring      []Entry
+	ringHead  int
+	ringSize  int
+	subs      map[int]chan Entry
+	nextSubID int
 }
 
 func NewBus(ringSize int) *Bus {
@@ -114,6 +116,7 @@ type Handler struct {
 	bus    *Bus
 	inner  slog.Handler
 	nodeID string
+	attrs  []slog.Attr
 }
 
 func NewHandler(bus *Bus, inner slog.Handler, nodeID string) *Handler {
@@ -132,7 +135,9 @@ func (h *Handler) Handle(ctx context.Context, r slog.Record) error {
 		Message:   r.Message,
 		Node:      h.nodeID,
 	}
-	r.Attrs(func(a slog.Attr) bool {
+	params := make([]string, 0, len(h.attrs)+r.NumAttrs())
+	visit := func(a slog.Attr) {
+		a.Value = a.Value.Resolve()
 		switch a.Key {
 		case "logger":
 			entry.Logger = a.Value.String()
@@ -142,19 +147,38 @@ func (h *Handler) Handle(ctx context.Context, r slog.Record) error {
 			entry.SourceMethod = a.Value.String()
 		case "thread":
 			entry.Thread = a.Value.Int64()
+		case "err", "error":
+			msg := attrValueString(a.Value)
+			entry.Exception = &Exception{Class: "error", Message: msg}
+			params = append(params, fmt.Sprintf("%s=%s", a.Key, msg))
+		default:
+			params = append(params, fmt.Sprintf("%s=%s", a.Key, attrValueString(a.Value)))
 		}
+	}
+	for _, a := range h.attrs {
+		visit(a)
+	}
+	r.Attrs(func(a slog.Attr) bool {
+		visit(a)
 		return true
 	})
+	entry.Parameters = params
+	if entry.Message == "" && len(params) > 0 {
+		entry.Message = strings.Join(params, " ")
+	}
 	h.bus.Publish(entry)
 	return h.inner.Handle(ctx, r)
 }
 
 func (h *Handler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return &Handler{bus: h.bus, inner: h.inner.WithAttrs(attrs), nodeID: h.nodeID}
+	next := &Handler{bus: h.bus, inner: h.inner.WithAttrs(attrs), nodeID: h.nodeID}
+	next.attrs = append(next.attrs, h.attrs...)
+	next.attrs = append(next.attrs, attrs...)
+	return next
 }
 
 func (h *Handler) WithGroup(name string) slog.Handler {
-	return &Handler{bus: h.bus, inner: h.inner.WithGroup(name), nodeID: h.nodeID}
+	return &Handler{bus: h.bus, inner: h.inner.WithGroup(name), nodeID: h.nodeID, attrs: append([]slog.Attr(nil), h.attrs...)}
 }
 
 func levelName(l slog.Level) string {
@@ -168,4 +192,13 @@ func levelName(l slog.Level) string {
 	default:
 		return "FINE"
 	}
+}
+
+func attrValueString(v slog.Value) string {
+	if v.Kind() == slog.KindAny {
+		if err, ok := v.Any().(error); ok {
+			return err.Error()
+		}
+	}
+	return v.String()
 }
