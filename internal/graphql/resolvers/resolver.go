@@ -149,6 +149,18 @@ func intPtr(p *int, def int) int {
 	}
 	return *p
 }
+func int64Ptr(p *int64, def int64) int64 {
+	if p == nil {
+		return def
+	}
+	return *p
+}
+func stringPtr(p *string, def string) string {
+	if p == nil {
+		return def
+	}
+	return *p
+}
 func ptrIfNotEmpty(s string) *string {
 	if s == "" {
 		return nil
@@ -1392,7 +1404,7 @@ func (r *sessionMutationsResolver) RemoveSessions(ctx context.Context, _ *genera
 }
 
 func (r *mqttClientMutationsResolver) Create(ctx context.Context, _ *generated.MqttClientMutations, input generated.MqttClientInput) (*generated.MqttClientResult, error) {
-	cfgBytes, _ := json.Marshal(input.Config)
+	cfgBytes, _ := json.Marshal(mqttClientConfigInputToMap(input.Config))
 	d := stores.DeviceConfig{
 		Name: input.Name, Namespace: input.Namespace, NodeID: input.NodeID,
 		Type: "MQTT_CLIENT", Enabled: boolPtr(input.Enabled, true), Config: string(cfgBytes),
@@ -1411,7 +1423,32 @@ func (r *mqttClientMutationsResolver) Update(ctx context.Context, obj *generated
 	if name != input.Name {
 		return &generated.MqttClientResult{Success: false, Errors: []string{"name in path must match name in input"}}, nil
 	}
-	return r.Create(ctx, obj, input)
+	existing, err := r.Storage.DeviceConfig.Get(ctx, name)
+	if err != nil || existing == nil {
+		return &generated.MqttClientResult{Success: false, Errors: []string{"not found"}}, nil
+	}
+
+	cfg := mqttClientConfigInputToMergedMap(input.Config, existing.Config)
+	cfgBytes, _ := json.Marshal(cfg)
+
+	d := stores.DeviceConfig{
+		Name:      input.Name,
+		Namespace: input.Namespace,
+		NodeID:    input.NodeID,
+		Type:      "MQTT_CLIENT",
+		Enabled:   boolPtr(input.Enabled, existing.Enabled),
+		Config:    string(cfgBytes),
+		CreatedAt: existing.CreatedAt,
+	}
+	if err := r.Storage.DeviceConfig.Save(ctx, d); err != nil {
+		return &generated.MqttClientResult{Success: false, Errors: []string{err.Error()}}, nil
+	}
+	saved, _ := r.Storage.DeviceConfig.Get(ctx, d.Name)
+	if saved == nil {
+		saved = &d
+	}
+	r.reloadBridges(ctx, "update")
+	return &generated.MqttClientResult{Success: true, Errors: []string{}, Client: r.deviceToMqttClient(*saved)}, nil
 }
 func (r *mqttClientMutationsResolver) Delete(ctx context.Context, _ *generated.MqttClientMutations, name string) (bool, error) {
 	if err := r.Storage.DeviceConfig.Delete(ctx, name); err != nil {
@@ -1559,6 +1596,77 @@ func addressInputToMap(in generated.MqttClientAddressInput) map[string]any {
 		m["userProperties"] = props
 	}
 	return m
+}
+
+func mqttClientConfigInputToMap(in *generated.MqttClientConnectionConfigInput) map[string]any {
+	if in == nil {
+		return map[string]any{}
+	}
+	m := map[string]any{
+		"brokerUrl":            in.BrokerURL,
+		"clientId":             stringPtr(in.ClientID, "monstermq-client"),
+		"cleanSession":         boolPtr(in.CleanSession, true),
+		"keepAlive":            intPtr(in.KeepAlive, 60),
+		"reconnectDelay":       int64Ptr(in.ReconnectDelay, 5000),
+		"connectionTimeout":    int64Ptr(in.ConnectionTimeout, 30000),
+		"bufferEnabled":        boolPtr(in.BufferEnabled, false),
+		"bufferSize":           intPtr(in.BufferSize, 5000),
+		"persistBuffer":        boolPtr(in.PersistBuffer, false),
+		"deleteOldestMessages": boolPtr(in.DeleteOldestMessages, true),
+		"sslVerifyCertificate": boolPtr(in.SslVerifyCertificate, true),
+		"protocolVersion":      intPtr(in.ProtocolVersion, 4),
+	}
+	if in.Username != nil {
+		m["username"] = *in.Username
+	}
+	if in.Password != nil {
+		m["password"] = *in.Password
+	}
+	if in.Addresses != nil {
+		addrs := make([]map[string]any, 0, len(in.Addresses))
+		for _, a := range in.Addresses {
+			if a != nil {
+				addrs = append(addrs, addressInputToMap(*a))
+			}
+		}
+		m["addresses"] = addrs
+	}
+	if in.SessionExpiryInterval != nil {
+		m["sessionExpiryInterval"] = *in.SessionExpiryInterval
+	}
+	if in.ReceiveMaximum != nil {
+		m["receiveMaximum"] = *in.ReceiveMaximum
+	}
+	if in.MaximumPacketSize != nil {
+		m["maximumPacketSize"] = *in.MaximumPacketSize
+	}
+	if in.TopicAliasMaximum != nil {
+		m["topicAliasMaximum"] = *in.TopicAliasMaximum
+	}
+	return m
+}
+
+func mqttClientConfigInputToMergedMap(in *generated.MqttClientConnectionConfigInput, existingJSON string) map[string]any {
+	cfg := mqttClientConfigInputToMap(in)
+	prevCfg := map[string]any{}
+	_ = json.Unmarshal([]byte(existingJSON), &prevCfg)
+
+	// Addresses are managed by add/update/deleteAddress and are optional on
+	// the full config input. Preserve them when the dashboard saves only the
+	// connection settings.
+	if in == nil || in.Addresses == nil {
+		if prev, ok := prevCfg["addresses"]; ok {
+			cfg["addresses"] = prev
+		}
+	}
+	// Preserve the existing password when the dashboard leaves the password
+	// field blank or omitted.
+	if in == nil || in.Password == nil || *in.Password == "" {
+		if prev, ok := prevCfg["password"]; ok {
+			cfg["password"] = prev
+		}
+	}
+	return cfg
 }
 
 func (r *Resolver) deviceToMqttClient(d stores.DeviceConfig) *generated.MqttClient {

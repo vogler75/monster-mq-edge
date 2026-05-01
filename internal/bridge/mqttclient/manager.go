@@ -18,6 +18,12 @@ type Manager struct {
 	logger    *slog.Logger
 	nodeID    string
 
+	// srvCtx is the long-lived server context saved by Start(). Connector
+	// goroutines must use this, not the short-lived GraphQL request context
+	// that Reload() receives; otherwise the outbound subscriber exits as soon
+	// as the HTTP response is sent.
+	srvCtx context.Context
+
 	mu         sync.Mutex
 	connectors map[string]*Connector
 	lastConfig map[string]string // device name → raw JSON last deployed
@@ -26,12 +32,14 @@ type Manager struct {
 func NewManager(store stores.DeviceConfigStore, publisher LocalPublisher, subBus LocalSubscriber, nodeID string, logger *slog.Logger) *Manager {
 	return &Manager{
 		store: store, publisher: publisher, subBus: subBus, logger: logger, nodeID: nodeID,
+		srvCtx:     context.Background(),
 		connectors: map[string]*Connector{},
 		lastConfig: map[string]string{},
 	}
 }
 
 func (m *Manager) Start(ctx context.Context) error {
+	m.srvCtx = ctx
 	devices, err := m.store.GetEnabledByNode(ctx, m.nodeID)
 	if err != nil {
 		return err
@@ -49,7 +57,7 @@ func (m *Manager) Start(ctx context.Context) error {
 			cfg.ClientID = "edge-" + m.nodeID + "-" + d.Name
 		}
 		c := NewConnector(d.Name, cfg, m.publisher, m.subBus, m.logger)
-		if err := c.Start(ctx); err != nil {
+		if err := c.Start(m.srvCtx); err != nil {
 			m.logger.Warn("bridge start failed", "name", d.Name, "err", err)
 			continue
 		}
@@ -121,7 +129,7 @@ func (m *Manager) Reload(ctx context.Context) error {
 			continue
 		}
 		c := NewConnector(name, cfg, m.publisher, m.subBus, m.logger)
-		if err := c.Start(ctx); err != nil {
+		if err := c.Start(m.srvCtx); err != nil {
 			m.logger.Warn("bridge start failed", "name", name, "err", err)
 			continue
 		}
