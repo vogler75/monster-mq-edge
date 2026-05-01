@@ -1,8 +1,8 @@
 #!/bin/sh
 set -eu
 
-if [ -f /config/config.yaml ]; then
-    CONFIG=/config/config.yaml
+if [ -f /cfg-data/config.yaml ]; then
+    CONFIG=/cfg-data/config.yaml
 else
     CONFIG=/etc/monstermq/config.yaml
 fi

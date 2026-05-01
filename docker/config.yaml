@@ -12,7 +12,7 @@ RetainedStoreType: MEMORY
 ConfigStoreType: SQLITE
 
 SQLite:
-  Path: /data/monstermq.db
+  Path: /cfg-data/monstermq.db
 
 UserManagement:
   Enabled: false

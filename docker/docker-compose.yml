@@ -8,5 +8,4 @@ services:
       - "1884:1884"   # MQTT WebSocket
       - "8080:8080"   # GraphQL
     volumes:
-      - ./config:/config:ro
-      - ./data:/data
+      - ./data:/cfg-data

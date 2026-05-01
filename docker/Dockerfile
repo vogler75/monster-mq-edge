@@ -22,16 +22,13 @@ FROM alpine:3
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
 RUN apk add --no-cache ca-certificates && \
-    mkdir -p /config /data && \
-    chown 65532:65532 /config /data
+    mkdir -p /cfg-data
 
 COPY --from=build /out/monstermq-edge /monstermq-edge
 COPY docker/config.yaml /etc/monstermq/config.yaml
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-USER 65532:65532
-VOLUME ["/config", "/data"]
 EXPOSE 1883 1884 8080
 
 ENTRYPOINT ["/entrypoint.sh"]
