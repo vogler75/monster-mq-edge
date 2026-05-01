@@ -199,7 +199,7 @@ type LoginResult struct {
 	Message  *string `json:"message,omitempty"`
 	Token    *string `json:"token,omitempty"`
 	Username *string `json:"username,omitempty"`
-	IsAdmin  *bool   `json:"isAdmin,omitempty"`
+	IsAdmin  bool    `json:"isAdmin"`
 }
 
 type MqttClient struct {

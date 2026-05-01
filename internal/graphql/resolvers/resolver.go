@@ -267,33 +267,34 @@ func parseTimeArg(s *string) (*time.Time, error) {
 // Mutations -----------------------------------------------------------------
 
 func (r *mutationResolver) Login(ctx context.Context, username, password string) (*generated.LoginResult, error) {
-	// When user management is disabled (or anonymous is permitted), the dashboard
-	// still calls login(). Match the JVM broker's response exactly so the UI
-	// behaves identically: success=true, no token, username="anonymous",
-	// isAdmin=true, message="Authentication disabled".
-	if !r.Cfg.UserManagement.Enabled || r.Cfg.UserManagement.AnonymousEnabled {
+	// When user management is disabled, the dashboard still calls login().
+	// Match the JVM broker's response shape so the UI behaves identically.
+	if !r.Cfg.UserManagement.Enabled {
 		name := "anonymous"
 		admin := true
 		return &generated.LoginResult{
 			Success:  true,
 			Message:  ptr("Authentication disabled"),
 			Username: &name,
-			IsAdmin:  &admin,
+			IsAdmin:  admin,
 		}, nil
 	}
 	if r.Storage == nil {
-		return &generated.LoginResult{Success: false, Message: ptr("auth unavailable")}, nil
+		return &generated.LoginResult{Success: false, Message: ptr("auth unavailable"), IsAdmin: false}, nil
+	}
+	if username == "" || password == "" {
+		return &generated.LoginResult{Success: false, Message: ptr("Username and password are required"), IsAdmin: false}, nil
 	}
 	user, err := r.Storage.Users.ValidateCredentials(ctx, username, password)
 	if err != nil {
-		return &generated.LoginResult{Success: false, Message: ptr(err.Error())}, nil
+		return &generated.LoginResult{Success: false, Message: ptr("Authentication failed"), IsAdmin: false}, nil
 	}
 	if user == nil {
-		return &generated.LoginResult{Success: false, Message: ptr("invalid credentials")}, nil
+		return &generated.LoginResult{Success: false, Message: ptr("Invalid username or password"), IsAdmin: false}, nil
 	}
 	tok := fmt.Sprintf("session-%s-%d", user.Username, time.Now().UnixNano())
 	return &generated.LoginResult{
-		Success: true, Token: &tok, Username: &user.Username, IsAdmin: &user.IsAdmin,
+		Success: true, Token: &tok, Message: ptr("Login successful"), Username: &user.Username, IsAdmin: user.IsAdmin,
 	}, nil
 }
 

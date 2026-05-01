@@ -34,17 +34,33 @@ func TestLoginAcceptsAnyCredentialsWhenUserMgmtDisabled(t *testing.T) {
 	}
 }
 
-// TestLoginAcceptsAnyCredentialsWhenAnonymous: even with user mgmt enabled,
-// anonymous mode means any login succeeds.
-func TestLoginAcceptsAnyCredentialsWhenAnonymous(t *testing.T) {
+// TestLoginUsesCredentialsWhenAnonymousAllowed verifies that AnonymousEnabled
+// permits unauthenticated MQTT/GraphQL access but does not bypass login().
+func TestLoginUsesCredentialsWhenAnonymousAllowed(t *testing.T) {
 	srv, url := startWithGraphQL(t, 23007, 28007, func(c *config.Config) {
 		c.UserManagement.Enabled = true
 		c.UserManagement.AnonymousEnabled = true
 	})
 	defer srv.Close()
 
-	data := gqlQuery(t, url, `mutation { login(username: "x", password: "y") { success } }`, nil)
-	if !data["login"].(map[string]any)["success"].(bool) {
-		t.Fatal("anonymous mode should accept login")
+	data := gqlQuery(t, url, `mutation { login(username: "x", password: "y") { success message isAdmin } }`, nil)
+	login := data["login"].(map[string]any)
+	if login["success"].(bool) {
+		t.Fatal("invalid credentials should not log in")
+	}
+	if login["message"] != "Invalid username or password" {
+		t.Fatalf("unexpected message: %v", login["message"])
+	}
+	if login["isAdmin"] != false {
+		t.Fatalf("expected isAdmin=false, got %v", login["isAdmin"])
+	}
+
+	data = gqlQuery(t, url, `mutation { login(username: "Admin", password: "Admin") { success message username isAdmin token } }`, nil)
+	login = data["login"].(map[string]any)
+	if !login["success"].(bool) {
+		t.Fatalf("default admin login failed: %v", login)
+	}
+	if login["username"] != "Admin" || login["isAdmin"] != true || login["token"] == nil {
+		t.Fatalf("unexpected default admin login response: %v", login)
 	}
 }

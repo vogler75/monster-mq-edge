@@ -643,7 +643,7 @@ type LoginResult {
     message: String
     token: String
     username: String
-    isAdmin: Boolean
+    isAdmin: Boolean!
 }
 
 # -----------------------------------------------------------------------------
@@ -930,7 +930,7 @@ type Query {
 }
 
 type Mutation {
-    login(username: String!, password: String!): LoginResult!
+    login(username: String!, password: String!): LoginResult
     publish(input: PublishInput!): PublishResult!
     publishBatch(inputs: [PublishInput!]!): [PublishResult!]!
     purgeQueuedMessages(clientId: String!): PurgeResult!
@@ -6192,9 +6192,9 @@ func (ec *executionContext) _LoginResult_isAdmin(ctx context.Context, field grap
 			return obj.IsAdmin, nil
 		},
 		nil,
-		ec.marshalOBoolean2ᚖbool,
+		ec.marshalNBoolean2bool,
 		true,
-		false,
+		true,
 	)
 }
 
@@ -8334,9 +8334,9 @@ func (ec *executionContext) _Mutation_login(ctx context.Context, field graphql.C
 			return ec.Resolvers.Mutation().Login(ctx, fc.Args["username"].(string), fc.Args["password"].(string))
 		},
 		nil,
-		ec.marshalNLoginResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐLoginResult,
+		ec.marshalOLoginResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐLoginResult,
 		true,
-		true,
+		false,
 	)
 }
 
@@ -19351,6 +19351,9 @@ func (ec *executionContext) _LoginResult(ctx context.Context, sel ast.SelectionS
 			out.Values[i] = ec._LoginResult_username(ctx, field, obj)
 		case "isAdmin":
 			out.Values[i] = ec._LoginResult_isAdmin(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}
@@ -20260,9 +20263,6 @@ func (ec *executionContext) _Mutation(ctx context.Context, sel ast.SelectionSet)
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Mutation_login(ctx, field)
 			})
-			if out.Values[i] == graphql.Null {
-				out.Invalids++
-			}
 		case "publish":
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Mutation_publish(ctx, field)
@@ -23736,20 +23736,6 @@ func (ec *executionContext) marshalNJSON2ᚕᚕmapᚄ(ctx context.Context, sel a
 	return ret
 }
 
-func (ec *executionContext) marshalNLoginResult2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐLoginResult(ctx context.Context, sel ast.SelectionSet, v LoginResult) graphql.Marshaler {
-	return ec._LoginResult(ctx, sel, &v)
-}
-
-func (ec *executionContext) marshalNLoginResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐLoginResult(ctx context.Context, sel ast.SelectionSet, v *LoginResult) graphql.Marshaler {
-	if v == nil {
-		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
-			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
-		}
-		return graphql.Null
-	}
-	return ec._LoginResult(ctx, sel, v)
-}
-
 func (ec *executionContext) unmarshalNLong2int64(ctx context.Context, v any) (int64, error) {
 	res, err := graphql.UnmarshalInt64(v)
 	return res, graphql.ErrorOnPath(ctx, err)
@@ -24847,6 +24833,13 @@ func (ec *executionContext) marshalOJSON2map(ctx context.Context, sel ast.Select
 	_ = ctx
 	res := graphql.MarshalMap(v)
 	return res
+}
+
+func (ec *executionContext) marshalOLoginResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐLoginResult(ctx context.Context, sel ast.SelectionSet, v *LoginResult) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._LoginResult(ctx, sel, v)
 }
 
 func (ec *executionContext) unmarshalOLong2ᚖint64(ctx context.Context, v any) (*int64, error) {
