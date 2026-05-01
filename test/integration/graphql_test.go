@@ -158,8 +158,12 @@ func TestGraphQLArchiveGroupCRUD(t *testing.T) {
 	}
 	hasDefault := false
 	for _, g := range groups {
-		if g.(map[string]any)["name"] == "Default" {
+		group := g.(map[string]any)
+		if group["name"] == "Default" {
 			hasDefault = true
+			if group["lastValType"] != "MEMORY" || group["archiveType"] != "NONE" {
+				t.Fatalf("unexpected Default group storage: %v", group)
+			}
 		}
 	}
 	if !hasDefault {

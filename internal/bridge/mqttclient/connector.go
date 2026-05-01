@@ -110,9 +110,9 @@ func (c *Connector) Start(ctx context.Context) error {
 		opts.SetTLSConfig(&tls.Config{MinVersion: tls.VersionTLS12})
 	}
 
-	opts.SetOnConnectHandler(func(_ paho.Client) {
+	opts.SetOnConnectHandler(func(client paho.Client) {
 		c.logger.Info("bridge connected", "name", c.name, "url", c.cfg.BrokerURL)
-		c.subscribeInbound()
+		c.subscribeInbound(client)
 	})
 	opts.SetConnectionLostHandler(func(_ paho.Client, err error) {
 		c.logger.Warn("bridge connection lost", "name", c.name, "err", err)
@@ -134,10 +134,7 @@ func (c *Connector) Start(ctx context.Context) error {
 	return nil
 }
 
-func (c *Connector) subscribeInbound() {
-	c.mu.Lock()
-	client := c.client
-	c.mu.Unlock()
+func (c *Connector) subscribeInbound(client paho.Client) {
 	if client == nil {
 		return
 	}
@@ -165,20 +162,15 @@ func (c *Connector) subscribeInbound() {
 // topic to publish under, respecting the address's removePath flag and the
 // LocalTopic prefix (if it has no wildcards).
 func mapInboundTopic(a Address, remoteTopic string) string {
-	t := remoteTopic
-	if a.RemovePath {
-		if prefix := literalPrefix(a.RemoteTopic); prefix != "" {
-			t = strings.TrimPrefix(t, prefix)
-			t = strings.TrimPrefix(t, "/")
+	if hasWildcard(a.RemoteTopic) && a.RemovePath {
+		base := literalPrefix(a.RemoteTopic)
+		suffix := remoteTopic
+		if base != "" && (remoteTopic == base || strings.HasPrefix(remoteTopic, base+"/")) {
+			suffix = strings.TrimPrefix(strings.TrimPrefix(remoteTopic, base), "/")
 		}
+		return joinTopic(destinationPrefix(a.LocalTopic), suffix)
 	}
-	if a.LocalTopic == "" || strings.ContainsAny(a.LocalTopic, "+#") {
-		return t
-	}
-	if t == "" {
-		return strings.TrimRight(a.LocalTopic, "/")
-	}
-	return strings.TrimRight(a.LocalTopic, "/") + "/" + t
+	return joinTopic(destinationPrefix(a.LocalTopic), remoteTopic)
 }
 
 func (c *Connector) startOutbound(ctx context.Context) {
@@ -188,7 +180,7 @@ func (c *Connector) startOutbound(ctx context.Context) {
 		if !strings.EqualFold(a.Mode, "PUBLISH") {
 			continue
 		}
-		filters = append(filters, a.LocalTopic)
+		filters = append(filters, outboundFilter(a.LocalTopic))
 		addrByFilter[a.LocalTopic] = a
 	}
 	if len(filters) == 0 {
@@ -218,10 +210,22 @@ func (c *Connector) startOutbound(ctx context.Context) {
 				if client == nil || !client.IsConnected() {
 					continue
 				}
+				if remote == "" {
+					c.logger.Warn("bridge outbound topic mapping failed", "name", c.name, "localTopic", msg.Topic)
+					continue
+				}
+				tok := client.Publish(remote, byte(addr.QoS), addr.Retain, msg.Payload)
+				if !tok.WaitTimeout(5 * time.Second) {
+					c.logger.Warn("bridge outbound publish timeout", "name", c.name, "topic", remote)
+					continue
+				}
+				if err := tok.Error(); err != nil {
+					c.logger.Warn("bridge outbound publish failed", "name", c.name, "topic", remote, "err", err)
+					continue
+				}
 				if c.IncOut != nil {
 					c.IncOut()
 				}
-				_ = client.Publish(remote, byte(addr.QoS), addr.Retain, msg.Payload)
 			}
 		}
 	}()
@@ -229,7 +233,7 @@ func (c *Connector) startOutbound(ctx context.Context) {
 
 func pickAddress(filters map[string]Address, topic string) Address {
 	for filter, a := range filters {
-		if filter == "#" || matchTopic(filter, topic) {
+		if matchesLocalPattern(topic, filter) {
 			return a
 		}
 	}
@@ -239,20 +243,62 @@ func pickAddress(filters map[string]Address, topic string) Address {
 // mapOutboundTopic maps a locally-published topic to the topic to forward to
 // the remote broker.
 func mapOutboundTopic(a Address, localTopic string) string {
-	t := localTopic
-	if a.RemovePath {
-		if prefix := literalPrefix(a.LocalTopic); prefix != "" {
-			t = strings.TrimPrefix(t, prefix)
-			t = strings.TrimPrefix(t, "/")
+	if hasWildcard(a.LocalTopic) {
+		base := literalPrefix(a.LocalTopic)
+		if base != "" && localTopic != base && !strings.HasPrefix(localTopic, base+"/") {
+			return ""
 		}
+		if a.RemovePath {
+			return joinTopic(destinationPrefix(a.RemoteTopic), strings.TrimPrefix(strings.TrimPrefix(localTopic, base), "/"))
+		}
+		return joinTopic(destinationPrefix(a.RemoteTopic), localTopic)
 	}
-	if a.RemoteTopic == "" || strings.ContainsAny(a.RemoteTopic, "+#") {
-		return t
+	if localTopic == a.LocalTopic {
+		return destinationPrefix(a.RemoteTopic)
 	}
-	if t == "" {
-		return strings.TrimRight(a.RemoteTopic, "/")
+	if strings.HasPrefix(localTopic, strings.TrimRight(a.LocalTopic, "/")+"/") {
+		suffix := strings.TrimPrefix(localTopic, strings.TrimRight(a.LocalTopic, "/")+"/")
+		return joinTopic(destinationPrefix(a.RemoteTopic), suffix)
 	}
-	return strings.TrimRight(a.RemoteTopic, "/") + "/" + t
+	return ""
+}
+
+func outboundFilter(localTopic string) string {
+	if hasWildcard(localTopic) {
+		return localTopic
+	}
+	return strings.TrimRight(localTopic, "/") + "/#"
+}
+
+func matchesLocalPattern(topic, pattern string) bool {
+	if hasWildcard(pattern) {
+		return matchTopic(pattern, topic)
+	}
+	return topic == pattern || strings.HasPrefix(topic, strings.TrimRight(pattern, "/")+"/")
+}
+
+func destinationPrefix(pattern string) string {
+	if hasWildcard(pattern) {
+		return literalPrefix(pattern)
+	}
+	return strings.TrimRight(pattern, "/")
+}
+
+func joinTopic(prefix, suffix string) string {
+	prefix = strings.TrimRight(prefix, "/")
+	suffix = strings.TrimLeft(suffix, "/")
+	switch {
+	case prefix == "":
+		return suffix
+	case suffix == "":
+		return prefix
+	default:
+		return prefix + "/" + suffix
+	}
+}
+
+func hasWildcard(pattern string) bool {
+	return strings.ContainsAny(pattern, "+#")
 }
 
 // literalPrefix returns the longest literal prefix of an MQTT topic pattern —

@@ -51,8 +51,8 @@ func (m *Manager) DeployError(name string) string {
 }
 
 // Load creates archive groups from the persistent ArchiveConfigStore. If no
-// "Default" group exists yet, one is provisioned with the broker's primary
-// backend (so a Postgres-backed broker gets a Postgres-backed Default group).
+// "Default" group exists yet, one is provisioned with in-memory last-value
+// storage and no history archive.
 func (m *Manager) Load(ctx context.Context) error {
 	configs, err := m.storage.ArchiveConfig.GetAll(ctx)
 	if err != nil {
@@ -70,8 +70,8 @@ func (m *Manager) Load(ctx context.Context) error {
 			Name:          "Default",
 			Enabled:       true,
 			TopicFilters:  []string{"#"},
-			LastValType:   m.defaultLastValType(),
-			ArchiveType:   m.defaultArchiveType(),
+			LastValType:   stores.MessageStoreMemory,
+			ArchiveType:   stores.ArchiveNone,
 			PayloadFormat: stores.PayloadDefault,
 		}
 		if err := m.storage.ArchiveConfig.Save(ctx, def); err != nil {
@@ -96,26 +96,6 @@ func (m *Manager) recordDeployError(name string, err error) {
 		return
 	}
 	m.deployError[name] = err.Error()
-}
-
-func (m *Manager) defaultLastValType() stores.MessageStoreType {
-	switch m.cfg.DefaultStoreType {
-	case config.StorePostgres:
-		return stores.MessageStorePostgres
-	case config.StoreMongoDB:
-		return stores.MessageStoreMongoDB
-	}
-	return stores.MessageStoreSQLite
-}
-
-func (m *Manager) defaultArchiveType() stores.MessageArchiveType {
-	switch m.cfg.DefaultStoreType {
-	case config.StorePostgres:
-		return stores.ArchivePostgres
-	case config.StoreMongoDB:
-		return stores.ArchiveMongoDB
-	}
-	return stores.ArchiveSQLite
 }
 
 func (m *Manager) startGroup(ctx context.Context, c stores.ArchiveGroupConfig) error {
