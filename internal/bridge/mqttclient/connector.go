@@ -406,7 +406,8 @@ func (c *Connector) enqueueLocalMessage(msg stores.BrokerMessage) {
 }
 
 func (c *Connector) startQueueWriter(ctx context.Context) {
-	if c.queue == nil {
+	q := c.queue
+	if q == nil {
 		return
 	}
 	addrByFilter := map[string]Address{}
@@ -428,7 +429,7 @@ func (c *Connector) startQueueWriter(ctx context.Context) {
 			}
 
 			var messages []stores.BrokerMessage
-			count := c.queue.PollBlock(func(message stores.BrokerMessage) {
+			count := q.PollBlock(func(message stores.BrokerMessage) {
 				messages = append(messages, message)
 			})
 			if count == 0 {
@@ -440,8 +441,8 @@ func (c *Connector) startQueueWriter(ctx context.Context) {
 				c.logger.Debug("bridge queue flush started",
 					"name", c.name,
 					"count", count,
-					"queued", c.queue.Size(),
-					"capacity", c.queue.Capacity(),
+					"queued", q.Size(),
+					"capacity", q.Capacity(),
 				)
 			}
 			allPublished := true
@@ -460,12 +461,12 @@ func (c *Connector) startQueueWriter(ctx context.Context) {
 				}
 			}
 			if allPublished {
-				c.queue.PollCommit()
+				q.PollCommit()
 				if c.logger != nil {
 					c.logger.Debug("bridge queue flush committed",
 						"name", c.name,
 						"count", count,
-						"remaining", c.queue.Size(),
+						"remaining", q.Size(),
 					)
 				}
 			} else {
@@ -473,7 +474,7 @@ func (c *Connector) startQueueWriter(ctx context.Context) {
 					c.logger.Debug("bridge queue flush retained for retry",
 						"name", c.name,
 						"count", count,
-						"queued", c.queue.Size(),
+						"queued", q.Size(),
 					)
 				}
 				time.Sleep(time.Second)
@@ -672,7 +673,6 @@ func (c *Connector) Stop() {
 		c.client = nil
 	}
 	q := c.queue
-	c.queue = nil
 	c.mu.Unlock()
 
 	c.wg.Wait()
@@ -681,6 +681,11 @@ func (c *Connector) Stop() {
 			c.logger.Warn("bridge queue close failed", "name", c.name, "err", err)
 		}
 	}
+	c.mu.Lock()
+	if c.queue == q {
+		c.queue = nil
+	}
+	c.mu.Unlock()
 }
 
 func matchTopic(pattern, topic string) bool {
