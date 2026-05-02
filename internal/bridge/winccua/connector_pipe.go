@@ -605,6 +605,9 @@ func (p *pipeConnector) handleErrorMessage(msg map[string]any, t string) {
 }
 
 func (p *pipeConnector) publishTagValue(addr Address, tagName string, value any, timestamp string, quality map[string]any) {
+	if !addr.IncludeQuality {
+		quality = nil
+	}
 	topic := p.pub.resolveTagTopic(addr.Topic, tagName)
 	payload := p.pub.formatTagPayload(value, timestamp, quality)
 	if err := p.publish(topic, payload, addr.Retained, 0); err != nil {

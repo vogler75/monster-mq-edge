@@ -475,6 +475,9 @@ func (g *graphqlConnector) handleActiveAlarmsData(data map[string]any, addr Addr
 }
 
 func (g *graphqlConnector) publishTagValue(addr Address, tagName string, value any, timestamp string, quality map[string]any) {
+	if !addr.IncludeQuality {
+		quality = nil
+	}
 	topic := g.pub.resolveTagTopic(addr.Topic, tagName)
 	payload := g.pub.formatTagPayload(value, timestamp, quality)
 	if err := g.publish(topic, payload, addr.Retained, 0); err != nil {
