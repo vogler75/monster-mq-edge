@@ -151,6 +151,12 @@ func getBool(d bson.M, k string) bool {
 	}
 	return false
 }
+func getTime(d bson.M, k string) time.Time {
+	if v, ok := d[k].(time.Time); ok {
+		return v
+	}
+	return time.Time{}
+}
 
 func (s *MessageStore) AddAll(ctx context.Context, msgs []stores.BrokerMessage) error {
 	if len(msgs) == 0 {
@@ -833,8 +839,14 @@ type ArchiveConfigStore struct{ db *DB }
 
 func (a *ArchiveConfigStore) Close() error            { return nil }
 func (a *ArchiveConfigStore) coll() *mongo.Collection { return a.db.db.Collection("archiveconfigs") }
+func (a *ArchiveConfigStore) connColl() *mongo.Collection {
+	return a.db.db.Collection("databaseconnections")
+}
 func (a *ArchiveConfigStore) EnsureTable(ctx context.Context) error {
-	_, err := a.coll().Indexes().CreateOne(ctx, mongo.IndexModel{Keys: bson.D{{Key: "name", Value: 1}}, Options: options.Index().SetUnique(true)})
+	if _, err := a.coll().Indexes().CreateOne(ctx, mongo.IndexModel{Keys: bson.D{{Key: "name", Value: 1}}, Options: options.Index().SetUnique(true)}); err != nil {
+		return err
+	}
+	_, err := a.connColl().Indexes().CreateOne(ctx, mongo.IndexModel{Keys: bson.D{{Key: "name", Value: 1}}, Options: options.Index().SetUnique(true)})
 	return err
 }
 func (a *ArchiveConfigStore) GetAll(ctx context.Context) ([]stores.ArchiveGroupConfig, error) {
@@ -866,15 +878,16 @@ func (a *ArchiveConfigStore) Get(ctx context.Context, name string) (*stores.Arch
 }
 func docToArchive(doc bson.M) *stores.ArchiveGroupConfig {
 	c := &stores.ArchiveGroupConfig{
-		Name:             getStr(doc, "name"),
-		Enabled:          getBool(doc, "enabled"),
-		RetainedOnly:     getBool(doc, "retained_only"),
-		LastValType:      stores.MessageStoreType(getStr(doc, "last_val_type")),
-		ArchiveType:      stores.MessageArchiveType(getStr(doc, "archive_type")),
-		LastValRetention: getStr(doc, "last_val_retention"),
-		ArchiveRetention: getStr(doc, "archive_retention"),
-		PurgeInterval:    getStr(doc, "purge_interval"),
-		PayloadFormat:    stores.PayloadFormat(getStr(doc, "payload_format")),
+		Name:                   getStr(doc, "name"),
+		Enabled:                getBool(doc, "enabled"),
+		RetainedOnly:           getBool(doc, "retained_only"),
+		LastValType:            stores.MessageStoreType(getStr(doc, "last_val_type")),
+		ArchiveType:            stores.MessageArchiveType(getStr(doc, "archive_type")),
+		DatabaseConnectionName: getStr(doc, "database_connection_name"),
+		LastValRetention:       getStr(doc, "last_val_retention"),
+		ArchiveRetention:       getStr(doc, "archive_retention"),
+		PurgeInterval:          getStr(doc, "purge_interval"),
+		PayloadFormat:          stores.PayloadFormat(getStr(doc, "payload_format")),
 	}
 	if c.PayloadFormat == "" {
 		c.PayloadFormat = stores.PayloadDefault
@@ -890,7 +903,8 @@ func (a *ArchiveConfigStore) Save(ctx context.Context, cfg stores.ArchiveGroupCo
 			"enabled": cfg.Enabled, "topic_filter": strings.Join(cfg.TopicFilters, ","),
 			"retained_only": cfg.RetainedOnly,
 			"last_val_type": string(cfg.LastValType), "archive_type": string(cfg.ArchiveType),
-			"last_val_retention": cfg.LastValRetention, "archive_retention": cfg.ArchiveRetention,
+			"database_connection_name": cfg.DatabaseConnectionName,
+			"last_val_retention":       cfg.LastValRetention, "archive_retention": cfg.ArchiveRetention,
 			"purge_interval": cfg.PurgeInterval, "payload_format": string(cfg.PayloadFormat),
 			"updated_at": time.Now().UTC(),
 		}, "$setOnInsert": bson.M{"created_at": time.Now().UTC()}},
@@ -902,6 +916,68 @@ func (a *ArchiveConfigStore) Update(ctx context.Context, cfg stores.ArchiveGroup
 }
 func (a *ArchiveConfigStore) Delete(ctx context.Context, name string) error {
 	_, err := a.coll().DeleteOne(ctx, bson.M{"name": name})
+	return err
+}
+
+func docToDatabaseConnection(doc bson.M) *stores.DatabaseConnectionConfig {
+	return &stores.DatabaseConnectionConfig{
+		Name:      getStr(doc, "name"),
+		Type:      stores.DatabaseConnectionType(getStr(doc, "type")),
+		URL:       getStr(doc, "url"),
+		Username:  getStr(doc, "username"),
+		Password:  getStr(doc, "password"),
+		Database:  getStr(doc, "database"),
+		Schema:    getStr(doc, "schema"),
+		ReadOnly:  getBool(doc, "read_only"),
+		CreatedAt: getTime(doc, "created_at"),
+		UpdatedAt: getTime(doc, "updated_at"),
+	}
+}
+
+func (a *ArchiveConfigStore) GetAllDatabaseConnections(ctx context.Context) ([]stores.DatabaseConnectionConfig, error) {
+	cur, err := a.connColl().Find(ctx, bson.M{}, options.Find().SetSort(bson.D{{Key: "name", Value: 1}}))
+	if err != nil {
+		return nil, err
+	}
+	defer cur.Close(ctx)
+	out := []stores.DatabaseConnectionConfig{}
+	for cur.Next(ctx) {
+		var doc bson.M
+		if err := cur.Decode(&doc); err != nil {
+			return nil, err
+		}
+		out = append(out, *docToDatabaseConnection(doc))
+	}
+	return out, cur.Err()
+}
+
+func (a *ArchiveConfigStore) GetDatabaseConnection(ctx context.Context, name string) (*stores.DatabaseConnectionConfig, error) {
+	var doc bson.M
+	err := a.connColl().FindOne(ctx, bson.M{"name": name}).Decode(&doc)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return docToDatabaseConnection(doc), nil
+}
+
+func (a *ArchiveConfigStore) SaveDatabaseConnection(ctx context.Context, cfg stores.DatabaseConnectionConfig) error {
+	now := time.Now().UTC()
+	_, err := a.connColl().UpdateOne(ctx, bson.M{"name": cfg.Name},
+		bson.M{"$set": bson.M{
+			"type": cfg.Type, "url": cfg.URL,
+			"username": cfg.Username, "password": cfg.Password,
+			"database": cfg.Database, "schema": cfg.Schema,
+			"read_only": cfg.ReadOnly, "updated_at": now,
+		}, "$setOnInsert": bson.M{"created_at": now}},
+		options.UpdateOne().SetUpsert(true))
+	return err
+}
+
+func (a *ArchiveConfigStore) DeleteDatabaseConnection(ctx context.Context, name string) error {
+	_, err := a.connColl().DeleteOne(ctx, bson.M{"name": name})
 	return err
 }
 

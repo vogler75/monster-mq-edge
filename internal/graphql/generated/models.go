@@ -30,23 +30,24 @@ type AggregatedResult struct {
 }
 
 type ArchiveGroupInfo struct {
-	Name             string                  `json:"name"`
-	Enabled          bool                    `json:"enabled"`
-	Deployed         bool                    `json:"deployed"`
-	DeploymentID     *string                 `json:"deploymentId,omitempty"`
-	TopicFilter      []string                `json:"topicFilter"`
-	RetainedOnly     bool                    `json:"retainedOnly"`
-	LastValType      MessageStoreType        `json:"lastValType"`
-	ArchiveType      MessageArchiveType      `json:"archiveType"`
-	PayloadFormat    PayloadFormat           `json:"payloadFormat"`
-	LastValRetention *string                 `json:"lastValRetention,omitempty"`
-	ArchiveRetention *string                 `json:"archiveRetention,omitempty"`
-	PurgeInterval    *string                 `json:"purgeInterval,omitempty"`
-	CreatedAt        *string                 `json:"createdAt,omitempty"`
-	UpdatedAt        *string                 `json:"updatedAt,omitempty"`
-	ConnectionStatus []*NodeConnectionStatus `json:"connectionStatus"`
-	Metrics          []*ArchiveGroupMetrics  `json:"metrics"`
-	MetricsHistory   []*ArchiveGroupMetrics  `json:"metricsHistory"`
+	Name                   string                  `json:"name"`
+	Enabled                bool                    `json:"enabled"`
+	Deployed               bool                    `json:"deployed"`
+	DeploymentID           *string                 `json:"deploymentId,omitempty"`
+	TopicFilter            []string                `json:"topicFilter"`
+	RetainedOnly           bool                    `json:"retainedOnly"`
+	LastValType            MessageStoreType        `json:"lastValType"`
+	ArchiveType            MessageArchiveType      `json:"archiveType"`
+	DatabaseConnectionName *string                 `json:"databaseConnectionName,omitempty"`
+	PayloadFormat          PayloadFormat           `json:"payloadFormat"`
+	LastValRetention       *string                 `json:"lastValRetention,omitempty"`
+	ArchiveRetention       *string                 `json:"archiveRetention,omitempty"`
+	PurgeInterval          *string                 `json:"purgeInterval,omitempty"`
+	CreatedAt              *string                 `json:"createdAt,omitempty"`
+	UpdatedAt              *string                 `json:"updatedAt,omitempty"`
+	ConnectionStatus       []*NodeConnectionStatus `json:"connectionStatus"`
+	Metrics                []*ArchiveGroupMetrics  `json:"metrics"`
+	MetricsHistory         []*ArchiveGroupMetrics  `json:"metricsHistory"`
 }
 
 type ArchiveGroupMetrics struct {
@@ -56,11 +57,14 @@ type ArchiveGroupMetrics struct {
 }
 
 type ArchiveGroupMutations struct {
-	Create  *ArchiveGroupResult `json:"create"`
-	Update  *ArchiveGroupResult `json:"update"`
-	Delete  *ArchiveGroupResult `json:"delete"`
-	Enable  *ArchiveGroupResult `json:"enable"`
-	Disable *ArchiveGroupResult `json:"disable"`
+	Create                   *ArchiveGroupResult       `json:"create"`
+	Update                   *ArchiveGroupResult       `json:"update"`
+	Delete                   *ArchiveGroupResult       `json:"delete"`
+	Enable                   *ArchiveGroupResult       `json:"enable"`
+	Disable                  *ArchiveGroupResult       `json:"disable"`
+	CreateDatabaseConnection *DatabaseConnectionResult `json:"createDatabaseConnection"`
+	UpdateDatabaseConnection *DatabaseConnectionResult `json:"updateDatabaseConnection"`
+	DeleteDatabaseConnection *DatabaseConnectionResult `json:"deleteDatabaseConnection"`
 }
 
 type ArchiveGroupResult struct {
@@ -168,15 +172,26 @@ type CreateACLRuleInput struct {
 }
 
 type CreateArchiveGroupInput struct {
-	Name             string             `json:"name"`
-	TopicFilter      []string           `json:"topicFilter"`
-	RetainedOnly     *bool              `json:"retainedOnly,omitempty"`
-	LastValType      MessageStoreType   `json:"lastValType"`
-	ArchiveType      MessageArchiveType `json:"archiveType"`
-	PayloadFormat    *PayloadFormat     `json:"payloadFormat,omitempty"`
-	LastValRetention *string            `json:"lastValRetention,omitempty"`
-	ArchiveRetention *string            `json:"archiveRetention,omitempty"`
-	PurgeInterval    *string            `json:"purgeInterval,omitempty"`
+	Name                   string             `json:"name"`
+	TopicFilter            []string           `json:"topicFilter"`
+	RetainedOnly           *bool              `json:"retainedOnly,omitempty"`
+	LastValType            MessageStoreType   `json:"lastValType"`
+	ArchiveType            MessageArchiveType `json:"archiveType"`
+	DatabaseConnectionName *string            `json:"databaseConnectionName,omitempty"`
+	PayloadFormat          *PayloadFormat     `json:"payloadFormat,omitempty"`
+	LastValRetention       *string            `json:"lastValRetention,omitempty"`
+	ArchiveRetention       *string            `json:"archiveRetention,omitempty"`
+	PurgeInterval          *string            `json:"purgeInterval,omitempty"`
+}
+
+type CreateDatabaseConnectionInput struct {
+	Name     string                 `json:"name"`
+	Type     DatabaseConnectionType `json:"type"`
+	URL      string                 `json:"url"`
+	Username *string                `json:"username,omitempty"`
+	Password *string                `json:"password,omitempty"`
+	Database *string                `json:"database,omitempty"`
+	Schema   *string                `json:"schema,omitempty"`
 }
 
 type CreateUserInput struct {
@@ -191,6 +206,24 @@ type CreateUserInput struct {
 type CurrentUser struct {
 	Username string `json:"username"`
 	IsAdmin  bool   `json:"isAdmin"`
+}
+
+type DatabaseConnectionInfo struct {
+	Name      string                 `json:"name"`
+	Type      DatabaseConnectionType `json:"type"`
+	URL       string                 `json:"url"`
+	Username  *string                `json:"username,omitempty"`
+	Database  *string                `json:"database,omitempty"`
+	Schema    *string                `json:"schema,omitempty"`
+	ReadOnly  bool                   `json:"readOnly"`
+	CreatedAt *string                `json:"createdAt,omitempty"`
+	UpdatedAt *string                `json:"updatedAt,omitempty"`
+}
+
+type DatabaseConnectionResult struct {
+	Success    bool                    `json:"success"`
+	Message    *string                 `json:"message,omitempty"`
+	Connection *DatabaseConnectionInfo `json:"connection,omitempty"`
 }
 
 type ExceptionInfo struct {
@@ -491,15 +524,26 @@ type UpdateACLRuleInput struct {
 }
 
 type UpdateArchiveGroupInput struct {
-	Name             string              `json:"name"`
-	TopicFilter      []string            `json:"topicFilter,omitempty"`
-	RetainedOnly     *bool               `json:"retainedOnly,omitempty"`
-	LastValType      *MessageStoreType   `json:"lastValType,omitempty"`
-	ArchiveType      *MessageArchiveType `json:"archiveType,omitempty"`
-	PayloadFormat    *PayloadFormat      `json:"payloadFormat,omitempty"`
-	LastValRetention *string             `json:"lastValRetention,omitempty"`
-	ArchiveRetention *string             `json:"archiveRetention,omitempty"`
-	PurgeInterval    *string             `json:"purgeInterval,omitempty"`
+	Name                   string              `json:"name"`
+	TopicFilter            []string            `json:"topicFilter,omitempty"`
+	RetainedOnly           *bool               `json:"retainedOnly,omitempty"`
+	LastValType            *MessageStoreType   `json:"lastValType,omitempty"`
+	ArchiveType            *MessageArchiveType `json:"archiveType,omitempty"`
+	DatabaseConnectionName *string             `json:"databaseConnectionName,omitempty"`
+	PayloadFormat          *PayloadFormat      `json:"payloadFormat,omitempty"`
+	LastValRetention       *string             `json:"lastValRetention,omitempty"`
+	ArchiveRetention       *string             `json:"archiveRetention,omitempty"`
+	PurgeInterval          *string             `json:"purgeInterval,omitempty"`
+}
+
+type UpdateDatabaseConnectionInput struct {
+	Name     string                  `json:"name"`
+	Type     *DatabaseConnectionType `json:"type,omitempty"`
+	URL      *string                 `json:"url,omitempty"`
+	Username *string                 `json:"username,omitempty"`
+	Password *string                 `json:"password,omitempty"`
+	Database *string                 `json:"database,omitempty"`
+	Schema   *string                 `json:"schema,omitempty"`
 }
 
 type UpdateUserInput struct {
@@ -829,6 +873,61 @@ func (e *DataFormat) UnmarshalJSON(b []byte) error {
 }
 
 func (e DataFormat) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type DatabaseConnectionType string
+
+const (
+	DatabaseConnectionTypePostgres DatabaseConnectionType = "POSTGRES"
+	DatabaseConnectionTypeMongodb  DatabaseConnectionType = "MONGODB"
+)
+
+var AllDatabaseConnectionType = []DatabaseConnectionType{
+	DatabaseConnectionTypePostgres,
+	DatabaseConnectionTypeMongodb,
+}
+
+func (e DatabaseConnectionType) IsValid() bool {
+	switch e {
+	case DatabaseConnectionTypePostgres, DatabaseConnectionTypeMongodb:
+		return true
+	}
+	return false
+}
+
+func (e DatabaseConnectionType) String() string {
+	return string(e)
+}
+
+func (e *DatabaseConnectionType) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = DatabaseConnectionType(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid DatabaseConnectionType", str)
+	}
+	return nil
+}
+
+func (e DatabaseConnectionType) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *DatabaseConnectionType) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e DatabaseConnectionType) MarshalJSON() ([]byte, error) {
 	var buf bytes.Buffer
 	e.MarshalGQL(&buf)
 	return buf.Bytes(), nil

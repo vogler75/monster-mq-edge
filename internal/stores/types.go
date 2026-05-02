@@ -66,3 +66,23 @@ const (
 	PayloadDefault PayloadFormat = "DEFAULT"
 	PayloadJSON    PayloadFormat = "JSON"
 )
+
+type DatabaseConnectionType string
+
+const (
+	DatabaseConnectionPostgres DatabaseConnectionType = "POSTGRES"
+	DatabaseConnectionMongoDB  DatabaseConnectionType = "MONGODB"
+)
+
+type DatabaseConnectionConfig struct {
+	Name      string
+	Type      DatabaseConnectionType
+	URL       string
+	Username  string
+	Password  string
+	Database  string
+	Schema    string
+	ReadOnly  bool
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}

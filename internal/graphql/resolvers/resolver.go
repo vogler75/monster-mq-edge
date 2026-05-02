@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -260,6 +261,22 @@ func fromMessageArchiveType(t generated.MessageArchiveType) stores.MessageArchiv
 		return stores.ArchiveMongoDB
 	}
 	return stores.ArchiveNone
+}
+
+func toDatabaseConnectionType(t stores.DatabaseConnectionType) generated.DatabaseConnectionType {
+	switch t {
+	case stores.DatabaseConnectionMongoDB:
+		return generated.DatabaseConnectionTypeMongodb
+	}
+	return generated.DatabaseConnectionTypePostgres
+}
+
+func fromDatabaseConnectionType(t generated.DatabaseConnectionType) stores.DatabaseConnectionType {
+	switch t {
+	case generated.DatabaseConnectionTypeMongodb:
+		return stores.DatabaseConnectionMongoDB
+	}
+	return stores.DatabaseConnectionPostgres
 }
 
 func parseTimeArg(s *string) (*time.Time, error) {
@@ -790,6 +807,65 @@ func (r *queryResolver) ArchiveGroup(ctx context.Context, name string) (*generat
 	return r.archiveGroupInfoTo(*c), nil
 }
 
+func (r *queryResolver) DatabaseConnections(ctx context.Context, typeArg *generated.DatabaseConnectionType) ([]*generated.DatabaseConnectionInfo, error) {
+	all := r.builtInDatabaseConnections(typeArg)
+	stored, err := r.Storage.ArchiveConfig.GetAllDatabaseConnections(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range stored {
+		if typeArg != nil && c.Type != fromDatabaseConnectionType(*typeArg) {
+			continue
+		}
+		all = append(all, c)
+	}
+	sort.SliceStable(all, func(i, j int) bool {
+		if all[i].ReadOnly != all[j].ReadOnly {
+			return all[i].ReadOnly
+		}
+		return all[i].Name < all[j].Name
+	})
+	out := make([]*generated.DatabaseConnectionInfo, 0, len(all))
+	for _, c := range all {
+		out = append(out, databaseConnectionInfoTo(c))
+	}
+	return out, nil
+}
+
+func (r *queryResolver) DatabaseConnectionNames(ctx context.Context, typeArg generated.DatabaseConnectionType) ([]string, error) {
+	typeFilter := &typeArg
+	conns, err := r.DatabaseConnections(ctx, typeFilter)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]struct{}{}
+	out := []string{}
+	for _, c := range conns {
+		if _, ok := seen[c.Name]; ok {
+			continue
+		}
+		seen[c.Name] = struct{}{}
+		out = append(out, c.Name)
+	}
+	return out, nil
+}
+
+func (r *queryResolver) DatabaseConnection(ctx context.Context, name string) (*generated.DatabaseConnectionInfo, error) {
+	if archive.IsDefaultDatabaseConnectionName(name) {
+		for _, c := range archive.BuiltInDatabaseConnections(r.Cfg) {
+			if c.Name == archive.DefaultDatabaseConnectionName {
+				return databaseConnectionInfoTo(c), nil
+			}
+		}
+		return nil, nil
+	}
+	c, err := r.Storage.ArchiveConfig.GetDatabaseConnection(ctx, name)
+	if err != nil || c == nil {
+		return nil, err
+	}
+	return databaseConnectionInfoTo(*c), nil
+}
+
 func (r *Resolver) archiveGroupInfoTo(c stores.ArchiveGroupConfig) *generated.ArchiveGroupInfo {
 	deployed := false
 	var deploymentID *string
@@ -808,13 +884,87 @@ func (r *Resolver) archiveGroupInfoTo(c stores.ArchiveGroupConfig) *generated.Ar
 		Deployed: deployed, DeploymentID: deploymentID,
 		TopicFilter: c.TopicFilters, RetainedOnly: c.RetainedOnly,
 		LastValType: toMessageStoreType(c.LastValType), ArchiveType: toMessageArchiveType(c.ArchiveType),
-		PayloadFormat:    generated.PayloadFormat(c.PayloadFormat),
-		LastValRetention: ptrIfNotEmpty(c.LastValRetention),
-		ArchiveRetention: ptrIfNotEmpty(c.ArchiveRetention),
-		PurgeInterval:    ptrIfNotEmpty(c.PurgeInterval),
+		DatabaseConnectionName: ptrIfNotEmpty(c.DatabaseConnectionName),
+		PayloadFormat:          generated.PayloadFormat(c.PayloadFormat),
+		LastValRetention:       ptrIfNotEmpty(c.LastValRetention),
+		ArchiveRetention:       ptrIfNotEmpty(c.ArchiveRetention),
+		PurgeInterval:          ptrIfNotEmpty(c.PurgeInterval),
 		// createdAt/updatedAt aren't tracked in ArchiveGroupConfig today;
 		// surface as nil so the dashboard renders "—".
 	}
+}
+
+func (r *Resolver) builtInDatabaseConnections(typeFilter *generated.DatabaseConnectionType) []stores.DatabaseConnectionConfig {
+	conns := archive.BuiltInDatabaseConnections(r.Cfg)
+	if typeFilter == nil {
+		return conns
+	}
+	want := fromDatabaseConnectionType(*typeFilter)
+	out := []stores.DatabaseConnectionConfig{}
+	for _, c := range conns {
+		if c.Type == want {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func databaseConnectionInfoTo(c stores.DatabaseConnectionConfig) *generated.DatabaseConnectionInfo {
+	info := &generated.DatabaseConnectionInfo{
+		Name:     c.Name,
+		Type:     toDatabaseConnectionType(c.Type),
+		URL:      archive.SanitizeDatabaseURL(c.URL),
+		Username: ptrIfNotEmpty(c.Username),
+		Database: ptrIfNotEmpty(c.Database),
+		Schema:   ptrIfNotEmpty(c.Schema),
+		ReadOnly: c.ReadOnly,
+	}
+	if !c.CreatedAt.IsZero() {
+		v := formatTime(c.CreatedAt)
+		info.CreatedAt = &v
+	}
+	if !c.UpdatedAt.IsZero() {
+		v := formatTime(c.UpdatedAt)
+		info.UpdatedAt = &v
+	}
+	return info
+}
+
+func (r *Resolver) validateDatabaseConnectionSelection(ctx context.Context, selected string, lastValType stores.MessageStoreType, archiveType stores.MessageArchiveType) (string, error) {
+	selected = strings.TrimSpace(selected)
+	if selected == "" {
+		return "", nil
+	}
+	required := archive.RequiredDatabaseConnectionTypes(lastValType, archiveType)
+	if len(required) == 0 {
+		return "", fmt.Errorf("a database connection can only be selected for PostgreSQL or MongoDB storage")
+	}
+	if len(required) > 1 {
+		if archive.IsDefaultDatabaseConnectionName(selected) {
+			return "", nil
+		}
+		return "", fmt.Errorf("mixed PostgreSQL and MongoDB storage cannot use a named database connection; leave the selection empty to use config-file defaults")
+	}
+	want := required[0]
+	if archive.IsDefaultDatabaseConnectionName(selected) {
+		for _, c := range archive.BuiltInDatabaseConnections(r.Cfg) {
+			if c.Type == want {
+				return archive.DefaultDatabaseConnectionName, nil
+			}
+		}
+		return "", fmt.Errorf("default database connection is not configured for %s", want)
+	}
+	conn, err := r.Storage.ArchiveConfig.GetDatabaseConnection(ctx, selected)
+	if err != nil {
+		return "", err
+	}
+	if conn == nil {
+		return "", fmt.Errorf("database connection %q not found", selected)
+	}
+	if conn.Type != want {
+		return "", fmt.Errorf("selected database connection %q is %s, but %s is required", selected, conn.Type, want)
+	}
+	return selected, nil
 }
 
 func (r *queryResolver) MqttClients(ctx context.Context, name, node *string) ([]*generated.MqttClient, error) {
@@ -1239,11 +1389,21 @@ func (r *archiveGroupMutationsResolver) Create(ctx context.Context, _ *generated
 	if input.PayloadFormat != nil {
 		cfg.PayloadFormat = stores.PayloadFormat(*input.PayloadFormat)
 	}
+	dbConnName, err := r.validateDatabaseConnectionSelection(ctx, derefStr(input.DatabaseConnectionName), cfg.LastValType, cfg.ArchiveType)
+	if err != nil {
+		return &generated.ArchiveGroupResult{Success: false, Message: ptr(err.Error())}, nil
+	}
+	cfg.DatabaseConnectionName = dbConnName
 	if err := r.Storage.ArchiveConfig.Save(ctx, cfg); err != nil {
 		return &generated.ArchiveGroupResult{Success: false, Message: ptr(err.Error())}, nil
 	}
 	if err := r.Archives.Reload(ctx); err != nil {
 		r.Logger.Warn("archive reload after create failed", "name", cfg.Name, "err", err)
+	}
+	if cfg.Enabled && r.Archives != nil {
+		if deployErr := r.Archives.DeployError(cfg.Name); deployErr != "" {
+			return &generated.ArchiveGroupResult{Success: false, Message: ptr(deployErr), ArchiveGroup: r.archiveGroupInfoTo(cfg)}, nil
+		}
 	}
 	return &generated.ArchiveGroupResult{Success: true, ArchiveGroup: r.archiveGroupInfoTo(cfg)}, nil
 }
@@ -1270,6 +1430,19 @@ func (r *archiveGroupMutationsResolver) Update(ctx context.Context, _ *generated
 	if input.ArchiveType != nil {
 		existing.ArchiveType = fromMessageArchiveType(*input.ArchiveType)
 	}
+	if input.DatabaseConnectionName != nil {
+		dbConnName, err := r.validateDatabaseConnectionSelection(ctx, *input.DatabaseConnectionName, existing.LastValType, existing.ArchiveType)
+		if err != nil {
+			return &generated.ArchiveGroupResult{Success: false, Message: ptr(err.Error())}, nil
+		}
+		existing.DatabaseConnectionName = dbConnName
+	} else if existing.DatabaseConnectionName != "" {
+		dbConnName, err := r.validateDatabaseConnectionSelection(ctx, existing.DatabaseConnectionName, existing.LastValType, existing.ArchiveType)
+		if err != nil {
+			return &generated.ArchiveGroupResult{Success: false, Message: ptr(err.Error())}, nil
+		}
+		existing.DatabaseConnectionName = dbConnName
+	}
 	if input.PayloadFormat != nil {
 		existing.PayloadFormat = stores.PayloadFormat(*input.PayloadFormat)
 	}
@@ -1288,6 +1461,11 @@ func (r *archiveGroupMutationsResolver) Update(ctx context.Context, _ *generated
 	if err := r.Archives.Reload(ctx); err != nil {
 		r.Logger.Warn("archive reload after update failed", "name", existing.Name, "err", err)
 	}
+	if existing.Enabled && r.Archives != nil {
+		if deployErr := r.Archives.DeployError(existing.Name); deployErr != "" {
+			return &generated.ArchiveGroupResult{Success: false, Message: ptr(deployErr), ArchiveGroup: r.archiveGroupInfoTo(*existing)}, nil
+		}
+	}
 	return &generated.ArchiveGroupResult{Success: true, ArchiveGroup: r.archiveGroupInfoTo(*existing)}, nil
 }
 func (r *archiveGroupMutationsResolver) Delete(ctx context.Context, _ *generated.ArchiveGroupMutations, name string) (*generated.ArchiveGroupResult, error) {
@@ -1305,6 +1483,108 @@ func (r *archiveGroupMutationsResolver) Enable(ctx context.Context, _ *generated
 func (r *archiveGroupMutationsResolver) Disable(ctx context.Context, _ *generated.ArchiveGroupMutations, name string) (*generated.ArchiveGroupResult, error) {
 	return r.toggleArchive(ctx, name, false)
 }
+
+func (r *archiveGroupMutationsResolver) CreateDatabaseConnection(ctx context.Context, _ *generated.ArchiveGroupMutations, input generated.CreateDatabaseConnectionInput) (*generated.DatabaseConnectionResult, error) {
+	name := strings.TrimSpace(input.Name)
+	if name == "" || strings.TrimSpace(input.URL) == "" {
+		return &generated.DatabaseConnectionResult{Success: false, Message: ptr("name and URL are required")}, nil
+	}
+	if archive.IsDefaultDatabaseConnectionName(name) {
+		return &generated.DatabaseConnectionResult{Success: false, Message: ptr("built-in default connections are read-only")}, nil
+	}
+	existing, err := r.Storage.ArchiveConfig.GetDatabaseConnection(ctx, name)
+	if err != nil {
+		return &generated.DatabaseConnectionResult{Success: false, Message: ptr(err.Error())}, nil
+	}
+	if existing != nil {
+		return &generated.DatabaseConnectionResult{Success: false, Message: ptr(fmt.Sprintf("database connection %q already exists", name))}, nil
+	}
+	cfg := stores.DatabaseConnectionConfig{
+		Name:     name,
+		Type:     fromDatabaseConnectionType(input.Type),
+		URL:      strings.TrimSpace(input.URL),
+		Username: derefStr(input.Username),
+		Password: derefStr(input.Password),
+		Database: derefStr(input.Database),
+		Schema:   derefStr(input.Schema),
+	}
+	if err := r.Storage.ArchiveConfig.SaveDatabaseConnection(ctx, cfg); err != nil {
+		return &generated.DatabaseConnectionResult{Success: false, Message: ptr(err.Error())}, nil
+	}
+	saved, err := r.Storage.ArchiveConfig.GetDatabaseConnection(ctx, name)
+	if err != nil || saved == nil {
+		saved = &cfg
+	}
+	return &generated.DatabaseConnectionResult{Success: true, Connection: databaseConnectionInfoTo(*saved)}, nil
+}
+
+func (r *archiveGroupMutationsResolver) UpdateDatabaseConnection(ctx context.Context, _ *generated.ArchiveGroupMutations, input generated.UpdateDatabaseConnectionInput) (*generated.DatabaseConnectionResult, error) {
+	name := strings.TrimSpace(input.Name)
+	if archive.IsDefaultDatabaseConnectionName(name) {
+		return &generated.DatabaseConnectionResult{Success: false, Message: ptr("built-in default connections are read-only")}, nil
+	}
+	existing, err := r.Storage.ArchiveConfig.GetDatabaseConnection(ctx, name)
+	if err != nil {
+		return &generated.DatabaseConnectionResult{Success: false, Message: ptr(err.Error())}, nil
+	}
+	if existing == nil {
+		return &generated.DatabaseConnectionResult{Success: false, Message: ptr(fmt.Sprintf("database connection %q not found", name))}, nil
+	}
+	if input.Type != nil {
+		existing.Type = fromDatabaseConnectionType(*input.Type)
+	}
+	if input.URL != nil && strings.TrimSpace(*input.URL) != "" {
+		existing.URL = strings.TrimSpace(*input.URL)
+	}
+	if input.Username != nil {
+		existing.Username = *input.Username
+	}
+	if input.Password != nil && *input.Password != "" {
+		existing.Password = *input.Password
+	}
+	if input.Database != nil {
+		existing.Database = *input.Database
+	}
+	if input.Schema != nil {
+		existing.Schema = *input.Schema
+	}
+	if err := r.Storage.ArchiveConfig.SaveDatabaseConnection(ctx, *existing); err != nil {
+		return &generated.DatabaseConnectionResult{Success: false, Message: ptr(err.Error())}, nil
+	}
+	saved, err := r.Storage.ArchiveConfig.GetDatabaseConnection(ctx, name)
+	if err != nil || saved == nil {
+		saved = existing
+	}
+	return &generated.DatabaseConnectionResult{Success: true, Connection: databaseConnectionInfoTo(*saved)}, nil
+}
+
+func (r *archiveGroupMutationsResolver) DeleteDatabaseConnection(ctx context.Context, _ *generated.ArchiveGroupMutations, name string) (*generated.DatabaseConnectionResult, error) {
+	name = strings.TrimSpace(name)
+	if archive.IsDefaultDatabaseConnectionName(name) {
+		return &generated.DatabaseConnectionResult{Success: false, Message: ptr("built-in default connections are read-only")}, nil
+	}
+	existing, err := r.Storage.ArchiveConfig.GetDatabaseConnection(ctx, name)
+	if err != nil {
+		return &generated.DatabaseConnectionResult{Success: false, Message: ptr(err.Error())}, nil
+	}
+	if existing == nil {
+		return &generated.DatabaseConnectionResult{Success: false, Message: ptr(fmt.Sprintf("database connection %q not found", name))}, nil
+	}
+	groups, err := r.Storage.ArchiveConfig.GetAll(ctx)
+	if err != nil {
+		return &generated.DatabaseConnectionResult{Success: false, Message: ptr(err.Error())}, nil
+	}
+	for _, g := range groups {
+		if g.DatabaseConnectionName == name {
+			return &generated.DatabaseConnectionResult{Success: false, Message: ptr(fmt.Sprintf("database connection %q is used by one or more archive groups", name))}, nil
+		}
+	}
+	if err := r.Storage.ArchiveConfig.DeleteDatabaseConnection(ctx, name); err != nil {
+		return &generated.DatabaseConnectionResult{Success: false, Message: ptr(err.Error())}, nil
+	}
+	return &generated.DatabaseConnectionResult{Success: true}, nil
+}
+
 func (r *archiveGroupMutationsResolver) toggleArchive(ctx context.Context, name string, enabled bool) (*generated.ArchiveGroupResult, error) {
 	cfg, err := r.Storage.ArchiveConfig.Get(ctx, name)
 	if err != nil || cfg == nil {
@@ -1316,6 +1596,11 @@ func (r *archiveGroupMutationsResolver) toggleArchive(ctx context.Context, name 
 	}
 	if err := r.Archives.Reload(ctx); err != nil {
 		r.Logger.Warn("archive reload after toggle failed", "name", name, "err", err)
+	}
+	if enabled && r.Archives != nil {
+		if deployErr := r.Archives.DeployError(cfg.Name); deployErr != "" {
+			return &generated.ArchiveGroupResult{Success: false, Message: ptr(deployErr), ArchiveGroup: r.archiveGroupInfoTo(*cfg)}, nil
+		}
 	}
 	return &generated.ArchiveGroupResult{Success: true, ArchiveGroup: r.archiveGroupInfoTo(*cfg)}, nil
 }

@@ -10,6 +10,7 @@ enum DataFormat { JSON BINARY }
 enum OrderDirection { ASC DESC }
 enum AggregationInterval { ONE_MINUTE FIVE_MINUTES FIFTEEN_MINUTES ONE_HOUR ONE_DAY }
 enum AggregationFunction { AVG MIN MAX COUNT }
+enum DatabaseConnectionType { POSTGRES MONGODB }
 
 enum MessageStoreType { NONE MEMORY HAZELCAST POSTGRES CRATEDB MONGODB SQLITE }
 enum MessageArchiveType { NONE POSTGRES CRATEDB MONGODB KAFKA SQLITE }
@@ -241,6 +242,7 @@ type ArchiveGroupInfo {
     retainedOnly: Boolean!
     lastValType: MessageStoreType!
     archiveType: MessageArchiveType!
+    databaseConnectionName: String
     payloadFormat: PayloadFormat!
     lastValRetention: String
     archiveRetention: String
@@ -258,6 +260,7 @@ input CreateArchiveGroupInput {
     retainedOnly: Boolean = false
     lastValType: MessageStoreType!
     archiveType: MessageArchiveType!
+    databaseConnectionName: String
     payloadFormat: PayloadFormat = DEFAULT
     lastValRetention: String
     archiveRetention: String
@@ -270,6 +273,7 @@ input UpdateArchiveGroupInput {
     retainedOnly: Boolean
     lastValType: MessageStoreType
     archiveType: MessageArchiveType
+    databaseConnectionName: String
     payloadFormat: PayloadFormat
     lastValRetention: String
     archiveRetention: String
@@ -280,6 +284,44 @@ type ArchiveGroupResult {
     success: Boolean!
     message: String
     archiveGroup: ArchiveGroupInfo
+}
+
+type DatabaseConnectionInfo {
+    name: String!
+    type: DatabaseConnectionType!
+    url: String!
+    username: String
+    database: String
+    schema: String
+    readOnly: Boolean!
+    createdAt: String
+    updatedAt: String
+}
+
+input CreateDatabaseConnectionInput {
+    name: String!
+    type: DatabaseConnectionType!
+    url: String!
+    username: String
+    password: String
+    database: String
+    schema: String
+}
+
+input UpdateDatabaseConnectionInput {
+    name: String!
+    type: DatabaseConnectionType
+    url: String
+    username: String
+    password: String
+    database: String
+    schema: String
+}
+
+type DatabaseConnectionResult {
+    success: Boolean!
+    message: String
+    connection: DatabaseConnectionInfo
 }
 
 # -----------------------------------------------------------------------------
@@ -555,6 +597,9 @@ type ArchiveGroupMutations {
     delete(name: String!): ArchiveGroupResult!
     enable(name: String!): ArchiveGroupResult!
     disable(name: String!): ArchiveGroupResult!
+    createDatabaseConnection(input: CreateDatabaseConnectionInput!): DatabaseConnectionResult!
+    updateDatabaseConnection(input: UpdateDatabaseConnectionInput!): DatabaseConnectionResult!
+    deleteDatabaseConnection(name: String!): DatabaseConnectionResult!
 }
 
 type MqttClientMutations {
@@ -645,6 +690,9 @@ type Query {
         lastValTypeNotEquals: MessageStoreType
     ): [ArchiveGroupInfo!]!
     archiveGroup(name: String!): ArchiveGroupInfo
+    databaseConnections(type: DatabaseConnectionType): [DatabaseConnectionInfo!]!
+    databaseConnectionNames(type: DatabaseConnectionType!): [String!]!
+    databaseConnection(name: String!): DatabaseConnectionInfo
     mqttClients(name: String, node: String): [MqttClient!]!
 }
 

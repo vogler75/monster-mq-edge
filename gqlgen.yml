@@ -34,6 +34,9 @@ models:
       delete:    { resolver: true }
       enable:    { resolver: true }
       disable:   { resolver: true }
+      createDatabaseConnection: { resolver: true }
+      updateDatabaseConnection: { resolver: true }
+      deleteDatabaseConnection: { resolver: true }
   UserManagementMutations:
     fields:
       createUser:     { resolver: true }

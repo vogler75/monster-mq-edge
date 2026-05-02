@@ -163,3 +163,110 @@ func TestMetricsStoreLatestAndHistory(t *testing.T) {
 		t.Fatalf("history: %d entries err=%v", len(h), err)
 	}
 }
+
+func TestArchiveConfigDatabaseConnectionRoundTrip(t *testing.T) {
+	db := tempDB(t)
+	store := NewArchiveConfigStore(db)
+	ctx := context.Background()
+	if err := store.EnsureTable(ctx); err != nil {
+		t.Fatal(err)
+	}
+	cfg := stores.ArchiveGroupConfig{
+		Name:                   "Sensors",
+		Enabled:                true,
+		TopicFilters:           []string{"sensor/#"},
+		LastValType:            stores.MessageStorePostgres,
+		ArchiveType:            stores.ArchivePostgres,
+		DatabaseConnectionName: "pg_edge",
+		PayloadFormat:          stores.PayloadDefault,
+	}
+	if err := store.Save(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Get(ctx, "Sensors")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || got.DatabaseConnectionName != "pg_edge" {
+		t.Fatalf("databaseConnectionName round-trip failed: %+v", got)
+	}
+
+	conn := stores.DatabaseConnectionConfig{
+		Name:     "pg_edge",
+		Type:     stores.DatabaseConnectionPostgres,
+		URL:      "postgres://localhost/db",
+		Username: "user",
+		Password: "secret",
+		Schema:   "public",
+	}
+	if err := store.SaveDatabaseConnection(ctx, conn); err != nil {
+		t.Fatal(err)
+	}
+	gotConn, err := store.GetDatabaseConnection(ctx, "pg_edge")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotConn == nil || gotConn.Password != "secret" || gotConn.Schema != "public" {
+		t.Fatalf("connection round-trip failed: %+v", gotConn)
+	}
+	all, err := store.GetAllDatabaseConnections(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 1 || all[0].Name != "pg_edge" {
+		t.Fatalf("connections = %+v", all)
+	}
+	if err := store.DeleteDatabaseConnection(ctx, "pg_edge"); err != nil {
+		t.Fatal(err)
+	}
+	gotConn, err = store.GetDatabaseConnection(ctx, "pg_edge")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotConn != nil {
+		t.Fatalf("expected deleted connection, got %+v", gotConn)
+	}
+}
+
+func TestArchiveConfigMigrationAddsDatabaseConnectionName(t *testing.T) {
+	db := tempDB(t)
+	ctx := context.Background()
+	if _, err := db.Exec(`CREATE TABLE archiveconfigs (
+        name TEXT PRIMARY KEY,
+        enabled INTEGER NOT NULL DEFAULT 0,
+        topic_filter TEXT NOT NULL,
+        retained_only INTEGER NOT NULL DEFAULT 0,
+        last_val_type TEXT NOT NULL,
+        archive_type TEXT NOT NULL,
+        last_val_retention TEXT,
+        archive_retention TEXT,
+        purge_interval TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        payload_format TEXT DEFAULT 'DEFAULT'
+    )`); err != nil {
+		t.Fatal(err)
+	}
+	store := NewArchiveConfigStore(db)
+	if err := store.EnsureTable(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(ctx, stores.ArchiveGroupConfig{
+		Name:                   "Migrated",
+		Enabled:                true,
+		TopicFilters:           []string{"#"},
+		LastValType:            stores.MessageStorePostgres,
+		ArchiveType:            stores.ArchivePostgres,
+		DatabaseConnectionName: "pg_edge",
+		PayloadFormat:          stores.PayloadDefault,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Get(ctx, "Migrated")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || got.DatabaseConnectionName != "pg_edge" {
+		t.Fatalf("migration did not add/persist database_connection_name: %+v", got)
+	}
+}

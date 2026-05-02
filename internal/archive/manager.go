@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"regexp"
+	"strings"
 	"sync"
 
 	"monstermq.io/edge/internal/config"
@@ -102,20 +104,31 @@ func (m *Manager) startGroup(ctx context.Context, c stores.ArchiveGroupConfig) e
 	if !c.Enabled {
 		return nil
 	}
-	lastVal, err := m.buildLastValStore(ctx, c)
+	handles, err := m.openGroupDatabaseHandles(ctx, c)
 	if err != nil {
 		return err
 	}
-	arch, err := m.buildArchiveStore(ctx, c)
+	closeOnErr := true
+	defer func() {
+		if closeOnErr {
+			handles.close(m.logger, c.Name)
+		}
+	}()
+	lastVal, err := m.buildLastValStore(ctx, c, handles)
 	if err != nil {
 		return err
 	}
-	g := NewGroup(c, lastVal, arch, m.logger)
+	arch, err := m.buildArchiveStore(ctx, c, handles)
+	if err != nil {
+		return err
+	}
+	g := NewGroup(c, lastVal, arch, m.logger, handles.closeFunc(m.logger, c.Name))
 	g.Start()
 	m.mu.Lock()
 	m.groups[c.Name] = g
 	delete(m.deployError, c.Name)
 	m.mu.Unlock()
+	closeOnErr = false
 	m.logger.Info("archive group started",
 		"name", c.Name, "filters", c.TopicFilters,
 		"lastValType", c.LastValType, "archiveType", c.ArchiveType)
@@ -133,13 +146,10 @@ func LastValName(group string) string { return group + "Lastval" }
 func ArchiveName(group string) string { return group + "Archive" }
 
 // validGroupNamePattern restricts group names to characters that are safe to
-// embed in a SQL identifier. Group names flow into CREATE TABLE / DROP TABLE
-// statements via fmt.Sprintf, so anything outside this set could be SQL
-// injection.
+// embed in a SQL identifier. Group names flow into CREATE TABLE statements via
+// fmt.Sprintf, so anything outside this set could be SQL injection.
 var validGroupNamePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,62}$`)
 
-// ValidateGroupName returns an error if name is not a safe SQL identifier
-// fragment. Called from the GraphQL create/update resolvers.
 func ValidateGroupName(name string) error {
 	if !validGroupNamePattern.MatchString(name) {
 		return fmt.Errorf("invalid group name %q: must match [A-Za-z][A-Za-z0-9_]{0,62}", name)
@@ -147,7 +157,118 @@ func ValidateGroupName(name string) error {
 	return nil
 }
 
-func (m *Manager) buildLastValStore(ctx context.Context, c stores.ArchiveGroupConfig) (stores.MessageStore, error) {
+type groupDatabaseHandles struct {
+	pgDB    *storepg.DB
+	mongoDB *storemongo.DB
+	owned   []func() error
+}
+
+func (h groupDatabaseHandles) close(logger *slog.Logger, group string) {
+	for _, closeFn := range h.owned {
+		if closeFn == nil {
+			continue
+		}
+		if err := closeFn(); err != nil {
+			logger.Warn("archive group database close failed", "group", group, "err", err)
+		}
+	}
+}
+
+func (h groupDatabaseHandles) closeFunc(logger *slog.Logger, group string) func() error {
+	if len(h.owned) == 0 {
+		return nil
+	}
+	return func() error {
+		h.close(logger, group)
+		return nil
+	}
+}
+
+func (m *Manager) openGroupDatabaseHandles(ctx context.Context, c stores.ArchiveGroupConfig) (groupDatabaseHandles, error) {
+	handles := groupDatabaseHandles{pgDB: m.pgDB, mongoDB: m.mongoDB}
+	selectedName := strings.TrimSpace(c.DatabaseConnectionName)
+	required := RequiredDatabaseConnectionTypes(c.LastValType, c.ArchiveType)
+	if selectedName == "" {
+		return handles, nil
+	}
+	if len(required) == 0 {
+		return handles, fmt.Errorf("group %s: databaseConnectionName can only be used with Postgres or MongoDB stores", c.Name)
+	}
+	if len(required) > 1 {
+		if IsDefaultDatabaseConnectionName(selectedName) {
+			return handles, nil
+		}
+		return handles, fmt.Errorf("group %s: cannot use one named database connection for mixed Postgres and MongoDB stores", c.Name)
+	}
+	if IsDefaultDatabaseConnectionName(selectedName) {
+		switch required[0] {
+		case stores.DatabaseConnectionPostgres:
+			if m.pgDB == nil {
+				return handles, fmt.Errorf("group %s: default Postgres database connection is not configured", c.Name)
+			}
+		case stores.DatabaseConnectionMongoDB:
+			if m.mongoDB == nil {
+				return handles, fmt.Errorf("group %s: default MongoDB database connection is not configured", c.Name)
+			}
+		}
+		return handles, nil
+	}
+	conn, err := m.storage.ArchiveConfig.GetDatabaseConnection(ctx, selectedName)
+	if err != nil {
+		return handles, err
+	}
+	if conn == nil {
+		return handles, fmt.Errorf("group %s: database connection %q not found", c.Name, selectedName)
+	}
+	if conn.Type != required[0] {
+		return handles, fmt.Errorf("group %s: selected %s connection %q but requires %s", c.Name, conn.Type, selectedName, required[0])
+	}
+	switch conn.Type {
+	case stores.DatabaseConnectionPostgres:
+		db, err := storepg.Open(ctx, postgresDSN(conn.URL, conn.Username, conn.Password))
+		if err != nil {
+			return handles, err
+		}
+		handles.pgDB = db
+		handles.owned = append(handles.owned, db.Close)
+	case stores.DatabaseConnectionMongoDB:
+		dbName := conn.Database
+		if dbName == "" {
+			dbName = "monstermq"
+		}
+		db, err := storemongo.Open(ctx, MongoURLWithCredentials(conn.URL, conn.Username, conn.Password), dbName)
+		if err != nil {
+			return handles, err
+		}
+		handles.mongoDB = db
+		handles.owned = append(handles.owned, db.Close)
+	default:
+		return handles, fmt.Errorf("group %s: unsupported database connection type %q", c.Name, conn.Type)
+	}
+	return handles, nil
+}
+
+func postgresDSN(raw, username, password string) string {
+	if username == "" && password == "" {
+		return raw
+	}
+	u, err := url.Parse(raw)
+	if err == nil && u.Scheme != "" {
+		if password != "" {
+			u.User = url.UserPassword(username, password)
+		} else {
+			u.User = url.User(username)
+		}
+		return u.String()
+	}
+	sep := "?"
+	if strings.Contains(raw, "?") {
+		sep = "&"
+	}
+	return fmt.Sprintf("%s%suser=%s&password=%s", raw, sep, url.QueryEscape(username), url.QueryEscape(password))
+}
+
+func (m *Manager) buildLastValStore(ctx context.Context, c stores.ArchiveGroupConfig, handles groupDatabaseHandles) (stores.MessageStore, error) {
 	name := LastValName(c.Name)
 	switch c.LastValType {
 	case stores.MessageStoreMemory:
@@ -162,19 +283,19 @@ func (m *Manager) buildLastValStore(ctx context.Context, c stores.ArchiveGroupCo
 		}
 		return s, nil
 	case stores.MessageStorePostgres:
-		if m.pgDB == nil {
+		if handles.pgDB == nil {
 			return nil, fmt.Errorf("group %s: lastValType=POSTGRES but no Postgres DB configured", c.Name)
 		}
-		s := storepg.NewMessageStore(name, m.pgDB)
+		s := storepg.NewMessageStore(name, handles.pgDB)
 		if err := s.EnsureTable(ctx); err != nil {
 			return nil, fmt.Errorf("ensure %s on postgres: %w", name, err)
 		}
 		return s, nil
 	case stores.MessageStoreMongoDB:
-		if m.mongoDB == nil {
+		if handles.mongoDB == nil {
 			return nil, fmt.Errorf("group %s: lastValType=MONGODB but no MongoDB configured", c.Name)
 		}
-		s := storemongo.NewMessageStore(name, m.mongoDB)
+		s := storemongo.NewMessageStore(name, handles.mongoDB)
 		if err := s.EnsureTable(ctx); err != nil {
 			return nil, fmt.Errorf("ensure %s on mongo: %w", name, err)
 		}
@@ -185,7 +306,7 @@ func (m *Manager) buildLastValStore(ctx context.Context, c stores.ArchiveGroupCo
 	return nil, fmt.Errorf("group %s: unsupported lastValType %q", c.Name, c.LastValType)
 }
 
-func (m *Manager) buildArchiveStore(ctx context.Context, c stores.ArchiveGroupConfig) (stores.MessageArchive, error) {
+func (m *Manager) buildArchiveStore(ctx context.Context, c stores.ArchiveGroupConfig, handles groupDatabaseHandles) (stores.MessageArchive, error) {
 	name := ArchiveName(c.Name)
 	switch c.ArchiveType {
 	case stores.ArchiveSQLite:
@@ -198,19 +319,19 @@ func (m *Manager) buildArchiveStore(ctx context.Context, c stores.ArchiveGroupCo
 		}
 		return a, nil
 	case stores.ArchivePostgres:
-		if m.pgDB == nil {
+		if handles.pgDB == nil {
 			return nil, fmt.Errorf("group %s: archiveType=POSTGRES but no Postgres DB configured", c.Name)
 		}
-		a := storepg.NewMessageArchive(name, m.pgDB, c.PayloadFormat)
+		a := storepg.NewMessageArchive(name, handles.pgDB, c.PayloadFormat)
 		if err := a.EnsureTable(ctx); err != nil {
 			return nil, fmt.Errorf("ensure %s on postgres: %w", name, err)
 		}
 		return a, nil
 	case stores.ArchiveMongoDB:
-		if m.mongoDB == nil {
+		if handles.mongoDB == nil {
 			return nil, fmt.Errorf("group %s: archiveType=MONGODB but no MongoDB configured", c.Name)
 		}
-		a := storemongo.NewMessageArchive(name, m.mongoDB, c.PayloadFormat)
+		a := storemongo.NewMessageArchive(name, handles.mongoDB, c.PayloadFormat)
 		if err := a.EnsureTable(ctx); err != nil {
 			return nil, fmt.Errorf("ensure %s on mongo: %w", name, err)
 		}
@@ -272,6 +393,9 @@ func configsEqual(a, b stores.ArchiveGroupConfig) bool {
 		return false
 	}
 	if a.LastValType != b.LastValType || a.ArchiveType != b.ArchiveType {
+		return false
+	}
+	if a.DatabaseConnectionName != b.DatabaseConnectionName {
 		return false
 	}
 	if a.PayloadFormat != b.PayloadFormat {

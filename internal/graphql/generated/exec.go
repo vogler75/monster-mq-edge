@@ -60,6 +60,9 @@ type ArchiveGroupMutationsResolver interface {
 	Delete(ctx context.Context, obj *ArchiveGroupMutations, name string) (*ArchiveGroupResult, error)
 	Enable(ctx context.Context, obj *ArchiveGroupMutations, name string) (*ArchiveGroupResult, error)
 	Disable(ctx context.Context, obj *ArchiveGroupMutations, name string) (*ArchiveGroupResult, error)
+	CreateDatabaseConnection(ctx context.Context, obj *ArchiveGroupMutations, input CreateDatabaseConnectionInput) (*DatabaseConnectionResult, error)
+	UpdateDatabaseConnection(ctx context.Context, obj *ArchiveGroupMutations, input UpdateDatabaseConnectionInput) (*DatabaseConnectionResult, error)
+	DeleteDatabaseConnection(ctx context.Context, obj *ArchiveGroupMutations, name string) (*DatabaseConnectionResult, error)
 }
 type BrokerResolver interface {
 	Metrics(ctx context.Context, obj *Broker) ([]*BrokerMetrics, error)
@@ -112,6 +115,9 @@ type QueryResolver interface {
 	Users(ctx context.Context, username *string) ([]*UserInfo, error)
 	ArchiveGroups(ctx context.Context, enabled *bool, lastValTypeEquals *MessageStoreType, lastValTypeNotEquals *MessageStoreType) ([]*ArchiveGroupInfo, error)
 	ArchiveGroup(ctx context.Context, name string) (*ArchiveGroupInfo, error)
+	DatabaseConnections(ctx context.Context, typeArg *DatabaseConnectionType) ([]*DatabaseConnectionInfo, error)
+	DatabaseConnectionNames(ctx context.Context, typeArg DatabaseConnectionType) ([]string, error)
+	DatabaseConnection(ctx context.Context, name string) (*DatabaseConnectionInfo, error)
 	MqttClients(ctx context.Context, name *string, node *string) ([]*MqttClient, error)
 	WinCCUaClients(ctx context.Context, name *string, node *string) ([]*WinCCUaClient, error)
 }
@@ -184,6 +190,7 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 	inputUnmarshalMap := graphql.BuildUnmarshalerMap(
 		ec.unmarshalInputCreateAclRuleInput,
 		ec.unmarshalInputCreateArchiveGroupInput,
+		ec.unmarshalInputCreateDatabaseConnectionInput,
 		ec.unmarshalInputCreateUserInput,
 		ec.unmarshalInputMqttClientAddressInput,
 		ec.unmarshalInputMqttClientConnectionConfigInput,
@@ -192,6 +199,7 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 		ec.unmarshalInputSetPasswordInput,
 		ec.unmarshalInputUpdateAclRuleInput,
 		ec.unmarshalInputUpdateArchiveGroupInput,
+		ec.unmarshalInputUpdateDatabaseConnectionInput,
 		ec.unmarshalInputUpdateUserInput,
 		ec.unmarshalInputUserPropertyInput,
 		ec.unmarshalInputWinCCUaAddressInput,
@@ -302,6 +310,7 @@ enum DataFormat { JSON BINARY }
 enum OrderDirection { ASC DESC }
 enum AggregationInterval { ONE_MINUTE FIVE_MINUTES FIFTEEN_MINUTES ONE_HOUR ONE_DAY }
 enum AggregationFunction { AVG MIN MAX COUNT }
+enum DatabaseConnectionType { POSTGRES MONGODB }
 
 enum MessageStoreType { NONE MEMORY HAZELCAST POSTGRES CRATEDB MONGODB SQLITE }
 enum MessageArchiveType { NONE POSTGRES CRATEDB MONGODB KAFKA SQLITE }
@@ -533,6 +542,7 @@ type ArchiveGroupInfo {
     retainedOnly: Boolean!
     lastValType: MessageStoreType!
     archiveType: MessageArchiveType!
+    databaseConnectionName: String
     payloadFormat: PayloadFormat!
     lastValRetention: String
     archiveRetention: String
@@ -550,6 +560,7 @@ input CreateArchiveGroupInput {
     retainedOnly: Boolean = false
     lastValType: MessageStoreType!
     archiveType: MessageArchiveType!
+    databaseConnectionName: String
     payloadFormat: PayloadFormat = DEFAULT
     lastValRetention: String
     archiveRetention: String
@@ -562,6 +573,7 @@ input UpdateArchiveGroupInput {
     retainedOnly: Boolean
     lastValType: MessageStoreType
     archiveType: MessageArchiveType
+    databaseConnectionName: String
     payloadFormat: PayloadFormat
     lastValRetention: String
     archiveRetention: String
@@ -572,6 +584,44 @@ type ArchiveGroupResult {
     success: Boolean!
     message: String
     archiveGroup: ArchiveGroupInfo
+}
+
+type DatabaseConnectionInfo {
+    name: String!
+    type: DatabaseConnectionType!
+    url: String!
+    username: String
+    database: String
+    schema: String
+    readOnly: Boolean!
+    createdAt: String
+    updatedAt: String
+}
+
+input CreateDatabaseConnectionInput {
+    name: String!
+    type: DatabaseConnectionType!
+    url: String!
+    username: String
+    password: String
+    database: String
+    schema: String
+}
+
+input UpdateDatabaseConnectionInput {
+    name: String!
+    type: DatabaseConnectionType
+    url: String
+    username: String
+    password: String
+    database: String
+    schema: String
+}
+
+type DatabaseConnectionResult {
+    success: Boolean!
+    message: String
+    connection: DatabaseConnectionInfo
 }
 
 # -----------------------------------------------------------------------------
@@ -847,6 +897,9 @@ type ArchiveGroupMutations {
     delete(name: String!): ArchiveGroupResult!
     enable(name: String!): ArchiveGroupResult!
     disable(name: String!): ArchiveGroupResult!
+    createDatabaseConnection(input: CreateDatabaseConnectionInput!): DatabaseConnectionResult!
+    updateDatabaseConnection(input: UpdateDatabaseConnectionInput!): DatabaseConnectionResult!
+    deleteDatabaseConnection(name: String!): DatabaseConnectionResult!
 }
 
 type MqttClientMutations {
@@ -937,6 +990,9 @@ type Query {
         lastValTypeNotEquals: MessageStoreType
     ): [ArchiveGroupInfo!]!
     archiveGroup(name: String!): ArchiveGroupInfo
+    databaseConnections(type: DatabaseConnectionType): [DatabaseConnectionInfo!]!
+    databaseConnectionNames(type: DatabaseConnectionType!): [String!]!
+    databaseConnection(name: String!): DatabaseConnectionInfo
     mqttClients(name: String, node: String): [MqttClient!]!
 }
 
@@ -1133,6 +1189,17 @@ func (ec *executionContext) field_ArchiveGroupInfo_metricsHistory_args(ctx conte
 	return args, nil
 }
 
+func (ec *executionContext) field_ArchiveGroupMutations_createDatabaseConnection_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input", ec.unmarshalNCreateDatabaseConnectionInput2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐCreateDatabaseConnectionInput)
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
+	return args, nil
+}
+
 func (ec *executionContext) field_ArchiveGroupMutations_create_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
@@ -1141,6 +1208,17 @@ func (ec *executionContext) field_ArchiveGroupMutations_create_args(ctx context.
 		return nil, err
 	}
 	args["input"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_ArchiveGroupMutations_deleteDatabaseConnection_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["name"] = arg0
 	return args, nil
 }
 
@@ -1174,6 +1252,17 @@ func (ec *executionContext) field_ArchiveGroupMutations_enable_args(ctx context.
 		return nil, err
 	}
 	args["name"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_ArchiveGroupMutations_updateDatabaseConnection_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input", ec.unmarshalNUpdateDatabaseConnectionInput2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐUpdateDatabaseConnectionInput)
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
 	return args, nil
 }
 
@@ -1636,6 +1725,39 @@ func (ec *executionContext) field_Query_currentValues_args(ctx context.Context, 
 		return nil, err
 	}
 	args["archiveGroup"] = arg3
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_databaseConnectionNames_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "type", ec.unmarshalNDatabaseConnectionType2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐDatabaseConnectionType)
+	if err != nil {
+		return nil, err
+	}
+	args["type"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_databaseConnection_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["name"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_databaseConnections_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "type", ec.unmarshalODatabaseConnectionType2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐDatabaseConnectionType)
+	if err != nil {
+		return nil, err
+	}
+	args["type"] = arg0
 	return args, nil
 }
 
@@ -2897,6 +3019,35 @@ func (ec *executionContext) fieldContext_ArchiveGroupInfo_archiveType(_ context.
 	return fc, nil
 }
 
+func (ec *executionContext) _ArchiveGroupInfo_databaseConnectionName(ctx context.Context, field graphql.CollectedField, obj *ArchiveGroupInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ArchiveGroupInfo_databaseConnectionName,
+		func(ctx context.Context) (any, error) {
+			return obj.DatabaseConnectionName, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_ArchiveGroupInfo_databaseConnectionName(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ArchiveGroupInfo",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _ArchiveGroupInfo_payloadFormat(ctx context.Context, field graphql.CollectedField, obj *ArchiveGroupInfo) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -3530,6 +3681,153 @@ func (ec *executionContext) fieldContext_ArchiveGroupMutations_disable(ctx conte
 	return fc, nil
 }
 
+func (ec *executionContext) _ArchiveGroupMutations_createDatabaseConnection(ctx context.Context, field graphql.CollectedField, obj *ArchiveGroupMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ArchiveGroupMutations_createDatabaseConnection,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.ArchiveGroupMutations().CreateDatabaseConnection(ctx, obj, fc.Args["input"].(CreateDatabaseConnectionInput))
+		},
+		nil,
+		ec.marshalNDatabaseConnectionResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐDatabaseConnectionResult,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_ArchiveGroupMutations_createDatabaseConnection(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ArchiveGroupMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "success":
+				return ec.fieldContext_DatabaseConnectionResult_success(ctx, field)
+			case "message":
+				return ec.fieldContext_DatabaseConnectionResult_message(ctx, field)
+			case "connection":
+				return ec.fieldContext_DatabaseConnectionResult_connection(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type DatabaseConnectionResult", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_ArchiveGroupMutations_createDatabaseConnection_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ArchiveGroupMutations_updateDatabaseConnection(ctx context.Context, field graphql.CollectedField, obj *ArchiveGroupMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ArchiveGroupMutations_updateDatabaseConnection,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.ArchiveGroupMutations().UpdateDatabaseConnection(ctx, obj, fc.Args["input"].(UpdateDatabaseConnectionInput))
+		},
+		nil,
+		ec.marshalNDatabaseConnectionResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐDatabaseConnectionResult,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_ArchiveGroupMutations_updateDatabaseConnection(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ArchiveGroupMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "success":
+				return ec.fieldContext_DatabaseConnectionResult_success(ctx, field)
+			case "message":
+				return ec.fieldContext_DatabaseConnectionResult_message(ctx, field)
+			case "connection":
+				return ec.fieldContext_DatabaseConnectionResult_connection(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type DatabaseConnectionResult", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_ArchiveGroupMutations_updateDatabaseConnection_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ArchiveGroupMutations_deleteDatabaseConnection(ctx context.Context, field graphql.CollectedField, obj *ArchiveGroupMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ArchiveGroupMutations_deleteDatabaseConnection,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.ArchiveGroupMutations().DeleteDatabaseConnection(ctx, obj, fc.Args["name"].(string))
+		},
+		nil,
+		ec.marshalNDatabaseConnectionResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐDatabaseConnectionResult,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_ArchiveGroupMutations_deleteDatabaseConnection(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ArchiveGroupMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "success":
+				return ec.fieldContext_DatabaseConnectionResult_success(ctx, field)
+			case "message":
+				return ec.fieldContext_DatabaseConnectionResult_message(ctx, field)
+			case "connection":
+				return ec.fieldContext_DatabaseConnectionResult_connection(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type DatabaseConnectionResult", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_ArchiveGroupMutations_deleteDatabaseConnection_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _ArchiveGroupResult_success(ctx context.Context, field graphql.CollectedField, obj *ArchiveGroupResult) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -3628,6 +3926,8 @@ func (ec *executionContext) fieldContext_ArchiveGroupResult_archiveGroup(_ conte
 				return ec.fieldContext_ArchiveGroupInfo_lastValType(ctx, field)
 			case "archiveType":
 				return ec.fieldContext_ArchiveGroupInfo_archiveType(ctx, field)
+			case "databaseConnectionName":
+				return ec.fieldContext_ArchiveGroupInfo_databaseConnectionName(ctx, field)
 			case "payloadFormat":
 				return ec.fieldContext_ArchiveGroupInfo_payloadFormat(ctx, field)
 			case "lastValRetention":
@@ -6130,6 +6430,374 @@ func (ec *executionContext) fieldContext_CurrentUser_isAdmin(_ context.Context, 
 		IsResolver: false,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _DatabaseConnectionInfo_name(ctx context.Context, field graphql.CollectedField, obj *DatabaseConnectionInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_DatabaseConnectionInfo_name,
+		func(ctx context.Context) (any, error) {
+			return obj.Name, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_DatabaseConnectionInfo_name(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "DatabaseConnectionInfo",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _DatabaseConnectionInfo_type(ctx context.Context, field graphql.CollectedField, obj *DatabaseConnectionInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_DatabaseConnectionInfo_type,
+		func(ctx context.Context) (any, error) {
+			return obj.Type, nil
+		},
+		nil,
+		ec.marshalNDatabaseConnectionType2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐDatabaseConnectionType,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_DatabaseConnectionInfo_type(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "DatabaseConnectionInfo",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type DatabaseConnectionType does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _DatabaseConnectionInfo_url(ctx context.Context, field graphql.CollectedField, obj *DatabaseConnectionInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_DatabaseConnectionInfo_url,
+		func(ctx context.Context) (any, error) {
+			return obj.URL, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_DatabaseConnectionInfo_url(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "DatabaseConnectionInfo",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _DatabaseConnectionInfo_username(ctx context.Context, field graphql.CollectedField, obj *DatabaseConnectionInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_DatabaseConnectionInfo_username,
+		func(ctx context.Context) (any, error) {
+			return obj.Username, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_DatabaseConnectionInfo_username(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "DatabaseConnectionInfo",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _DatabaseConnectionInfo_database(ctx context.Context, field graphql.CollectedField, obj *DatabaseConnectionInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_DatabaseConnectionInfo_database,
+		func(ctx context.Context) (any, error) {
+			return obj.Database, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_DatabaseConnectionInfo_database(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "DatabaseConnectionInfo",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _DatabaseConnectionInfo_schema(ctx context.Context, field graphql.CollectedField, obj *DatabaseConnectionInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_DatabaseConnectionInfo_schema,
+		func(ctx context.Context) (any, error) {
+			return obj.Schema, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_DatabaseConnectionInfo_schema(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "DatabaseConnectionInfo",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _DatabaseConnectionInfo_readOnly(ctx context.Context, field graphql.CollectedField, obj *DatabaseConnectionInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_DatabaseConnectionInfo_readOnly,
+		func(ctx context.Context) (any, error) {
+			return obj.ReadOnly, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_DatabaseConnectionInfo_readOnly(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "DatabaseConnectionInfo",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _DatabaseConnectionInfo_createdAt(ctx context.Context, field graphql.CollectedField, obj *DatabaseConnectionInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_DatabaseConnectionInfo_createdAt,
+		func(ctx context.Context) (any, error) {
+			return obj.CreatedAt, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_DatabaseConnectionInfo_createdAt(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "DatabaseConnectionInfo",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _DatabaseConnectionInfo_updatedAt(ctx context.Context, field graphql.CollectedField, obj *DatabaseConnectionInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_DatabaseConnectionInfo_updatedAt,
+		func(ctx context.Context) (any, error) {
+			return obj.UpdatedAt, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_DatabaseConnectionInfo_updatedAt(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "DatabaseConnectionInfo",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _DatabaseConnectionResult_success(ctx context.Context, field graphql.CollectedField, obj *DatabaseConnectionResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_DatabaseConnectionResult_success,
+		func(ctx context.Context) (any, error) {
+			return obj.Success, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_DatabaseConnectionResult_success(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "DatabaseConnectionResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _DatabaseConnectionResult_message(ctx context.Context, field graphql.CollectedField, obj *DatabaseConnectionResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_DatabaseConnectionResult_message,
+		func(ctx context.Context) (any, error) {
+			return obj.Message, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_DatabaseConnectionResult_message(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "DatabaseConnectionResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _DatabaseConnectionResult_connection(ctx context.Context, field graphql.CollectedField, obj *DatabaseConnectionResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_DatabaseConnectionResult_connection,
+		func(ctx context.Context) (any, error) {
+			return obj.Connection, nil
+		},
+		nil,
+		ec.marshalODatabaseConnectionInfo2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐDatabaseConnectionInfo,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_DatabaseConnectionResult_connection(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "DatabaseConnectionResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "name":
+				return ec.fieldContext_DatabaseConnectionInfo_name(ctx, field)
+			case "type":
+				return ec.fieldContext_DatabaseConnectionInfo_type(ctx, field)
+			case "url":
+				return ec.fieldContext_DatabaseConnectionInfo_url(ctx, field)
+			case "username":
+				return ec.fieldContext_DatabaseConnectionInfo_username(ctx, field)
+			case "database":
+				return ec.fieldContext_DatabaseConnectionInfo_database(ctx, field)
+			case "schema":
+				return ec.fieldContext_DatabaseConnectionInfo_schema(ctx, field)
+			case "readOnly":
+				return ec.fieldContext_DatabaseConnectionInfo_readOnly(ctx, field)
+			case "createdAt":
+				return ec.fieldContext_DatabaseConnectionInfo_createdAt(ctx, field)
+			case "updatedAt":
+				return ec.fieldContext_DatabaseConnectionInfo_updatedAt(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type DatabaseConnectionInfo", field.Name)
 		},
 	}
 	return fc, nil
@@ -8822,6 +9490,12 @@ func (ec *executionContext) fieldContext_Mutation_archiveGroup(_ context.Context
 				return ec.fieldContext_ArchiveGroupMutations_enable(ctx, field)
 			case "disable":
 				return ec.fieldContext_ArchiveGroupMutations_disable(ctx, field)
+			case "createDatabaseConnection":
+				return ec.fieldContext_ArchiveGroupMutations_createDatabaseConnection(ctx, field)
+			case "updateDatabaseConnection":
+				return ec.fieldContext_ArchiveGroupMutations_updateDatabaseConnection(ctx, field)
+			case "deleteDatabaseConnection":
+				return ec.fieldContext_ArchiveGroupMutations_deleteDatabaseConnection(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type ArchiveGroupMutations", field.Name)
 		},
@@ -10269,6 +10943,8 @@ func (ec *executionContext) fieldContext_Query_archiveGroups(ctx context.Context
 				return ec.fieldContext_ArchiveGroupInfo_lastValType(ctx, field)
 			case "archiveType":
 				return ec.fieldContext_ArchiveGroupInfo_archiveType(ctx, field)
+			case "databaseConnectionName":
+				return ec.fieldContext_ArchiveGroupInfo_databaseConnectionName(ctx, field)
 			case "payloadFormat":
 				return ec.fieldContext_ArchiveGroupInfo_payloadFormat(ctx, field)
 			case "lastValRetention":
@@ -10346,6 +11022,8 @@ func (ec *executionContext) fieldContext_Query_archiveGroup(ctx context.Context,
 				return ec.fieldContext_ArchiveGroupInfo_lastValType(ctx, field)
 			case "archiveType":
 				return ec.fieldContext_ArchiveGroupInfo_archiveType(ctx, field)
+			case "databaseConnectionName":
+				return ec.fieldContext_ArchiveGroupInfo_databaseConnectionName(ctx, field)
 			case "payloadFormat":
 				return ec.fieldContext_ArchiveGroupInfo_payloadFormat(ctx, field)
 			case "lastValRetention":
@@ -10376,6 +11054,169 @@ func (ec *executionContext) fieldContext_Query_archiveGroup(ctx context.Context,
 	}()
 	ctx = graphql.WithFieldContext(ctx, fc)
 	if fc.Args, err = ec.field_Query_archiveGroup_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_databaseConnections(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Query_databaseConnections,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().DatabaseConnections(ctx, fc.Args["type"].(*DatabaseConnectionType))
+		},
+		nil,
+		ec.marshalNDatabaseConnectionInfo2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐDatabaseConnectionInfoᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Query_databaseConnections(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "name":
+				return ec.fieldContext_DatabaseConnectionInfo_name(ctx, field)
+			case "type":
+				return ec.fieldContext_DatabaseConnectionInfo_type(ctx, field)
+			case "url":
+				return ec.fieldContext_DatabaseConnectionInfo_url(ctx, field)
+			case "username":
+				return ec.fieldContext_DatabaseConnectionInfo_username(ctx, field)
+			case "database":
+				return ec.fieldContext_DatabaseConnectionInfo_database(ctx, field)
+			case "schema":
+				return ec.fieldContext_DatabaseConnectionInfo_schema(ctx, field)
+			case "readOnly":
+				return ec.fieldContext_DatabaseConnectionInfo_readOnly(ctx, field)
+			case "createdAt":
+				return ec.fieldContext_DatabaseConnectionInfo_createdAt(ctx, field)
+			case "updatedAt":
+				return ec.fieldContext_DatabaseConnectionInfo_updatedAt(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type DatabaseConnectionInfo", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_databaseConnections_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_databaseConnectionNames(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Query_databaseConnectionNames,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().DatabaseConnectionNames(ctx, fc.Args["type"].(DatabaseConnectionType))
+		},
+		nil,
+		ec.marshalNString2ᚕstringᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Query_databaseConnectionNames(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_databaseConnectionNames_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_databaseConnection(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Query_databaseConnection,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().DatabaseConnection(ctx, fc.Args["name"].(string))
+		},
+		nil,
+		ec.marshalODatabaseConnectionInfo2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐDatabaseConnectionInfo,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Query_databaseConnection(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "name":
+				return ec.fieldContext_DatabaseConnectionInfo_name(ctx, field)
+			case "type":
+				return ec.fieldContext_DatabaseConnectionInfo_type(ctx, field)
+			case "url":
+				return ec.fieldContext_DatabaseConnectionInfo_url(ctx, field)
+			case "username":
+				return ec.fieldContext_DatabaseConnectionInfo_username(ctx, field)
+			case "database":
+				return ec.fieldContext_DatabaseConnectionInfo_database(ctx, field)
+			case "schema":
+				return ec.fieldContext_DatabaseConnectionInfo_schema(ctx, field)
+			case "readOnly":
+				return ec.fieldContext_DatabaseConnectionInfo_readOnly(ctx, field)
+			case "createdAt":
+				return ec.fieldContext_DatabaseConnectionInfo_createdAt(ctx, field)
+			case "updatedAt":
+				return ec.fieldContext_DatabaseConnectionInfo_updatedAt(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type DatabaseConnectionInfo", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_databaseConnection_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
 	}
@@ -17013,7 +17854,7 @@ func (ec *executionContext) unmarshalInputCreateArchiveGroupInput(ctx context.Co
 		asMap["payloadFormat"] = "DEFAULT"
 	}
 
-	fieldsInOrder := [...]string{"name", "topicFilter", "retainedOnly", "lastValType", "archiveType", "payloadFormat", "lastValRetention", "archiveRetention", "purgeInterval"}
+	fieldsInOrder := [...]string{"name", "topicFilter", "retainedOnly", "lastValType", "archiveType", "databaseConnectionName", "payloadFormat", "lastValRetention", "archiveRetention", "purgeInterval"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -17055,6 +17896,13 @@ func (ec *executionContext) unmarshalInputCreateArchiveGroupInput(ctx context.Co
 				return it, err
 			}
 			it.ArchiveType = data
+		case "databaseConnectionName":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("databaseConnectionName"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.DatabaseConnectionName = data
 		case "payloadFormat":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("payloadFormat"))
 			data, err := ec.unmarshalOPayloadFormat2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐPayloadFormat(ctx, v)
@@ -17083,6 +17931,78 @@ func (ec *executionContext) unmarshalInputCreateArchiveGroupInput(ctx context.Co
 				return it, err
 			}
 			it.PurgeInterval = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputCreateDatabaseConnectionInput(ctx context.Context, obj any) (CreateDatabaseConnectionInput, error) {
+	var it CreateDatabaseConnectionInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"name", "type", "url", "username", "password", "database", "schema"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "name":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("name"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Name = data
+		case "type":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("type"))
+			data, err := ec.unmarshalNDatabaseConnectionType2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐDatabaseConnectionType(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Type = data
+		case "url":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("url"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.URL = data
+		case "username":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("username"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Username = data
+		case "password":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("password"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Password = data
+		case "database":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("database"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Database = data
+		case "schema":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("schema"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Schema = data
 		}
 	}
 	return it, nil
@@ -17733,7 +18653,7 @@ func (ec *executionContext) unmarshalInputUpdateArchiveGroupInput(ctx context.Co
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"name", "topicFilter", "retainedOnly", "lastValType", "archiveType", "payloadFormat", "lastValRetention", "archiveRetention", "purgeInterval"}
+	fieldsInOrder := [...]string{"name", "topicFilter", "retainedOnly", "lastValType", "archiveType", "databaseConnectionName", "payloadFormat", "lastValRetention", "archiveRetention", "purgeInterval"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -17775,6 +18695,13 @@ func (ec *executionContext) unmarshalInputUpdateArchiveGroupInput(ctx context.Co
 				return it, err
 			}
 			it.ArchiveType = data
+		case "databaseConnectionName":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("databaseConnectionName"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.DatabaseConnectionName = data
 		case "payloadFormat":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("payloadFormat"))
 			data, err := ec.unmarshalOPayloadFormat2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐPayloadFormat(ctx, v)
@@ -17803,6 +18730,78 @@ func (ec *executionContext) unmarshalInputUpdateArchiveGroupInput(ctx context.Co
 				return it, err
 			}
 			it.PurgeInterval = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputUpdateDatabaseConnectionInput(ctx context.Context, obj any) (UpdateDatabaseConnectionInput, error) {
+	var it UpdateDatabaseConnectionInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"name", "type", "url", "username", "password", "database", "schema"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "name":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("name"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Name = data
+		case "type":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("type"))
+			data, err := ec.unmarshalODatabaseConnectionType2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐDatabaseConnectionType(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Type = data
+		case "url":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("url"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.URL = data
+		case "username":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("username"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Username = data
+		case "password":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("password"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Password = data
+		case "database":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("database"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Database = data
+		case "schema":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("schema"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Schema = data
 		}
 	}
 	return it, nil
@@ -18416,6 +19415,8 @@ func (ec *executionContext) _ArchiveGroupInfo(ctx context.Context, sel ast.Selec
 			if out.Values[i] == graphql.Null {
 				atomic.AddUint32(&out.Invalids, 1)
 			}
+		case "databaseConnectionName":
+			out.Values[i] = ec._ArchiveGroupInfo_databaseConnectionName(ctx, field, obj)
 		case "payloadFormat":
 			out.Values[i] = ec._ArchiveGroupInfo_payloadFormat(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
@@ -18776,6 +19777,114 @@ func (ec *executionContext) _ArchiveGroupMutations(ctx context.Context, sel ast.
 					}
 				}()
 				res = ec._ArchiveGroupMutations_disable(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "createDatabaseConnection":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._ArchiveGroupMutations_createDatabaseConnection(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "updateDatabaseConnection":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._ArchiveGroupMutations_updateDatabaseConnection(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "deleteDatabaseConnection":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._ArchiveGroupMutations_deleteDatabaseConnection(ctx, field, obj)
 				if res == graphql.Null {
 					atomic.AddUint32(&fs.Invalids, 1)
 				}
@@ -19490,6 +20599,113 @@ func (ec *executionContext) _CurrentUser(ctx context.Context, sel ast.SelectionS
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var databaseConnectionInfoImplementors = []string{"DatabaseConnectionInfo"}
+
+func (ec *executionContext) _DatabaseConnectionInfo(ctx context.Context, sel ast.SelectionSet, obj *DatabaseConnectionInfo) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, databaseConnectionInfoImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("DatabaseConnectionInfo")
+		case "name":
+			out.Values[i] = ec._DatabaseConnectionInfo_name(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "type":
+			out.Values[i] = ec._DatabaseConnectionInfo_type(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "url":
+			out.Values[i] = ec._DatabaseConnectionInfo_url(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "username":
+			out.Values[i] = ec._DatabaseConnectionInfo_username(ctx, field, obj)
+		case "database":
+			out.Values[i] = ec._DatabaseConnectionInfo_database(ctx, field, obj)
+		case "schema":
+			out.Values[i] = ec._DatabaseConnectionInfo_schema(ctx, field, obj)
+		case "readOnly":
+			out.Values[i] = ec._DatabaseConnectionInfo_readOnly(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "createdAt":
+			out.Values[i] = ec._DatabaseConnectionInfo_createdAt(ctx, field, obj)
+		case "updatedAt":
+			out.Values[i] = ec._DatabaseConnectionInfo_updatedAt(ctx, field, obj)
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var databaseConnectionResultImplementors = []string{"DatabaseConnectionResult"}
+
+func (ec *executionContext) _DatabaseConnectionResult(ctx context.Context, sel ast.SelectionSet, obj *DatabaseConnectionResult) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, databaseConnectionResultImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("DatabaseConnectionResult")
+		case "success":
+			out.Values[i] = ec._DatabaseConnectionResult_success(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "message":
+			out.Values[i] = ec._DatabaseConnectionResult_message(ctx, field, obj)
+		case "connection":
+			out.Values[i] = ec._DatabaseConnectionResult_connection(ctx, field, obj)
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}
@@ -21109,6 +22325,69 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 					}
 				}()
 				res = ec._Query_archiveGroup(ctx, field)
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "databaseConnections":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_databaseConnections(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "databaseConnectionNames":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_databaseConnectionNames(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "databaseConnection":
+			field := field
+
+			innerFunc := func(ctx context.Context, _ *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_databaseConnection(ctx, field)
 				return res
 			}
 
@@ -23892,6 +25171,11 @@ func (ec *executionContext) unmarshalNCreateArchiveGroupInput2monstermqᚗioᚋe
 	return res, graphql.ErrorOnPath(ctx, err)
 }
 
+func (ec *executionContext) unmarshalNCreateDatabaseConnectionInput2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐCreateDatabaseConnectionInput(ctx context.Context, v any) (CreateDatabaseConnectionInput, error) {
+	res, err := ec.unmarshalInputCreateDatabaseConnectionInput(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
 func (ec *executionContext) unmarshalNCreateUserInput2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐCreateUserInput(ctx context.Context, v any) (CreateUserInput, error) {
 	res, err := ec.unmarshalInputCreateUserInput(ctx, v)
 	return res, graphql.ErrorOnPath(ctx, err)
@@ -23904,6 +25188,56 @@ func (ec *executionContext) unmarshalNDataFormat2monstermqᚗioᚋedgeᚋinterna
 }
 
 func (ec *executionContext) marshalNDataFormat2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐDataFormat(ctx context.Context, sel ast.SelectionSet, v DataFormat) graphql.Marshaler {
+	return v
+}
+
+func (ec *executionContext) marshalNDatabaseConnectionInfo2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐDatabaseConnectionInfoᚄ(ctx context.Context, sel ast.SelectionSet, v []*DatabaseConnectionInfo) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNDatabaseConnectionInfo2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐDatabaseConnectionInfo(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNDatabaseConnectionInfo2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐDatabaseConnectionInfo(ctx context.Context, sel ast.SelectionSet, v *DatabaseConnectionInfo) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._DatabaseConnectionInfo(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNDatabaseConnectionResult2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐDatabaseConnectionResult(ctx context.Context, sel ast.SelectionSet, v DatabaseConnectionResult) graphql.Marshaler {
+	return ec._DatabaseConnectionResult(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNDatabaseConnectionResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐDatabaseConnectionResult(ctx context.Context, sel ast.SelectionSet, v *DatabaseConnectionResult) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._DatabaseConnectionResult(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalNDatabaseConnectionType2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐDatabaseConnectionType(ctx context.Context, v any) (DatabaseConnectionType, error) {
+	var res DatabaseConnectionType
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNDatabaseConnectionType2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐDatabaseConnectionType(ctx context.Context, sel ast.SelectionSet, v DatabaseConnectionType) graphql.Marshaler {
 	return v
 }
 
@@ -24589,6 +25923,11 @@ func (ec *executionContext) unmarshalNUpdateArchiveGroupInput2monstermqᚗioᚋe
 	return res, graphql.ErrorOnPath(ctx, err)
 }
 
+func (ec *executionContext) unmarshalNUpdateDatabaseConnectionInput2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐUpdateDatabaseConnectionInput(ctx context.Context, v any) (UpdateDatabaseConnectionInput, error) {
+	res, err := ec.unmarshalInputUpdateDatabaseConnectionInput(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
 func (ec *executionContext) unmarshalNUpdateUserInput2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐUpdateUserInput(ctx context.Context, v any) (UpdateUserInput, error) {
 	res, err := ec.unmarshalInputUpdateUserInput(ctx, v)
 	return res, graphql.ErrorOnPath(ctx, err)
@@ -25080,6 +26419,29 @@ func (ec *executionContext) unmarshalODataFormat2ᚖmonstermqᚗioᚋedgeᚋinte
 }
 
 func (ec *executionContext) marshalODataFormat2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐDataFormat(ctx context.Context, sel ast.SelectionSet, v *DataFormat) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return v
+}
+
+func (ec *executionContext) marshalODatabaseConnectionInfo2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐDatabaseConnectionInfo(ctx context.Context, sel ast.SelectionSet, v *DatabaseConnectionInfo) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._DatabaseConnectionInfo(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalODatabaseConnectionType2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐDatabaseConnectionType(ctx context.Context, v any) (*DatabaseConnectionType, error) {
+	if v == nil {
+		return nil, nil
+	}
+	var res = new(DatabaseConnectionType)
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalODatabaseConnectionType2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐDatabaseConnectionType(ctx context.Context, sel ast.SelectionSet, v *DatabaseConnectionType) graphql.Marshaler {
 	if v == nil {
 		return graphql.Null
 	}

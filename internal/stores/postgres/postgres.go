@@ -953,25 +953,43 @@ type ArchiveConfigStore struct{ db *DB }
 
 func (a *ArchiveConfigStore) Close() error { return nil }
 func (a *ArchiveConfigStore) EnsureTable(ctx context.Context) error {
-	_, err := a.db.pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS archiveconfigs (
+	if _, err := a.db.pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS archiveconfigs (
         name TEXT PRIMARY KEY,
         enabled INTEGER NOT NULL DEFAULT 0,
         topic_filter TEXT NOT NULL,
         retained_only INTEGER NOT NULL DEFAULT 0,
         last_val_type TEXT NOT NULL,
         archive_type TEXT NOT NULL,
+        database_connection_name TEXT,
         last_val_retention TEXT,
         archive_retention TEXT,
         purge_interval TEXT,
         created_at TIMESTAMPTZ DEFAULT NOW(),
         updated_at TIMESTAMPTZ DEFAULT NOW(),
         payload_format TEXT DEFAULT 'DEFAULT'
+    )`); err != nil {
+		return err
+	}
+	if _, err := a.db.pool.Exec(ctx, `ALTER TABLE archiveconfigs ADD COLUMN IF NOT EXISTS database_connection_name TEXT`); err != nil {
+		return err
+	}
+	_, err := a.db.pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS databaseconnections (
+        name TEXT PRIMARY KEY,
+        type TEXT NOT NULL,
+        url TEXT NOT NULL,
+        username TEXT,
+        password TEXT,
+        database_name TEXT,
+        schema_name TEXT,
+        read_only BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
     )`)
 	return err
 }
 func (a *ArchiveConfigStore) GetAll(ctx context.Context) ([]stores.ArchiveGroupConfig, error) {
 	rows, err := a.db.pool.Query(ctx,
-		`SELECT name, enabled, topic_filter, retained_only, last_val_type, archive_type, last_val_retention, archive_retention, purge_interval, payload_format FROM archiveconfigs ORDER BY name`)
+		`SELECT name, enabled, topic_filter, retained_only, last_val_type, archive_type, database_connection_name, last_val_retention, archive_retention, purge_interval, payload_format FROM archiveconfigs ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -990,17 +1008,18 @@ func (a *ArchiveConfigStore) GetAll(ctx context.Context) ([]stores.ArchiveGroupC
 }
 func (a *ArchiveConfigStore) Get(ctx context.Context, name string) (*stores.ArchiveGroupConfig, error) {
 	row := a.db.pool.QueryRow(ctx,
-		`SELECT name, enabled, topic_filter, retained_only, last_val_type, archive_type, last_val_retention, archive_retention, purge_interval, payload_format FROM archiveconfigs WHERE name=$1`, name)
+		`SELECT name, enabled, topic_filter, retained_only, last_val_type, archive_type, database_connection_name, last_val_retention, archive_retention, purge_interval, payload_format FROM archiveconfigs WHERE name=$1`, name)
 	return scanArchiveCfg(row)
 }
 func scanArchiveCfg(scanner pgx.Row) (*stores.ArchiveGroupConfig, error) {
 	var (
-		cfg                                   stores.ArchiveGroupConfig
-		enabled, retainedOnly                 int
-		topicFilter, lvType, arType           string
-		lvRet, arRet, purgeInt, payloadFormat *string
+		cfg                            stores.ArchiveGroupConfig
+		enabled, retainedOnly          int
+		topicFilter, lvType, arType    string
+		dbConn, lvRet, arRet, purgeInt *string
+		payloadFormat                  *string
 	)
-	if err := scanner.Scan(&cfg.Name, &enabled, &topicFilter, &retainedOnly, &lvType, &arType, &lvRet, &arRet, &purgeInt, &payloadFormat); err != nil {
+	if err := scanner.Scan(&cfg.Name, &enabled, &topicFilter, &retainedOnly, &lvType, &arType, &dbConn, &lvRet, &arRet, &purgeInt, &payloadFormat); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
@@ -1011,6 +1030,9 @@ func scanArchiveCfg(scanner pgx.Row) (*stores.ArchiveGroupConfig, error) {
 	cfg.TopicFilters = strings.Split(topicFilter, ",")
 	cfg.LastValType = stores.MessageStoreType(lvType)
 	cfg.ArchiveType = stores.MessageArchiveType(arType)
+	if dbConn != nil {
+		cfg.DatabaseConnectionName = *dbConn
+	}
 	if lvRet != nil {
 		cfg.LastValRetention = *lvRet
 	}
@@ -1035,17 +1057,18 @@ func (a *ArchiveConfigStore) Save(ctx context.Context, cfg stores.ArchiveGroupCo
 	if cfg.RetainedOnly {
 		retainedOnly = 1
 	}
-	_, err := a.db.pool.Exec(ctx, `INSERT INTO archiveconfigs (name, enabled, topic_filter, retained_only, last_val_type, archive_type, last_val_retention, archive_retention, purge_interval, payload_format)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	_, err := a.db.pool.Exec(ctx, `INSERT INTO archiveconfigs (name, enabled, topic_filter, retained_only, last_val_type, archive_type, database_connection_name, last_val_retention, archive_retention, purge_interval, payload_format)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         ON CONFLICT (name) DO UPDATE SET
             enabled=EXCLUDED.enabled, topic_filter=EXCLUDED.topic_filter, retained_only=EXCLUDED.retained_only,
             last_val_type=EXCLUDED.last_val_type, archive_type=EXCLUDED.archive_type,
+            database_connection_name=EXCLUDED.database_connection_name,
             last_val_retention=EXCLUDED.last_val_retention, archive_retention=EXCLUDED.archive_retention,
             purge_interval=EXCLUDED.purge_interval, payload_format=EXCLUDED.payload_format,
             updated_at=NOW()`,
 		cfg.Name, enabled, strings.Join(cfg.TopicFilters, ","), retainedOnly,
 		string(cfg.LastValType), string(cfg.ArchiveType),
-		nullStr(cfg.LastValRetention), nullStr(cfg.ArchiveRetention), nullStr(cfg.PurgeInterval),
+		nullStr(cfg.DatabaseConnectionName), nullStr(cfg.LastValRetention), nullStr(cfg.ArchiveRetention), nullStr(cfg.PurgeInterval),
 		string(cfg.PayloadFormat))
 	return err
 }
@@ -1060,6 +1083,82 @@ func (a *ArchiveConfigStore) Update(ctx context.Context, cfg stores.ArchiveGroup
 }
 func (a *ArchiveConfigStore) Delete(ctx context.Context, name string) error {
 	_, err := a.db.pool.Exec(ctx, `DELETE FROM archiveconfigs WHERE name=$1`, name)
+	return err
+}
+
+func scanDatabaseConnection(scanner pgx.Row) (*stores.DatabaseConnectionConfig, error) {
+	var (
+		cfg                        stores.DatabaseConnectionConfig
+		typ                        string
+		username, password, dbName *string
+		schema                     *string
+		createdAt, updatedAt       *time.Time
+	)
+	if err := scanner.Scan(&cfg.Name, &typ, &cfg.URL, &username, &password, &dbName, &schema, &cfg.ReadOnly, &createdAt, &updatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	cfg.Type = stores.DatabaseConnectionType(typ)
+	if username != nil {
+		cfg.Username = *username
+	}
+	if password != nil {
+		cfg.Password = *password
+	}
+	if dbName != nil {
+		cfg.Database = *dbName
+	}
+	if schema != nil {
+		cfg.Schema = *schema
+	}
+	if createdAt != nil {
+		cfg.CreatedAt = *createdAt
+	}
+	if updatedAt != nil {
+		cfg.UpdatedAt = *updatedAt
+	}
+	return &cfg, nil
+}
+
+func (a *ArchiveConfigStore) GetAllDatabaseConnections(ctx context.Context) ([]stores.DatabaseConnectionConfig, error) {
+	rows, err := a.db.pool.Query(ctx, `SELECT name, type, url, username, password, database_name, schema_name, read_only, created_at, updated_at FROM databaseconnections ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []stores.DatabaseConnectionConfig{}
+	for rows.Next() {
+		c, err := scanDatabaseConnection(rows)
+		if err != nil {
+			return nil, err
+		}
+		if c != nil {
+			out = append(out, *c)
+		}
+	}
+	return out, rows.Err()
+}
+
+func (a *ArchiveConfigStore) GetDatabaseConnection(ctx context.Context, name string) (*stores.DatabaseConnectionConfig, error) {
+	row := a.db.pool.QueryRow(ctx, `SELECT name, type, url, username, password, database_name, schema_name, read_only, created_at, updated_at FROM databaseconnections WHERE name=$1`, name)
+	return scanDatabaseConnection(row)
+}
+
+func (a *ArchiveConfigStore) SaveDatabaseConnection(ctx context.Context, cfg stores.DatabaseConnectionConfig) error {
+	_, err := a.db.pool.Exec(ctx, `INSERT INTO databaseconnections (name, type, url, username, password, database_name, schema_name, read_only)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        ON CONFLICT (name) DO UPDATE SET
+            type=EXCLUDED.type, url=EXCLUDED.url, username=EXCLUDED.username, password=EXCLUDED.password,
+            database_name=EXCLUDED.database_name, schema_name=EXCLUDED.schema_name, read_only=EXCLUDED.read_only,
+            updated_at=NOW()`,
+		cfg.Name, string(cfg.Type), cfg.URL, nullStr(cfg.Username), nullStr(cfg.Password), nullStr(cfg.Database), nullStr(cfg.Schema), cfg.ReadOnly)
+	return err
+}
+
+func (a *ArchiveConfigStore) DeleteDatabaseConnection(ctx context.Context, name string) error {
+	_, err := a.db.pool.Exec(ctx, `DELETE FROM databaseconnections WHERE name=$1`, name)
 	return err
 }
 

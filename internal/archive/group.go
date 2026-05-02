@@ -22,10 +22,13 @@ type Group struct {
 	pending  []stores.BrokerMessage
 	flushCh  chan struct{}
 	stopCh   chan struct{}
+	doneCh   chan struct{}
+	stopOnce sync.Once
 	flushDur time.Duration
+	closers  []func() error
 }
 
-func NewGroup(cfg stores.ArchiveGroupConfig, lastVal stores.MessageStore, archive stores.MessageArchive, logger *slog.Logger) *Group {
+func NewGroup(cfg stores.ArchiveGroupConfig, lastVal stores.MessageStore, archive stores.MessageArchive, logger *slog.Logger, closers ...func() error) *Group {
 	return &Group{
 		cfg:      cfg,
 		lastVal:  lastVal,
@@ -33,14 +36,16 @@ func NewGroup(cfg stores.ArchiveGroupConfig, lastVal stores.MessageStore, archiv
 		logger:   logger,
 		flushCh:  make(chan struct{}, 1),
 		stopCh:   make(chan struct{}),
+		doneCh:   make(chan struct{}),
 		flushDur: 250 * time.Millisecond,
+		closers:  closers,
 	}
 }
 
-func (g *Group) Name() string                       { return g.cfg.Name }
-func (g *Group) Config() stores.ArchiveGroupConfig  { return g.cfg }
-func (g *Group) LastValue() stores.MessageStore     { return g.lastVal }
-func (g *Group) Archive() stores.MessageArchive     { return g.archive }
+func (g *Group) Name() string                      { return g.cfg.Name }
+func (g *Group) Config() stores.ArchiveGroupConfig { return g.cfg }
+func (g *Group) LastValue() stores.MessageStore    { return g.lastVal }
+func (g *Group) Archive() stores.MessageArchive    { return g.archive }
 
 // Start begins the background flush loop.
 func (g *Group) Start() {
@@ -48,7 +53,18 @@ func (g *Group) Start() {
 }
 
 func (g *Group) Stop() {
-	close(g.stopCh)
+	g.stopOnce.Do(func() {
+		close(g.stopCh)
+		<-g.doneCh
+		for _, closeFn := range g.closers {
+			if closeFn == nil {
+				continue
+			}
+			if err := closeFn(); err != nil {
+				g.logger.Warn("archive group close failed", "group", g.cfg.Name, "err", err)
+			}
+		}
+	})
 }
 
 // Matches returns true if topic should be archived by this group.
@@ -83,6 +99,7 @@ func (g *Group) Submit(msg stores.BrokerMessage) {
 func (g *Group) run() {
 	t := time.NewTicker(g.flushDur)
 	defer t.Stop()
+	defer close(g.doneCh)
 	for {
 		select {
 		case <-g.stopCh:

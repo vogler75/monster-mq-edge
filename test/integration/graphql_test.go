@@ -2,6 +2,7 @@ package integration
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ import (
 
 	"monstermq.io/edge/internal/broker"
 	"monstermq.io/edge/internal/config"
+	"monstermq.io/edge/internal/stores"
 )
 
 func startWithGraphQL(t *testing.T, mqttPort, gqlPort int, cfgFns ...func(*config.Config)) (*broker.Server, string) {
@@ -186,6 +188,112 @@ func TestGraphQLArchiveGroupCRUD(t *testing.T) {
 	data = gqlQuery(t, url, `{ archiveGroup(name: "Sensors") { name topicFilter } }`, nil)
 	if data["archiveGroup"].(map[string]any)["name"] != "Sensors" {
 		t.Fatalf("created group not found: %v", data)
+	}
+}
+
+func TestGraphQLDatabaseConnectionCRUDAndValidation(t *testing.T) {
+	srv, url := startWithGraphQL(t, 23021, 28021, func(c *config.Config) {
+		c.Postgres.URL = "postgres://default:secret@localhost/defaultdb"
+		c.MongoDB.URL = "mongodb://mongo-default:secret@localhost:27017"
+		c.MongoDB.Database = "monstermq"
+	})
+	defer srv.Close()
+
+	data := gqlQuery(t, url, `{ databaseConnectionNames(type: POSTGRES) }`, nil)
+	names := data["databaseConnectionNames"].([]any)
+	if len(names) != 1 || names[0] != "Default" {
+		t.Fatalf("postgres names: %v", names)
+	}
+	data = gqlQuery(t, url, `{ databaseConnections(type: POSTGRES) { name type url readOnly } }`, nil)
+	conns := data["databaseConnections"].([]any)
+	def := conns[0].(map[string]any)
+	if def["name"] != "Default" || def["readOnly"] != true || strings.Contains(def["url"].(string), "secret") {
+		t.Fatalf("unexpected default connection: %v", def)
+	}
+
+	data = gqlQuery(t, url, `mutation {
+        archiveGroup {
+            createDatabaseConnection(input: {
+                name: "pgEdge",
+                type: POSTGRES,
+                url: "postgres://user:topsecret@127.0.0.1:1/db",
+                username: "user",
+                password: "stored-secret",
+                schema: "public"
+            }) { success connection { name type url username schema readOnly } message }
+        }
+    }`, nil)
+	create := data["archiveGroup"].(map[string]any)["createDatabaseConnection"].(map[string]any)
+	if create["success"] != true {
+		t.Fatalf("create connection failed: %v", create)
+	}
+	conn := create["connection"].(map[string]any)
+	if strings.Contains(conn["url"].(string), "topsecret") || conn["readOnly"] != false {
+		t.Fatalf("connection not sanitized: %v", conn)
+	}
+
+	data = gqlQuery(t, url, `mutation {
+        archiveGroup {
+            updateDatabaseConnection(input: { name: "pgEdge", url: "postgres://user:newsecret@127.0.0.1:1/db2" }) {
+                success connection { name url }
+            }
+        }
+    }`, nil)
+	update := data["archiveGroup"].(map[string]any)["updateDatabaseConnection"].(map[string]any)
+	if update["success"] != true || strings.Contains(update["connection"].(map[string]any)["url"].(string), "newsecret") {
+		t.Fatalf("update connection failed/sanitization failed: %v", update)
+	}
+	stored, err := srv.Storage().ArchiveConfig.GetDatabaseConnection(context.Background(), "pgEdge")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored == nil || stored.Password != "stored-secret" {
+		t.Fatalf("password was not preserved on update: %+v", stored)
+	}
+
+	data = gqlQuery(t, url, `mutation {
+        archiveGroup { createDatabaseConnection(input: { name: "Default", type: POSTGRES, url: "postgres://x" }) { success message } }
+    }`, nil)
+	if data["archiveGroup"].(map[string]any)["createDatabaseConnection"].(map[string]any)["success"] != false {
+		t.Fatal("Default connection should be read-only")
+	}
+
+	if err := srv.Storage().ArchiveConfig.Save(context.Background(), stores.ArchiveGroupConfig{
+		Name:                   "PgNamed",
+		Enabled:                false,
+		TopicFilters:           []string{"pg/#"},
+		LastValType:            stores.MessageStorePostgres,
+		ArchiveType:            stores.ArchiveNone,
+		DatabaseConnectionName: "pgEdge",
+		PayloadFormat:          stores.PayloadDefault,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	data = gqlQuery(t, url, `mutation { archiveGroup { deleteDatabaseConnection(name: "pgEdge") { success message } } }`, nil)
+	del := data["archiveGroup"].(map[string]any)["deleteDatabaseConnection"].(map[string]any)
+	if del["success"] != false {
+		t.Fatalf("delete in-use connection should fail: %v", del)
+	}
+
+	data = gqlQuery(t, url, `mutation { archiveGroup { enable(name: "PgNamed") { success message } } }`, nil)
+	enable := data["archiveGroup"].(map[string]any)["enable"].(map[string]any)
+	if enable["success"] != false {
+		t.Fatalf("enable with undeployable named connection should report failure: %v", enable)
+	}
+
+	data = gqlQuery(t, url, `mutation Create($input: CreateArchiveGroupInput!) {
+        archiveGroup { create(input: $input) { success message } }
+    }`, map[string]any{"input": map[string]any{
+		"name":                   "WrongType",
+		"topicFilter":            []string{"bad/#"},
+		"lastValType":            "MONGODB",
+		"archiveType":            "NONE",
+		"databaseConnectionName": "pgEdge",
+	}})
+	wrong := data["archiveGroup"].(map[string]any)["create"].(map[string]any)
+	if wrong["success"] != false {
+		t.Fatalf("wrong connection type should fail: %v", wrong)
 	}
 }
 

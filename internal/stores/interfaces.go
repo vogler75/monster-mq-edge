@@ -122,16 +122,17 @@ type UserStore interface {
 }
 
 type ArchiveGroupConfig struct {
-	Name             string
-	Enabled          bool
-	TopicFilters     []string
-	RetainedOnly     bool
-	LastValType      MessageStoreType
-	ArchiveType      MessageArchiveType
-	LastValRetention string
-	ArchiveRetention string
-	PurgeInterval    string
-	PayloadFormat    PayloadFormat
+	Name                   string
+	Enabled                bool
+	TopicFilters           []string
+	RetainedOnly           bool
+	LastValType            MessageStoreType
+	ArchiveType            MessageArchiveType
+	DatabaseConnectionName string
+	LastValRetention       string
+	ArchiveRetention       string
+	PurgeInterval          string
+	PayloadFormat          PayloadFormat
 }
 
 type ArchiveConfigStore interface {
@@ -140,6 +141,10 @@ type ArchiveConfigStore interface {
 	Save(ctx context.Context, cfg ArchiveGroupConfig) error
 	Update(ctx context.Context, cfg ArchiveGroupConfig) error
 	Delete(ctx context.Context, name string) error
+	GetAllDatabaseConnections(ctx context.Context) ([]DatabaseConnectionConfig, error)
+	GetDatabaseConnection(ctx context.Context, name string) (*DatabaseConnectionConfig, error)
+	SaveDatabaseConnection(ctx context.Context, cfg DatabaseConnectionConfig) error
+	DeleteDatabaseConnection(ctx context.Context, name string) error
 	Close() error
 }
 
