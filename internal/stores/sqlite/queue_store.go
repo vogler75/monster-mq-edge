@@ -185,6 +185,15 @@ func (q *QueueStore) PurgeForClient(ctx context.Context, clientID string) (int64
 	return n, nil
 }
 
+func (q *QueueStore) PurgeAll(ctx context.Context) (int64, error) {
+	res, err := q.db.Exec(fmt.Sprintf("DELETE FROM %s", queueTable))
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
 func (q *QueueStore) Count(ctx context.Context, clientID string) (int64, error) {
 	row := q.db.Conn().QueryRowContext(ctx, fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE client_id = ?", queueTable), clientID)
 	var n int64

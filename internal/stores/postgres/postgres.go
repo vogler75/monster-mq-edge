@@ -69,8 +69,8 @@ func Build(ctx context.Context, cfg *config.Config) (*stores.Storage, *DB, error
 		}
 	}
 	return &stores.Storage{
-		Backend:       config.StorePostgres,
-		Sessions:      sessions, Subscriptions: sessions,
+		Backend:  config.StorePostgres,
+		Sessions: sessions, Subscriptions: sessions,
 		Queue: queue, Retained: retained, Users: users,
 		ArchiveConfig: archives, DeviceConfig: devices, Metrics: metricsStore,
 		Closer: db.Close,
@@ -190,13 +190,13 @@ func (s *MessageStore) FindMatchingMessages(ctx context.Context, pattern string,
 	now := time.Now().UnixMilli()
 	for rows.Next() {
 		var (
-			topic  string
+			topic   string
 			payload []byte
-			qos    int
-			cid    *string
-			uid    *string
-			creat  *int64
-			expiry *int64
+			qos     int
+			cid     *string
+			uid     *string
+			creat   *int64
+			expiry  *int64
 		)
 		if err := rows.Scan(&topic, &payload, &qos, &cid, &uid, &creat, &expiry); err != nil {
 			return err
@@ -768,6 +768,13 @@ func (q *QueueStore) PurgeForClient(ctx context.Context, clientID string) (int64
 	}
 	return res.RowsAffected(), nil
 }
+func (q *QueueStore) PurgeAll(ctx context.Context) (int64, error) {
+	res, err := q.db.pool.Exec(ctx, `DELETE FROM messagequeue`)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected(), nil
+}
 func (q *QueueStore) Count(ctx context.Context, clientID string) (int64, error) {
 	var n int64
 	err := q.db.pool.QueryRow(ctx, `SELECT COUNT(*) FROM messagequeue WHERE client_id=$1`, clientID).Scan(&n)
@@ -835,9 +842,9 @@ func (u *UserStore) GetUser(ctx context.Context, username string) (*stores.User,
 	row := u.db.pool.QueryRow(ctx,
 		`SELECT username, password_hash, enabled, can_subscribe, can_publish, is_admin, created_at, updated_at FROM users WHERE username=$1`, username)
 	var (
-		user                                              stores.User
-		enabled, canSub, canPub, admin                    bool
-		createdAt, updatedAt                              time.Time
+		user                           stores.User
+		enabled, canSub, canPub, admin bool
+		createdAt, updatedAt           time.Time
 	)
 	if err := row.Scan(&user.Username, &user.PasswordHash, &enabled, &canSub, &canPub, &admin, &createdAt, &updatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -859,9 +866,9 @@ func (u *UserStore) GetAllUsers(ctx context.Context) ([]stores.User, error) {
 	out := []stores.User{}
 	for rows.Next() {
 		var (
-			user                                              stores.User
-			enabled, canSub, canPub, admin                    bool
-			createdAt, updatedAt                              time.Time
+			user                           stores.User
+			enabled, canSub, canPub, admin bool
+			createdAt, updatedAt           time.Time
 		)
 		if err := rows.Scan(&user.Username, &user.PasswordHash, &enabled, &canSub, &canPub, &admin, &createdAt, &updatedAt); err != nil {
 			return nil, err
@@ -988,10 +995,10 @@ func (a *ArchiveConfigStore) Get(ctx context.Context, name string) (*stores.Arch
 }
 func scanArchiveCfg(scanner pgx.Row) (*stores.ArchiveGroupConfig, error) {
 	var (
-		cfg                                         stores.ArchiveGroupConfig
-		enabled, retainedOnly                       int
-		topicFilter, lvType, arType                 string
-		lvRet, arRet, purgeInt, payloadFormat       *string
+		cfg                                   stores.ArchiveGroupConfig
+		enabled, retainedOnly                 int
+		topicFilter, lvType, arType           string
+		lvRet, arRet, purgeInt, payloadFormat *string
 	)
 	if err := scanner.Scan(&cfg.Name, &enabled, &topicFilter, &retainedOnly, &lvType, &arType, &lvRet, &arRet, &purgeInt, &payloadFormat); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -1048,7 +1055,9 @@ func nullStr(s string) any {
 	}
 	return s
 }
-func (a *ArchiveConfigStore) Update(ctx context.Context, cfg stores.ArchiveGroupConfig) error { return a.Save(ctx, cfg) }
+func (a *ArchiveConfigStore) Update(ctx context.Context, cfg stores.ArchiveGroupConfig) error {
+	return a.Save(ctx, cfg)
+}
 func (a *ArchiveConfigStore) Delete(ctx context.Context, name string) error {
 	_, err := a.db.pool.Exec(ctx, `DELETE FROM archiveconfigs WHERE name=$1`, name)
 	return err

@@ -20,8 +20,13 @@ type ACLRuleInfo struct {
 }
 
 type AggregatedResult struct {
-	Columns []string           `json:"columns"`
-	Rows    [][]map[string]any `json:"rows"`
+	Columns    []string            `json:"columns"`
+	Rows       [][]map[string]any  `json:"rows"`
+	Interval   AggregationInterval `json:"interval"`
+	StartTime  string              `json:"startTime"`
+	EndTime    string              `json:"endTime"`
+	TopicCount int                 `json:"topicCount"`
+	RowCount   int                 `json:"rowCount"`
 }
 
 type ArchiveGroupInfo struct {
@@ -652,6 +657,126 @@ type WinCCUaTransformConfigInput struct {
 	ConvertUnderscoreToSlash *bool   `json:"convertUnderscoreToSlash,omitempty"`
 	RegexPattern             *string `json:"regexPattern,omitempty"`
 	RegexReplacement         *string `json:"regexReplacement,omitempty"`
+}
+
+type AggregationFunction string
+
+const (
+	AggregationFunctionAvg   AggregationFunction = "AVG"
+	AggregationFunctionMin   AggregationFunction = "MIN"
+	AggregationFunctionMax   AggregationFunction = "MAX"
+	AggregationFunctionCount AggregationFunction = "COUNT"
+)
+
+var AllAggregationFunction = []AggregationFunction{
+	AggregationFunctionAvg,
+	AggregationFunctionMin,
+	AggregationFunctionMax,
+	AggregationFunctionCount,
+}
+
+func (e AggregationFunction) IsValid() bool {
+	switch e {
+	case AggregationFunctionAvg, AggregationFunctionMin, AggregationFunctionMax, AggregationFunctionCount:
+		return true
+	}
+	return false
+}
+
+func (e AggregationFunction) String() string {
+	return string(e)
+}
+
+func (e *AggregationFunction) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = AggregationFunction(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid AggregationFunction", str)
+	}
+	return nil
+}
+
+func (e AggregationFunction) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *AggregationFunction) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e AggregationFunction) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type AggregationInterval string
+
+const (
+	AggregationIntervalOneMinute      AggregationInterval = "ONE_MINUTE"
+	AggregationIntervalFiveMinutes    AggregationInterval = "FIVE_MINUTES"
+	AggregationIntervalFifteenMinutes AggregationInterval = "FIFTEEN_MINUTES"
+	AggregationIntervalOneHour        AggregationInterval = "ONE_HOUR"
+	AggregationIntervalOneDay         AggregationInterval = "ONE_DAY"
+)
+
+var AllAggregationInterval = []AggregationInterval{
+	AggregationIntervalOneMinute,
+	AggregationIntervalFiveMinutes,
+	AggregationIntervalFifteenMinutes,
+	AggregationIntervalOneHour,
+	AggregationIntervalOneDay,
+}
+
+func (e AggregationInterval) IsValid() bool {
+	switch e {
+	case AggregationIntervalOneMinute, AggregationIntervalFiveMinutes, AggregationIntervalFifteenMinutes, AggregationIntervalOneHour, AggregationIntervalOneDay:
+		return true
+	}
+	return false
+}
+
+func (e AggregationInterval) String() string {
+	return string(e)
+}
+
+func (e *AggregationInterval) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = AggregationInterval(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid AggregationInterval", str)
+	}
+	return nil
+}
+
+func (e AggregationInterval) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *AggregationInterval) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e AggregationInterval) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
 }
 
 type DataFormat string

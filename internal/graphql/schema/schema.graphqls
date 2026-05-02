@@ -8,6 +8,8 @@ scalar JSON
 
 enum DataFormat { JSON BINARY }
 enum OrderDirection { ASC DESC }
+enum AggregationInterval { ONE_MINUTE FIVE_MINUTES FIFTEEN_MINUTES ONE_HOUR ONE_DAY }
+enum AggregationFunction { AVG MIN MAX COUNT }
 
 enum MessageStoreType { NONE MEMORY HAZELCAST POSTGRES CRATEDB MONGODB SQLITE }
 enum MessageArchiveType { NONE POSTGRES CRATEDB MONGODB KAFKA SQLITE }
@@ -211,6 +213,11 @@ type ArchivedMessage {
 type AggregatedResult {
     columns: [String!]!
     rows: [[JSON]!]!
+    interval: AggregationInterval!
+    startTime: String!
+    endTime: String!
+    topicCount: Int!
+    rowCount: Int!
 }
 
 # -----------------------------------------------------------------------------
@@ -589,27 +596,27 @@ type TopicUpdateBulk {
 
 type Query {
     currentUser: CurrentUser
-    currentValue(topic: String!, format: DataFormat, archiveGroup: String): TopicValue
-    currentValues(topicFilter: String!, format: DataFormat, limit: Int, archiveGroup: String): [TopicValue!]!
-    retainedMessage(topic: String!, format: DataFormat): RetainedMessage
-    retainedMessages(topicFilter: String!, format: DataFormat, limit: Int): [RetainedMessage!]!
+    currentValue(topic: String!, format: DataFormat = JSON, archiveGroup: String = "Default"): TopicValue
+    currentValues(topicFilter: String!, format: DataFormat = JSON, limit: Int = 100, archiveGroup: String = "Default"): [TopicValue!]!
+    retainedMessage(topic: String!, format: DataFormat = JSON): RetainedMessage
+    retainedMessages(topicFilter: String, format: DataFormat = JSON, limit: Int = 100): [RetainedMessage!]!
     archivedMessages(
         topicFilter: String!
         startTime: String
         endTime: String
-        format: DataFormat
-        limit: Int
-        archiveGroup: String
-        includeTopic: Boolean
+        format: DataFormat = JSON
+        limit: Int = 100
+        archiveGroup: String = "Default"
+        includeTopic: Boolean = true
     ): [ArchivedMessage!]!
     aggregatedMessages(
         topics: [String!]!
-        interval: Int!
+        interval: AggregationInterval!
         startTime: String!
         endTime: String!
-        functions: [String!]!
+        functions: [AggregationFunction!] = [AVG]
         fields: [String!]
-        archiveGroup: String
+        archiveGroup: String = "Default"
     ): AggregatedResult!
     systemLogs(
         startTime: String
@@ -621,11 +628,11 @@ type Query {
         sourceClass: String
         sourceMethod: String
         message: String
-        limit: Int
-        orderByTime: OrderDirection
+        limit: Int = 100
+        orderByTime: OrderDirection = DESC
     ): [SystemLogEntry!]!
-    searchTopics(pattern: String!, limit: Int, archiveGroup: String): [String!]!
-    browseTopics(topic: String!, archiveGroup: String): [Topic!]!
+    searchTopics(pattern: String!, limit: Int = 100, archiveGroup: String = "Default"): [String!]!
+    browseTopics(topic: String!, archiveGroup: String = "Default"): [Topic!]!
     brokerConfig: BrokerConfig!
     broker(nodeId: String): Broker
     brokers: [Broker!]!
@@ -645,7 +652,7 @@ type Mutation {
     login(username: String!, password: String!): LoginResult
     publish(input: PublishInput!): PublishResult!
     publishBatch(inputs: [PublishInput!]!): [PublishResult!]!
-    purgeQueuedMessages(clientId: String!): PurgeResult!
+    purgeQueuedMessages(clientId: String): PurgeResult!
     user: UserManagementMutations!
     session: SessionMutations!
     archiveGroup: ArchiveGroupMutations!
@@ -653,8 +660,8 @@ type Mutation {
 }
 
 type Subscription {
-    topicUpdates(topicFilters: [String!]!, format: DataFormat): TopicUpdate!
-    topicUpdatesBulk(topicFilters: [String!]!, format: DataFormat, timeoutMs: Int, maxSize: Int): TopicUpdateBulk!
+    topicUpdates(topicFilters: [String!]!, format: DataFormat = JSON): TopicUpdate!
+    topicUpdatesBulk(topicFilters: [String!]!, format: DataFormat = JSON, timeoutMs: Int! = 1000, maxSize: Int! = 100): TopicUpdateBulk!
     systemLogs(
         node: String = "+"
         level: [String!]

@@ -78,6 +78,7 @@ type QueueStore interface {
 	Dequeue(ctx context.Context, clientID string, batchSize int) ([]BrokerMessage, error)
 	Ack(ctx context.Context, clientID string, messageUUID string) error
 	PurgeForClient(ctx context.Context, clientID string) (int64, error)
+	PurgeAll(ctx context.Context) (int64, error)
 	Count(ctx context.Context, clientID string) (int64, error)
 	CountAll(ctx context.Context) (int64, error)
 	Close() error
@@ -121,16 +122,16 @@ type UserStore interface {
 }
 
 type ArchiveGroupConfig struct {
-	Name              string
-	Enabled           bool
-	TopicFilters      []string
-	RetainedOnly      bool
-	LastValType       MessageStoreType
-	ArchiveType       MessageArchiveType
-	LastValRetention  string
-	ArchiveRetention  string
-	PurgeInterval     string
-	PayloadFormat     PayloadFormat
+	Name             string
+	Enabled          bool
+	TopicFilters     []string
+	RetainedOnly     bool
+	LastValType      MessageStoreType
+	ArchiveType      MessageArchiveType
+	LastValRetention string
+	ArchiveRetention string
+	PurgeInterval    string
+	PayloadFormat    PayloadFormat
 }
 
 type ArchiveConfigStore interface {

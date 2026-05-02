@@ -341,8 +341,16 @@ func (r *mutationResolver) PublishBatch(ctx context.Context, inputs []*generated
 	return out, nil
 }
 
-func (r *mutationResolver) PurgeQueuedMessages(ctx context.Context, clientID string) (*generated.PurgeResult, error) {
-	n, err := r.Storage.Queue.PurgeForClient(ctx, clientID)
+func (r *mutationResolver) PurgeQueuedMessages(ctx context.Context, clientID *string) (*generated.PurgeResult, error) {
+	var (
+		n   int64
+		err error
+	)
+	if clientID == nil {
+		n, err = r.Storage.Queue.PurgeAll(ctx)
+	} else {
+		n, err = r.Storage.Queue.PurgeForClient(ctx, *clientID)
+	}
 	if err != nil {
 		return &generated.PurgeResult{Success: false, Message: ptr(err.Error()), PurgedCount: 0}, nil
 	}
@@ -495,10 +503,14 @@ func (r *queryResolver) RetainedMessage(ctx context.Context, topic string, forma
 	return brokerMsgToRetained(*msg, format), nil
 }
 
-func (r *queryResolver) RetainedMessages(ctx context.Context, topicFilter string, format *generated.DataFormat, limit *int) ([]*generated.RetainedMessage, error) {
-	max := intPtr(limit, 1000)
+func (r *queryResolver) RetainedMessages(ctx context.Context, topicFilter *string, format *generated.DataFormat, limit *int) ([]*generated.RetainedMessage, error) {
+	filter := "#"
+	if topicFilter != nil {
+		filter = *topicFilter
+	}
+	max := intPtr(limit, 100)
 	out := []*generated.RetainedMessage{}
-	err := r.Storage.Retained.FindMatchingMessages(ctx, topicFilter, func(m stores.BrokerMessage) bool {
+	err := r.Storage.Retained.FindMatchingMessages(ctx, filter, func(m stores.BrokerMessage) bool {
 		out = append(out, brokerMsgToRetained(m, format))
 		return len(out) < max
 	})
@@ -562,7 +574,7 @@ func (r *queryResolver) CurrentValues(ctx context.Context, topicFilter string, f
 	if store == nil {
 		return nil, nil
 	}
-	max := intPtr(limit, 1000)
+	max := intPtr(limit, 100)
 	out := []*generated.TopicValue{}
 	err := store.FindMatchingMessages(ctx, topicFilter, func(m stores.BrokerMessage) bool {
 		out = append(out, brokerMsgToTopicValue(m, format))
@@ -633,7 +645,7 @@ func (r *queryResolver) ArchivedMessages(ctx context.Context, topicFilter string
 	}
 	from, _ := parseTimeArg(startTime)
 	to, _ := parseTimeArg(endTime)
-	rows, err := arc.GetHistory(ctx, topicFilter, from, to, intPtr(limit, 1000))
+	rows, err := arc.GetHistory(ctx, topicFilter, from, to, intPtr(limit, 100))
 	if err != nil {
 		return nil, err
 	}
@@ -653,8 +665,16 @@ func (r *queryResolver) ArchivedMessages(ctx context.Context, topicFilter string
 	return out, nil
 }
 
-func (r *queryResolver) AggregatedMessages(ctx context.Context, topics []string, interval int, startTime, endTime string, functions, fields []string, archiveGroup *string) (*generated.AggregatedResult, error) {
-	return &generated.AggregatedResult{Columns: []string{"timestamp"}, Rows: [][]map[string]any{}}, nil
+func (r *queryResolver) AggregatedMessages(ctx context.Context, topics []string, interval generated.AggregationInterval, startTime, endTime string, functions []generated.AggregationFunction, fields []string, archiveGroup *string) (*generated.AggregatedResult, error) {
+	return &generated.AggregatedResult{
+		Columns:    []string{"timestamp"},
+		Rows:       [][]map[string]any{},
+		Interval:   interval,
+		StartTime:  startTime,
+		EndTime:    endTime,
+		TopicCount: len(topics),
+		RowCount:   0,
+	}, nil
 }
 
 func (r *queryResolver) SearchTopics(ctx context.Context, pattern string, limit *int, archiveGroup *string) ([]string, error) {
@@ -662,7 +682,7 @@ func (r *queryResolver) SearchTopics(ctx context.Context, pattern string, limit 
 	if store == nil {
 		return []string{}, nil
 	}
-	max := intPtr(limit, 1000)
+	max := intPtr(limit, 100)
 	out := []string{}
 	err := store.FindMatchingTopics(ctx, "#", func(topic string) bool {
 		if pattern == "" || strings.Contains(topic, pattern) {
@@ -828,7 +848,7 @@ func (r *queryResolver) SystemLogs(ctx context.Context, startTime, endTime *stri
 		t := time.Now().Add(-time.Duration(*lastMinutes) * time.Minute)
 		from = &t
 	}
-	max := intPtr(limit, 1000)
+	max := intPtr(limit, 100)
 	all := r.LogBus.Snapshot()
 	out := make([]*generated.SystemLogEntry, 0, max)
 	for _, e := range all {
@@ -872,14 +892,14 @@ func (r *subscriptionResolver) TopicUpdates(ctx context.Context, topicFilters []
 	return out, nil
 }
 
-func (r *subscriptionResolver) TopicUpdatesBulk(ctx context.Context, topicFilters []string, format *generated.DataFormat, timeoutMs, maxSize *int) (<-chan *generated.TopicUpdateBulk, error) {
-	timeout := 250 * time.Millisecond
-	if timeoutMs != nil && *timeoutMs > 0 {
-		timeout = time.Duration(*timeoutMs) * time.Millisecond
+func (r *subscriptionResolver) TopicUpdatesBulk(ctx context.Context, topicFilters []string, format *generated.DataFormat, timeoutMs, maxSize int) (<-chan *generated.TopicUpdateBulk, error) {
+	timeout := time.Duration(timeoutMs) * time.Millisecond
+	if timeoutMs <= 0 {
+		timeout = time.Second
 	}
-	max := 100
-	if maxSize != nil && *maxSize > 0 {
-		max = *maxSize
+	max := maxSize
+	if max <= 0 {
+		max = 100
 	}
 	id, msgCh := r.Bus.Subscribe(topicFilters, 256)
 	out := make(chan *generated.TopicUpdateBulk, 16)

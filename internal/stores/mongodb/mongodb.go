@@ -62,8 +62,8 @@ func Build(ctx context.Context, cfg *config.Config) (*stores.Storage, *DB, error
 		}
 	}
 	return &stores.Storage{
-		Backend:       config.StoreMongoDB,
-		Sessions:      sessions, Subscriptions: sessions,
+		Backend:  config.StoreMongoDB,
+		Sessions: sessions, Subscriptions: sessions,
 		Queue: queue, Retained: retained, Users: users,
 		ArchiveConfig: archives, DeviceConfig: devices, Metrics: metricsStore,
 		Closer: db.Close,
@@ -342,7 +342,7 @@ func (a *MessageArchive) PurgeOlderThan(ctx context.Context, t time.Time) (store
 
 type SessionStore struct{ db *DB }
 
-func (s *SessionStore) Close() error { return nil }
+func (s *SessionStore) Close() error                    { return nil }
 func (s *SessionStore) sessionsColl() *mongo.Collection { return s.db.db.Collection("sessions") }
 func (s *SessionStore) subsColl() *mongo.Collection     { return s.db.db.Collection("subscriptions") }
 
@@ -415,12 +415,12 @@ func (s *SessionStore) GetSession(ctx context.Context, clientID string) (*stores
 
 func docToSession(doc bson.M) *stores.SessionInfo {
 	info := &stores.SessionInfo{
-		ClientID:     getStr(doc, "client_id"),
-		NodeID:       getStr(doc, "node_id"),
-		CleanSession: getBool(doc, "clean_session"),
-		Connected:    getBool(doc, "connected"),
-		Information:  getStr(doc, "information"),
-		LastWillTopic: getStr(doc, "last_will_topic"),
+		ClientID:       getStr(doc, "client_id"),
+		NodeID:         getStr(doc, "node_id"),
+		CleanSession:   getBool(doc, "clean_session"),
+		Connected:      getBool(doc, "connected"),
+		Information:    getStr(doc, "information"),
+		LastWillTopic:  getStr(doc, "last_will_topic"),
 		LastWillRetain: getBool(doc, "last_will_retain"),
 		LastWillQoS:    byte(getInt(doc, "last_will_qos")),
 	}
@@ -489,10 +489,10 @@ func (s *SessionStore) GetSubscriptionsForClient(ctx context.Context, clientID s
 		}
 		out = append(out, stores.MqttSubscription{
 			ClientID: getStr(doc, "client_id"), TopicFilter: getStr(doc, "topic"),
-			QoS: byte(getInt(doc, "qos")),
-			NoLocal: getBool(doc, "no_local"),
+			QoS:               byte(getInt(doc, "qos")),
+			NoLocal:           getBool(doc, "no_local"),
 			RetainAsPublished: getBool(doc, "retain_as_published"),
-			RetainHandling: byte(getInt(doc, "retain_handling")),
+			RetainHandling:    byte(getInt(doc, "retain_handling")),
 		})
 	}
 	return out, cur.Err()
@@ -549,8 +549,8 @@ type QueueStore struct {
 	visibility time.Duration
 }
 
-func (q *QueueStore) Close() error                  { return nil }
-func (q *QueueStore) coll() *mongo.Collection       { return q.db.db.Collection("messagequeue") }
+func (q *QueueStore) Close() error            { return nil }
+func (q *QueueStore) coll() *mongo.Collection { return q.db.db.Collection("messagequeue") }
 func (q *QueueStore) EnsureTable(ctx context.Context) error {
 	_, err := q.coll().Indexes().CreateMany(ctx, []mongo.IndexModel{
 		{Keys: bson.D{{Key: "client_id", Value: 1}, {Key: "vt", Value: 1}}},
@@ -572,8 +572,8 @@ func (q *QueueStore) EnqueueMulti(ctx context.Context, msg stores.BrokerMessage,
 	for _, cid := range clientIDs {
 		docs = append(docs, bson.M{
 			"message_uuid": msg.MessageUUID, "client_id": cid, "topic": msg.TopicName,
-			"payload":      bson.Binary{Data: msg.Payload}, "qos": int(msg.QoS),
-			"retained":     msg.IsRetain, "publisher_id": msg.ClientID,
+			"payload": bson.Binary{Data: msg.Payload}, "qos": int(msg.QoS),
+			"retained": msg.IsRetain, "publisher_id": msg.ClientID,
 			"creation_time": msg.Time.UnixMilli(),
 			"vt":            now, "read_ct": 0,
 		})
@@ -639,6 +639,13 @@ func (q *QueueStore) PurgeForClient(ctx context.Context, clientID string) (int64
 	}
 	return res.DeletedCount, nil
 }
+func (q *QueueStore) PurgeAll(ctx context.Context) (int64, error) {
+	res, err := q.coll().DeleteMany(ctx, bson.M{})
+	if err != nil {
+		return 0, err
+	}
+	return res.DeletedCount, nil
+}
 func (q *QueueStore) Count(ctx context.Context, clientID string) (int64, error) {
 	return q.coll().CountDocuments(ctx, bson.M{"client_id": clientID})
 }
@@ -650,9 +657,9 @@ func (q *QueueStore) CountAll(ctx context.Context) (int64, error) {
 
 type UserStore struct{ db *DB }
 
-func (u *UserStore) Close() error                          { return nil }
-func (u *UserStore) usersColl() *mongo.Collection          { return u.db.db.Collection("users") }
-func (u *UserStore) aclColl() *mongo.Collection            { return u.db.db.Collection("usersacl") }
+func (u *UserStore) Close() error                 { return nil }
+func (u *UserStore) usersColl() *mongo.Collection { return u.db.db.Collection("users") }
+func (u *UserStore) aclColl() *mongo.Collection   { return u.db.db.Collection("usersacl") }
 func (u *UserStore) EnsureTable(ctx context.Context) error {
 	if _, err := u.usersColl().Indexes().CreateOne(ctx, mongo.IndexModel{Keys: bson.D{{Key: "username", Value: 1}}, Options: options.Index().SetUnique(true)}); err != nil {
 		return err
@@ -824,8 +831,8 @@ func (u *UserStore) LoadAll(ctx context.Context) ([]stores.User, []stores.AclRul
 
 type ArchiveConfigStore struct{ db *DB }
 
-func (a *ArchiveConfigStore) Close() error                          { return nil }
-func (a *ArchiveConfigStore) coll() *mongo.Collection               { return a.db.db.Collection("archiveconfigs") }
+func (a *ArchiveConfigStore) Close() error            { return nil }
+func (a *ArchiveConfigStore) coll() *mongo.Collection { return a.db.db.Collection("archiveconfigs") }
 func (a *ArchiveConfigStore) EnsureTable(ctx context.Context) error {
 	_, err := a.coll().Indexes().CreateOne(ctx, mongo.IndexModel{Keys: bson.D{{Key: "name", Value: 1}}, Options: options.Index().SetUnique(true)})
 	return err
@@ -859,11 +866,11 @@ func (a *ArchiveConfigStore) Get(ctx context.Context, name string) (*stores.Arch
 }
 func docToArchive(doc bson.M) *stores.ArchiveGroupConfig {
 	c := &stores.ArchiveGroupConfig{
-		Name:    getStr(doc, "name"),
-		Enabled: getBool(doc, "enabled"),
-		RetainedOnly: getBool(doc, "retained_only"),
-		LastValType: stores.MessageStoreType(getStr(doc, "last_val_type")),
-		ArchiveType: stores.MessageArchiveType(getStr(doc, "archive_type")),
+		Name:             getStr(doc, "name"),
+		Enabled:          getBool(doc, "enabled"),
+		RetainedOnly:     getBool(doc, "retained_only"),
+		LastValType:      stores.MessageStoreType(getStr(doc, "last_val_type")),
+		ArchiveType:      stores.MessageArchiveType(getStr(doc, "archive_type")),
 		LastValRetention: getStr(doc, "last_val_retention"),
 		ArchiveRetention: getStr(doc, "archive_retention"),
 		PurgeInterval:    getStr(doc, "purge_interval"),
@@ -890,7 +897,9 @@ func (a *ArchiveConfigStore) Save(ctx context.Context, cfg stores.ArchiveGroupCo
 		options.UpdateOne().SetUpsert(true))
 	return err
 }
-func (a *ArchiveConfigStore) Update(ctx context.Context, cfg stores.ArchiveGroupConfig) error { return a.Save(ctx, cfg) }
+func (a *ArchiveConfigStore) Update(ctx context.Context, cfg stores.ArchiveGroupConfig) error {
+	return a.Save(ctx, cfg)
+}
 func (a *ArchiveConfigStore) Delete(ctx context.Context, name string) error {
 	_, err := a.coll().DeleteOne(ctx, bson.M{"name": name})
 	return err
@@ -900,8 +909,8 @@ func (a *ArchiveConfigStore) Delete(ctx context.Context, name string) error {
 
 type DeviceConfigStore struct{ db *DB }
 
-func (d *DeviceConfigStore) Close() error                          { return nil }
-func (d *DeviceConfigStore) coll() *mongo.Collection               { return d.db.db.Collection("deviceconfigs") }
+func (d *DeviceConfigStore) Close() error            { return nil }
+func (d *DeviceConfigStore) coll() *mongo.Collection { return d.db.db.Collection("deviceconfigs") }
 func (d *DeviceConfigStore) EnsureTable(ctx context.Context) error {
 	_, err := d.coll().Indexes().CreateMany(ctx, []mongo.IndexModel{
 		{Keys: bson.D{{Key: "name", Value: 1}}, Options: options.Index().SetUnique(true)},
@@ -993,8 +1002,8 @@ func (d *DeviceConfigStore) Reassign(ctx context.Context, name, nodeID string) (
 
 type MetricsStore struct{ db *DB }
 
-func (m *MetricsStore) Close() error                          { return nil }
-func (m *MetricsStore) coll() *mongo.Collection               { return m.db.db.Collection("metrics") }
+func (m *MetricsStore) Close() error            { return nil }
+func (m *MetricsStore) coll() *mongo.Collection { return m.db.db.Collection("metrics") }
 func (m *MetricsStore) EnsureTable(ctx context.Context) error {
 	_, err := m.coll().Indexes().CreateMany(ctx, []mongo.IndexModel{
 		{Keys: bson.D{{Key: "timestamp", Value: 1}, {Key: "metric_type", Value: 1}, {Key: "identifier", Value: 1}}, Options: options.Index().SetUnique(true)},

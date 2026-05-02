@@ -86,7 +86,7 @@ type MutationResolver interface {
 	Login(ctx context.Context, username string, password string) (*LoginResult, error)
 	Publish(ctx context.Context, input PublishInput) (*PublishResult, error)
 	PublishBatch(ctx context.Context, inputs []*PublishInput) ([]*PublishResult, error)
-	PurgeQueuedMessages(ctx context.Context, clientID string) (*PurgeResult, error)
+	PurgeQueuedMessages(ctx context.Context, clientID *string) (*PurgeResult, error)
 	User(ctx context.Context) (*UserManagementMutations, error)
 	Session(ctx context.Context) (*SessionMutations, error)
 	ArchiveGroup(ctx context.Context) (*ArchiveGroupMutations, error)
@@ -98,9 +98,9 @@ type QueryResolver interface {
 	CurrentValue(ctx context.Context, topic string, format *DataFormat, archiveGroup *string) (*TopicValue, error)
 	CurrentValues(ctx context.Context, topicFilter string, format *DataFormat, limit *int, archiveGroup *string) ([]*TopicValue, error)
 	RetainedMessage(ctx context.Context, topic string, format *DataFormat) (*RetainedMessage, error)
-	RetainedMessages(ctx context.Context, topicFilter string, format *DataFormat, limit *int) ([]*RetainedMessage, error)
+	RetainedMessages(ctx context.Context, topicFilter *string, format *DataFormat, limit *int) ([]*RetainedMessage, error)
 	ArchivedMessages(ctx context.Context, topicFilter string, startTime *string, endTime *string, format *DataFormat, limit *int, archiveGroup *string, includeTopic *bool) ([]*ArchivedMessage, error)
-	AggregatedMessages(ctx context.Context, topics []string, interval int, startTime string, endTime string, functions []string, fields []string, archiveGroup *string) (*AggregatedResult, error)
+	AggregatedMessages(ctx context.Context, topics []string, interval AggregationInterval, startTime string, endTime string, functions []AggregationFunction, fields []string, archiveGroup *string) (*AggregatedResult, error)
 	SystemLogs(ctx context.Context, startTime *string, endTime *string, lastMinutes *int, node *string, level []string, logger *string, sourceClass *string, sourceMethod *string, message *string, limit *int, orderByTime *OrderDirection) ([]*SystemLogEntry, error)
 	SearchTopics(ctx context.Context, pattern string, limit *int, archiveGroup *string) ([]string, error)
 	BrowseTopics(ctx context.Context, topic string, archiveGroup *string) ([]*Topic, error)
@@ -127,7 +127,7 @@ type SessionMutationsResolver interface {
 }
 type SubscriptionResolver interface {
 	TopicUpdates(ctx context.Context, topicFilters []string, format *DataFormat) (<-chan *TopicUpdate, error)
-	TopicUpdatesBulk(ctx context.Context, topicFilters []string, format *DataFormat, timeoutMs *int, maxSize *int) (<-chan *TopicUpdateBulk, error)
+	TopicUpdatesBulk(ctx context.Context, topicFilters []string, format *DataFormat, timeoutMs int, maxSize int) (<-chan *TopicUpdateBulk, error)
 	SystemLogs(ctx context.Context, node *string, level []string, logger *string, thread *int64, sourceClass *string, sourceMethod *string, message *string) (<-chan *SystemLogEntry, error)
 }
 type TopicResolver interface {
@@ -300,6 +300,8 @@ scalar JSON
 
 enum DataFormat { JSON BINARY }
 enum OrderDirection { ASC DESC }
+enum AggregationInterval { ONE_MINUTE FIVE_MINUTES FIFTEEN_MINUTES ONE_HOUR ONE_DAY }
+enum AggregationFunction { AVG MIN MAX COUNT }
 
 enum MessageStoreType { NONE MEMORY HAZELCAST POSTGRES CRATEDB MONGODB SQLITE }
 enum MessageArchiveType { NONE POSTGRES CRATEDB MONGODB KAFKA SQLITE }
@@ -503,6 +505,11 @@ type ArchivedMessage {
 type AggregatedResult {
     columns: [String!]!
     rows: [[JSON]!]!
+    interval: AggregationInterval!
+    startTime: String!
+    endTime: String!
+    topicCount: Int!
+    rowCount: Int!
 }
 
 # -----------------------------------------------------------------------------
@@ -881,27 +888,27 @@ type TopicUpdateBulk {
 
 type Query {
     currentUser: CurrentUser
-    currentValue(topic: String!, format: DataFormat, archiveGroup: String): TopicValue
-    currentValues(topicFilter: String!, format: DataFormat, limit: Int, archiveGroup: String): [TopicValue!]!
-    retainedMessage(topic: String!, format: DataFormat): RetainedMessage
-    retainedMessages(topicFilter: String!, format: DataFormat, limit: Int): [RetainedMessage!]!
+    currentValue(topic: String!, format: DataFormat = JSON, archiveGroup: String = "Default"): TopicValue
+    currentValues(topicFilter: String!, format: DataFormat = JSON, limit: Int = 100, archiveGroup: String = "Default"): [TopicValue!]!
+    retainedMessage(topic: String!, format: DataFormat = JSON): RetainedMessage
+    retainedMessages(topicFilter: String, format: DataFormat = JSON, limit: Int = 100): [RetainedMessage!]!
     archivedMessages(
         topicFilter: String!
         startTime: String
         endTime: String
-        format: DataFormat
-        limit: Int
-        archiveGroup: String
-        includeTopic: Boolean
+        format: DataFormat = JSON
+        limit: Int = 100
+        archiveGroup: String = "Default"
+        includeTopic: Boolean = true
     ): [ArchivedMessage!]!
     aggregatedMessages(
         topics: [String!]!
-        interval: Int!
+        interval: AggregationInterval!
         startTime: String!
         endTime: String!
-        functions: [String!]!
+        functions: [AggregationFunction!] = [AVG]
         fields: [String!]
-        archiveGroup: String
+        archiveGroup: String = "Default"
     ): AggregatedResult!
     systemLogs(
         startTime: String
@@ -913,11 +920,11 @@ type Query {
         sourceClass: String
         sourceMethod: String
         message: String
-        limit: Int
-        orderByTime: OrderDirection
+        limit: Int = 100
+        orderByTime: OrderDirection = DESC
     ): [SystemLogEntry!]!
-    searchTopics(pattern: String!, limit: Int, archiveGroup: String): [String!]!
-    browseTopics(topic: String!, archiveGroup: String): [Topic!]!
+    searchTopics(pattern: String!, limit: Int = 100, archiveGroup: String = "Default"): [String!]!
+    browseTopics(topic: String!, archiveGroup: String = "Default"): [Topic!]!
     brokerConfig: BrokerConfig!
     broker(nodeId: String): Broker
     brokers: [Broker!]!
@@ -937,7 +944,7 @@ type Mutation {
     login(username: String!, password: String!): LoginResult
     publish(input: PublishInput!): PublishResult!
     publishBatch(inputs: [PublishInput!]!): [PublishResult!]!
-    purgeQueuedMessages(clientId: String!): PurgeResult!
+    purgeQueuedMessages(clientId: String): PurgeResult!
     user: UserManagementMutations!
     session: SessionMutations!
     archiveGroup: ArchiveGroupMutations!
@@ -945,8 +952,8 @@ type Mutation {
 }
 
 type Subscription {
-    topicUpdates(topicFilters: [String!]!, format: DataFormat): TopicUpdate!
-    topicUpdatesBulk(topicFilters: [String!]!, format: DataFormat, timeoutMs: Int, maxSize: Int): TopicUpdateBulk!
+    topicUpdates(topicFilters: [String!]!, format: DataFormat = JSON): TopicUpdate!
+    topicUpdatesBulk(topicFilters: [String!]!, format: DataFormat = JSON, timeoutMs: Int! = 1000, maxSize: Int! = 100): TopicUpdateBulk!
     systemLogs(
         node: String = "+"
         level: [String!]
@@ -1425,7 +1432,7 @@ func (ec *executionContext) field_Mutation_publish_args(ctx context.Context, raw
 func (ec *executionContext) field_Mutation_purgeQueuedMessages_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
-	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "clientId", ec.unmarshalNString2string)
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "clientId", ec.unmarshalOString2ᚖstring)
 	if err != nil {
 		return nil, err
 	}
@@ -1452,7 +1459,7 @@ func (ec *executionContext) field_Query_aggregatedMessages_args(ctx context.Cont
 		return nil, err
 	}
 	args["topics"] = arg0
-	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "interval", ec.unmarshalNInt2int)
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "interval", ec.unmarshalNAggregationInterval2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐAggregationInterval)
 	if err != nil {
 		return nil, err
 	}
@@ -1467,7 +1474,7 @@ func (ec *executionContext) field_Query_aggregatedMessages_args(ctx context.Cont
 		return nil, err
 	}
 	args["endTime"] = arg3
-	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "functions", ec.unmarshalNString2ᚕstringᚄ)
+	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "functions", ec.unmarshalOAggregationFunction2ᚕmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐAggregationFunctionᚄ)
 	if err != nil {
 		return nil, err
 	}
@@ -1667,7 +1674,7 @@ func (ec *executionContext) field_Query_retainedMessage_args(ctx context.Context
 func (ec *executionContext) field_Query_retainedMessages_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
-	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "topicFilter", ec.unmarshalNString2string)
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "topicFilter", ec.unmarshalOString2ᚖstring)
 	if err != nil {
 		return nil, err
 	}
@@ -1917,12 +1924,12 @@ func (ec *executionContext) field_Subscription_topicUpdatesBulk_args(ctx context
 		return nil, err
 	}
 	args["format"] = arg1
-	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "timeoutMs", ec.unmarshalOInt2ᚖint)
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "timeoutMs", ec.unmarshalNInt2int)
 	if err != nil {
 		return nil, err
 	}
 	args["timeoutMs"] = arg2
-	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "maxSize", ec.unmarshalOInt2ᚖint)
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "maxSize", ec.unmarshalNInt2int)
 	if err != nil {
 		return nil, err
 	}
@@ -2508,6 +2515,151 @@ func (ec *executionContext) fieldContext_AggregatedResult_rows(_ context.Context
 		IsResolver: false,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return nil, errors.New("field of type JSON does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _AggregatedResult_interval(ctx context.Context, field graphql.CollectedField, obj *AggregatedResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_AggregatedResult_interval,
+		func(ctx context.Context) (any, error) {
+			return obj.Interval, nil
+		},
+		nil,
+		ec.marshalNAggregationInterval2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐAggregationInterval,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_AggregatedResult_interval(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "AggregatedResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type AggregationInterval does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _AggregatedResult_startTime(ctx context.Context, field graphql.CollectedField, obj *AggregatedResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_AggregatedResult_startTime,
+		func(ctx context.Context) (any, error) {
+			return obj.StartTime, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_AggregatedResult_startTime(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "AggregatedResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _AggregatedResult_endTime(ctx context.Context, field graphql.CollectedField, obj *AggregatedResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_AggregatedResult_endTime,
+		func(ctx context.Context) (any, error) {
+			return obj.EndTime, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_AggregatedResult_endTime(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "AggregatedResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _AggregatedResult_topicCount(ctx context.Context, field graphql.CollectedField, obj *AggregatedResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_AggregatedResult_topicCount,
+		func(ctx context.Context) (any, error) {
+			return obj.TopicCount, nil
+		},
+		nil,
+		ec.marshalNInt2int,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_AggregatedResult_topicCount(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "AggregatedResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Int does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _AggregatedResult_rowCount(ctx context.Context, field graphql.CollectedField, obj *AggregatedResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_AggregatedResult_rowCount,
+		func(ctx context.Context) (any, error) {
+			return obj.RowCount, nil
+		},
+		nil,
+		ec.marshalNInt2int,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_AggregatedResult_rowCount(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "AggregatedResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Int does not have child fields")
 		},
 	}
 	return fc, nil
@@ -8517,7 +8669,7 @@ func (ec *executionContext) _Mutation_purgeQueuedMessages(ctx context.Context, f
 		ec.fieldContext_Mutation_purgeQueuedMessages,
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Mutation().PurgeQueuedMessages(ctx, fc.Args["clientId"].(string))
+			return ec.Resolvers.Mutation().PurgeQueuedMessages(ctx, fc.Args["clientId"].(*string))
 		},
 		nil,
 		ec.marshalNPurgeResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐPurgeResult,
@@ -9330,7 +9482,7 @@ func (ec *executionContext) _Query_retainedMessages(ctx context.Context, field g
 		ec.fieldContext_Query_retainedMessages,
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Query().RetainedMessages(ctx, fc.Args["topicFilter"].(string), fc.Args["format"].(*DataFormat), fc.Args["limit"].(*int))
+			return ec.Resolvers.Query().RetainedMessages(ctx, fc.Args["topicFilter"].(*string), fc.Args["format"].(*DataFormat), fc.Args["limit"].(*int))
 		},
 		nil,
 		ec.marshalNRetainedMessage2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRetainedMessageᚄ,
@@ -9458,7 +9610,7 @@ func (ec *executionContext) _Query_aggregatedMessages(ctx context.Context, field
 		ec.fieldContext_Query_aggregatedMessages,
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Query().AggregatedMessages(ctx, fc.Args["topics"].([]string), fc.Args["interval"].(int), fc.Args["startTime"].(string), fc.Args["endTime"].(string), fc.Args["functions"].([]string), fc.Args["fields"].([]string), fc.Args["archiveGroup"].(*string))
+			return ec.Resolvers.Query().AggregatedMessages(ctx, fc.Args["topics"].([]string), fc.Args["interval"].(AggregationInterval), fc.Args["startTime"].(string), fc.Args["endTime"].(string), fc.Args["functions"].([]AggregationFunction), fc.Args["fields"].([]string), fc.Args["archiveGroup"].(*string))
 		},
 		nil,
 		ec.marshalNAggregatedResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐAggregatedResult,
@@ -9479,6 +9631,16 @@ func (ec *executionContext) fieldContext_Query_aggregatedMessages(ctx context.Co
 				return ec.fieldContext_AggregatedResult_columns(ctx, field)
 			case "rows":
 				return ec.fieldContext_AggregatedResult_rows(ctx, field)
+			case "interval":
+				return ec.fieldContext_AggregatedResult_interval(ctx, field)
+			case "startTime":
+				return ec.fieldContext_AggregatedResult_startTime(ctx, field)
+			case "endTime":
+				return ec.fieldContext_AggregatedResult_endTime(ctx, field)
+			case "topicCount":
+				return ec.fieldContext_AggregatedResult_topicCount(ctx, field)
+			case "rowCount":
+				return ec.fieldContext_AggregatedResult_rowCount(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type AggregatedResult", field.Name)
 		},
@@ -11645,7 +11807,7 @@ func (ec *executionContext) _Subscription_topicUpdatesBulk(ctx context.Context, 
 		ec.fieldContext_Subscription_topicUpdatesBulk,
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Subscription().TopicUpdatesBulk(ctx, fc.Args["topicFilters"].([]string), fc.Args["format"].(*DataFormat), fc.Args["timeoutMs"].(*int), fc.Args["maxSize"].(*int))
+			return ec.Resolvers.Subscription().TopicUpdatesBulk(ctx, fc.Args["topicFilters"].([]string), fc.Args["format"].(*DataFormat), fc.Args["timeoutMs"].(int), fc.Args["maxSize"].(int))
 		},
 		nil,
 		ec.marshalNTopicUpdateBulk2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐTopicUpdateBulk,
@@ -18158,6 +18320,31 @@ func (ec *executionContext) _AggregatedResult(ctx context.Context, sel ast.Selec
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
+		case "interval":
+			out.Values[i] = ec._AggregatedResult_interval(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "startTime":
+			out.Values[i] = ec._AggregatedResult_startTime(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "endTime":
+			out.Values[i] = ec._AggregatedResult_endTime(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "topicCount":
+			out.Values[i] = ec._AggregatedResult_topicCount(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "rowCount":
+			out.Values[i] = ec._AggregatedResult_rowCount(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}
@@ -23487,6 +23674,26 @@ func (ec *executionContext) marshalNAggregatedResult2ᚖmonstermqᚗioᚋedgeᚋ
 	return ec._AggregatedResult(ctx, sel, v)
 }
 
+func (ec *executionContext) unmarshalNAggregationFunction2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐAggregationFunction(ctx context.Context, v any) (AggregationFunction, error) {
+	var res AggregationFunction
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNAggregationFunction2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐAggregationFunction(ctx context.Context, sel ast.SelectionSet, v AggregationFunction) graphql.Marshaler {
+	return v
+}
+
+func (ec *executionContext) unmarshalNAggregationInterval2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐAggregationInterval(ctx context.Context, v any) (AggregationInterval, error) {
+	var res AggregationInterval
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNAggregationInterval2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐAggregationInterval(ctx context.Context, sel ast.SelectionSet, v AggregationInterval) graphql.Marshaler {
+	return v
+}
+
 func (ec *executionContext) marshalNArchiveGroupInfo2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐArchiveGroupInfoᚄ(ctx context.Context, sel ast.SelectionSet, v []*ArchiveGroupInfo) graphql.Marshaler {
 	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
 		fc := graphql.GetFieldContext(ctx)
@@ -24773,6 +24980,43 @@ func (ec *executionContext) marshalOAclRuleInfo2ᚖmonstermqᚗioᚋedgeᚋinter
 		return graphql.Null
 	}
 	return ec._AclRuleInfo(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalOAggregationFunction2ᚕmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐAggregationFunctionᚄ(ctx context.Context, v any) ([]AggregationFunction, error) {
+	if v == nil {
+		return nil, nil
+	}
+	var vSlice []any
+	vSlice = graphql.CoerceList(v)
+	var err error
+	res := make([]AggregationFunction, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNAggregationFunction2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐAggregationFunction(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) marshalOAggregationFunction2ᚕmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐAggregationFunctionᚄ(ctx context.Context, sel ast.SelectionSet, v []AggregationFunction) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNAggregationFunction2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐAggregationFunction(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
 }
 
 func (ec *executionContext) marshalOArchiveGroupInfo2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐArchiveGroupInfo(ctx context.Context, sel ast.SelectionSet, v *ArchiveGroupInfo) graphql.Marshaler {
