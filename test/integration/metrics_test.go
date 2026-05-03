@@ -71,6 +71,62 @@ func TestMetricsCollectorAndPersistence(t *testing.T) {
 	}
 }
 
+func TestMetricsMemoryStoreHistory(t *testing.T) {
+	srv, url := startWithGraphQL(t, 23013, 28013, func(cfg *config.Config) {
+		cfg.Metrics.StoreType = config.StoreMemory
+		cfg.Metrics.MaxHistoryRows = 3
+	})
+	defer srv.Close()
+
+	pub := mqtt.NewClient(mqttOpts(23013, "metrics-memory-pub"))
+	if tok := pub.Connect(); tok.WaitTimeout(2*time.Second) && tok.Error() != nil {
+		t.Fatal(tok.Error())
+	}
+	for i := 0; i < 5; i++ {
+		_ = pub.Publish("mem/x", 0, false, "x").WaitTimeout(2 * time.Second)
+	}
+	pub.Disconnect(100)
+
+	time.Sleep(1500 * time.Millisecond)
+
+	data := gqlQuery(t, url, `{ broker { metricsHistory(lastMinutes: 1) { messagesIn timestamp } } }`, nil)
+	hist := data["broker"].(map[string]any)["metricsHistory"].([]any)
+	if len(hist) == 0 {
+		t.Fatal("expected in-memory metrics history")
+	}
+	if len(hist) > 3 {
+		t.Fatalf("expected bounded in-memory history, got %d rows", len(hist))
+	}
+}
+
+func TestMetricsNoneKeepsLiveMetricsWithoutHistory(t *testing.T) {
+	srv, url := startWithGraphQL(t, 23014, 28014, func(cfg *config.Config) {
+		cfg.Metrics.StoreType = config.StoreNone
+	})
+	defer srv.Close()
+	if srv.Storage().Metrics != nil {
+		t.Fatal("expected nil metrics store for Metrics.StoreType=NONE")
+	}
+
+	pub := mqtt.NewClient(mqttOpts(23014, "metrics-none-pub"))
+	if tok := pub.Connect(); tok.WaitTimeout(2*time.Second) && tok.Error() != nil {
+		t.Fatal(tok.Error())
+	}
+	_ = pub.Publish("none/x", 0, false, "x").WaitTimeout(2 * time.Second)
+	pub.Disconnect(100)
+
+	time.Sleep(1500 * time.Millisecond)
+
+	data := gqlQuery(t, url, `{ broker { metrics { timestamp } metricsHistory(lastMinutes: 1) { timestamp } } }`, nil)
+	br := data["broker"].(map[string]any)
+	if len(br["metrics"].([]any)) == 0 {
+		t.Fatal("expected live metrics")
+	}
+	if len(br["metricsHistory"].([]any)) != 0 {
+		t.Fatal("expected empty metrics history")
+	}
+}
+
 func TestMqttClientMetricsCollectorAndPersistence(t *testing.T) {
 	remoteCfg := config.Default()
 	remoteCfg.NodeID = "mqtt-metrics-remote"

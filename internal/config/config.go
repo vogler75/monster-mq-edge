@@ -79,9 +79,11 @@ type UserManagementConfig struct {
 }
 
 type MetricsConfig struct {
-	Enabled                   bool `yaml:"Enabled"`
-	CollectionIntervalSeconds int  `yaml:"CollectionIntervalSeconds"`
-	RetentionHours            int  `yaml:"RetentionHours"`
+	Enabled                   bool      `yaml:"Enabled"`
+	StoreType                 StoreType `yaml:"StoreType"`
+	CollectionIntervalSeconds int       `yaml:"CollectionIntervalSeconds"`
+	RetentionHours            int       `yaml:"RetentionHours"`
+	MaxHistoryRows            int       `yaml:"MaxHistoryRows"`
 }
 
 type LoggingConfig struct {
@@ -138,20 +140,20 @@ type Config struct {
 
 func Default() *Config {
 	return &Config{
-		NodeID:            "edge",
-		TCP:               Listener{Enabled: true, Port: 1883},
-		TCPS:              Listener{Enabled: false, Port: 8883},
-		WS:                Listener{Enabled: false, Port: 1884},
-		WSS:               Listener{Enabled: false, Port: 8884},
-		MaxMessageSize:    1048576,
-		DefaultStoreType:  StoreSQLite,
-		SessionStoreType:  StoreSQLite,
-		RetainedStoreType: StoreSQLite,
-		ConfigStoreType:   StoreSQLite,
-		SQLite:            SQLiteConfig{Path: "./data/monstermq.db"},
-		UserManagement:    UserManagementConfig{Enabled: false, PasswordAlgorithm: "BCRYPT", AnonymousEnabled: true, AclCacheEnabled: true},
-		Metrics:           MetricsConfig{Enabled: true, CollectionIntervalSeconds: 1, RetentionHours: 168},
-		Logging:           LoggingConfig{Level: "INFO", MqttSyslogEnabled: false, RingBufferSize: 1000},
+		NodeID:                "edge",
+		TCP:                   Listener{Enabled: true, Port: 1883},
+		TCPS:                  Listener{Enabled: false, Port: 8883},
+		WS:                    Listener{Enabled: false, Port: 1884},
+		WSS:                   Listener{Enabled: false, Port: 8884},
+		MaxMessageSize:        1048576,
+		DefaultStoreType:      StoreSQLite,
+		SessionStoreType:      StoreSQLite,
+		RetainedStoreType:     StoreSQLite,
+		ConfigStoreType:       StoreSQLite,
+		SQLite:                SQLiteConfig{Path: "./data/monstermq.db"},
+		UserManagement:        UserManagementConfig{Enabled: false, PasswordAlgorithm: "BCRYPT", AnonymousEnabled: true, AclCacheEnabled: true},
+		Metrics:               MetricsConfig{Enabled: true, CollectionIntervalSeconds: 1, RetentionHours: 168, MaxHistoryRows: 3600},
+		Logging:               LoggingConfig{Level: "INFO", MqttSyslogEnabled: false, RingBufferSize: 1000},
 		GraphQL:               GraphQLConfig{Enabled: true, Port: 8080},
 		QueuedMessagesEnabled: true,
 	}
@@ -175,6 +177,13 @@ func (c *Config) RetainedStore() StoreType {
 func (c *Config) ConfigStore() StoreType {
 	if c.ConfigStoreType != "" {
 		return c.ConfigStoreType
+	}
+	return c.DefaultStoreType
+}
+
+func (c *Config) MetricsStore() StoreType {
+	if c.Metrics.StoreType != "" {
+		return c.Metrics.StoreType
 	}
 	return c.DefaultStoreType
 }
@@ -203,6 +212,13 @@ func (c *Config) Validate() error {
 	}
 	if c.RetainedStoreType != "" && !c.RetainedStoreType.isValidRetainedBackend() {
 		return fmt.Errorf("invalid RetainedStoreType %q (must be one of SQLITE, POSTGRES, MONGODB, MEMORY)", c.RetainedStoreType)
+	}
+	if c.Metrics.StoreType != "" {
+		switch c.Metrics.StoreType {
+		case StoreNone, StoreMemory, StoreSQLite, StorePostgres, StoreMongoDB:
+		default:
+			return fmt.Errorf("invalid Metrics.StoreType %q (must be one of NONE, MEMORY, SQLITE, POSTGRES, MONGODB)", c.Metrics.StoreType)
+		}
 	}
 	return nil
 }

@@ -67,8 +67,10 @@
       "additionalProperties": false,
       "properties": {
         "Enabled":                   { "type": "boolean" },
+        "StoreType":                 { "type": "string", "enum": ["NONE", "MEMORY", "SQLITE", "POSTGRES", "MONGODB"], "description": "Where metrics history is stored. Omit to use DefaultStoreType. MEMORY avoids flash writes; NONE disables history storage while keeping live metrics." },
         "CollectionIntervalSeconds": { "type": "integer", "minimum": 1, "default": 1 },
-        "RetentionHours":            { "type": "integer", "minimum": 0, "default": 168, "description": "Hours of metrics to retain. 0 disables retention pruning." }
+        "RetentionHours":            { "type": "integer", "minimum": 0, "default": 168, "description": "Hours of metrics to retain. 0 disables retention pruning." },
+        "MaxHistoryRows":            { "type": "integer", "minimum": 0, "default": 3600, "description": "Maximum in-memory metric rows retained when StoreType=MEMORY. 0 uses the built-in default." }
       }
     },
     "Logging": {

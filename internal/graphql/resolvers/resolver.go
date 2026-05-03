@@ -1232,6 +1232,9 @@ func (r *brokerResolver) Metrics(ctx context.Context, _ *generated.Broker) ([]*g
 }
 
 func (r *brokerResolver) MetricsHistory(ctx context.Context, _ *generated.Broker, from, to *string, lastMinutes *int) ([]*generated.BrokerMetrics, error) {
+	if r.Storage.Metrics == nil {
+		return []*generated.BrokerMetrics{}, nil
+	}
 	now := time.Now()
 	end := now
 	start := now.Add(-24 * time.Hour)
@@ -1332,6 +1335,9 @@ func (r *archiveGroupInfoResolver) Metrics(ctx context.Context, obj *generated.A
 }
 
 func (r *archiveGroupInfoResolver) MetricsHistory(ctx context.Context, obj *generated.ArchiveGroupInfo, from, to *string, lastMinutes *int) ([]*generated.ArchiveGroupMetrics, error) {
+	if r.Storage.Metrics == nil {
+		return []*generated.ArchiveGroupMetrics{}, nil
+	}
 	now := time.Now()
 	end := now
 	start := now.Add(-24 * time.Hour)
@@ -1417,6 +1423,9 @@ func (r *mqttClientResolver) Metrics(ctx context.Context, obj *generated.MqttCli
 }
 
 func (r *mqttClientResolver) MetricsHistory(ctx context.Context, obj *generated.MqttClient, from, to *string, lastMinutes *int) ([]*generated.MqttClientMetrics, error) {
+	if r.Storage.Metrics == nil {
+		return []*generated.MqttClientMetrics{}, nil
+	}
 	now := time.Now()
 	end := now
 	start := now.Add(-24 * time.Hour)

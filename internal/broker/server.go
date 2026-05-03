@@ -21,6 +21,7 @@ import (
 	"monstermq.io/edge/internal/metrics"
 	"monstermq.io/edge/internal/pubsub"
 	"monstermq.io/edge/internal/stores"
+	storememory "monstermq.io/edge/internal/stores/memory"
 	storemongo "monstermq.io/edge/internal/stores/mongodb"
 	storepg "monstermq.io/edge/internal/stores/postgres"
 	storesqlite "monstermq.io/edge/internal/stores/sqlite"
@@ -73,6 +74,10 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 	}
 	if err := ensureDefaultAdmin(ctx, cfg, storage, logger); err != nil {
 		return nil, fmt.Errorf("default admin init: %w", err)
+	}
+	if err := configureMetricsStore(cfg, storage); err != nil {
+		_ = storage.Close()
+		return nil, err
 	}
 
 	// 2. Auth cache
@@ -214,6 +219,20 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 		storage: storage, bus: bus, subs: subs, archives: archives, authCache: authCache,
 		collector: collector, bridges: bridges, winCCUa: winCCUa, gqlSrv: gqlSrv,
 	}, nil
+}
+
+func configureMetricsStore(cfg *config.Config, storage *stores.Storage) error {
+	switch cfg.MetricsStore() {
+	case config.StoreNone:
+		storage.Metrics = nil
+	case config.StoreMemory:
+		storage.Metrics = storememory.NewMetricsStore(cfg.Metrics.MaxHistoryRows)
+	case storage.Backend:
+		return nil
+	default:
+		return fmt.Errorf("Metrics.StoreType %q does not match DefaultStoreType %q; only MEMORY and NONE can be selected independently", cfg.MetricsStore(), storage.Backend)
+	}
+	return nil
 }
 
 // hydrateSubscriptionIndex loads every persisted subscription into the

@@ -31,8 +31,10 @@ UserManagement:
 
 Metrics:
   Enabled: true
+  StoreType: MEMORY
   CollectionIntervalSeconds: 1
   RetentionHours: 168
+  MaxHistoryRows: 3600
 
 Logging:
   Level: INFO

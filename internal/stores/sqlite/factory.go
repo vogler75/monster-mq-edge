@@ -26,11 +26,16 @@ func Build(ctx context.Context, cfg *config.Config) (*stores.Storage, *DB, error
 	users := NewUserStore(db)
 	archives := NewArchiveConfigStore(db)
 	devices := NewDeviceConfigStore(db)
-	metrics := NewMetricsStore(db)
+	var metrics stores.MetricsStore
+	if cfg.MetricsStore() == config.StoreSQLite {
+		metrics = NewMetricsStore(db)
+	}
 
-	for _, t := range []interface{ EnsureTable(context.Context) error }{
-		retained, sessions, queue, users, archives, devices, metrics,
-	} {
+	toEnsure := []interface{ EnsureTable(context.Context) error }{retained, sessions, queue, users, archives, devices}
+	if metrics != nil {
+		toEnsure = append(toEnsure, metrics.(interface{ EnsureTable(context.Context) error }))
+	}
+	for _, t := range toEnsure {
 		if err := t.EnsureTable(ctx); err != nil {
 			_ = db.Close()
 			return nil, nil, err
