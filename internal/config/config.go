@@ -13,7 +13,7 @@ const (
 )
 
 // validBackends is the set of store types that can back the persistent storage
-// stack (sessions, config, etc.). MEMORY is allowed for retained only.
+// stack (sessions, config, etc.). MEMORY is allowed for selected volatile stores.
 var validBackends = []StoreType{StoreSQLite, StorePostgres, StoreMongoDB}
 
 // validRetainedBackends extends validBackends with MEMORY: when set, retained
@@ -37,6 +37,10 @@ func (s StoreType) isValidRetainedBackend() bool {
 		}
 	}
 	return false
+}
+
+func (s StoreType) isValidVolatileBackend() bool {
+	return s == StoreMemory || s.isValidBackend()
 }
 
 type Listener struct {
@@ -103,6 +107,7 @@ type GraphQLConfig struct {
 type FeaturesConfig struct {
 	MqttClient bool `yaml:"MqttClient"`
 	WinCCUa    bool `yaml:"WinCCUa"`
+	WinCCOa    bool `yaml:"WinCCOa"`
 }
 
 type Config struct {
@@ -117,6 +122,7 @@ type Config struct {
 	SessionStoreType  StoreType `yaml:"SessionStoreType"`
 	RetainedStoreType StoreType `yaml:"RetainedStoreType"`
 	ConfigStoreType   StoreType `yaml:"ConfigStoreType"`
+	QueueStoreType    StoreType `yaml:"QueueStoreType"`
 
 	SQLite   SQLiteConfig   `yaml:"SQLite"`
 	Postgres PostgresConfig `yaml:"Postgres"`
@@ -131,8 +137,8 @@ type Config struct {
 	// QueuedMessagesEnabled selects how messages for offline persistent (clean=false)
 	// sessions are held until the client reconnects.
 	//
-	//   true  → use the persistent QueueStore (SQLite/Postgres/MongoDB). Messages
-	//           survive a broker restart.
+	//   true  → use QueueStoreType. Persistent queues survive broker restart;
+	//           MEMORY queues are process-local.
 	//   false → rely on mochi-mqtt's in-memory inflight buffer. Messages are lost
 	//           on broker restart but lower latency / no DB writes per publish.
 	QueuedMessagesEnabled bool `yaml:"QueuedMessagesEnabled"`
@@ -150,6 +156,7 @@ func Default() *Config {
 		SessionStoreType:      StoreSQLite,
 		RetainedStoreType:     StoreSQLite,
 		ConfigStoreType:       StoreSQLite,
+		QueueStoreType:        StoreSQLite,
 		SQLite:                SQLiteConfig{Path: "./data/monstermq.db"},
 		UserManagement:        UserManagementConfig{Enabled: false, PasswordAlgorithm: "BCRYPT", AnonymousEnabled: true, AclCacheEnabled: true},
 		Metrics:               MetricsConfig{Enabled: true, CollectionIntervalSeconds: 1, RetentionHours: 168, MaxHistoryRows: 3600},
@@ -181,6 +188,13 @@ func (c *Config) ConfigStore() StoreType {
 	return c.DefaultStoreType
 }
 
+func (c *Config) QueueStore() StoreType {
+	if c.QueueStoreType != "" {
+		return c.QueueStoreType
+	}
+	return c.DefaultStoreType
+}
+
 func (c *Config) MetricsStore() StoreType {
 	if c.Metrics.StoreType != "" {
 		return c.Metrics.StoreType
@@ -202,7 +216,6 @@ func (c *Config) Validate() error {
 		name  string
 		value StoreType
 	}{
-		{"SessionStoreType", c.SessionStoreType},
 		{"ConfigStoreType", c.ConfigStoreType},
 	}
 	for _, f := range overrides {
@@ -212,6 +225,15 @@ func (c *Config) Validate() error {
 	}
 	if c.RetainedStoreType != "" && !c.RetainedStoreType.isValidRetainedBackend() {
 		return fmt.Errorf("invalid RetainedStoreType %q (must be one of SQLITE, POSTGRES, MONGODB, MEMORY)", c.RetainedStoreType)
+	}
+	if c.SessionStoreType != "" && !c.SessionStoreType.isValidVolatileBackend() {
+		return fmt.Errorf("invalid SessionStoreType %q (must be one of SQLITE, POSTGRES, MONGODB, MEMORY)", c.SessionStoreType)
+	}
+	if c.QueueStoreType != "" && !c.QueueStoreType.isValidVolatileBackend() {
+		return fmt.Errorf("invalid QueueStoreType %q (must be one of SQLITE, POSTGRES, MONGODB, MEMORY)", c.QueueStoreType)
+	}
+	if c.QueueStoreType != "" && c.QueueStoreType != StoreMemory && c.QueueStoreType != c.DefaultStoreType {
+		return fmt.Errorf("QueueStoreType %q is not supported with DefaultStoreType %q; use MEMORY or the default backend", c.QueueStoreType, c.DefaultStoreType)
 	}
 	if c.Metrics.StoreType != "" {
 		switch c.Metrics.StoreType {

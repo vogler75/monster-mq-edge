@@ -19,10 +19,9 @@ func Build(ctx context.Context, cfg *config.Config) (*stores.Storage, *DB, error
 	if err != nil {
 		return nil, nil, err
 	}
+	closers := []func() error{db.Close}
 
 	retained := NewMessageStore("retainedmessages", db)
-	sessions := NewSessionStore(db)
-	queue := NewQueueStore(db, 30*time.Second)
 	users := NewUserStore(db)
 	archives := NewArchiveConfigStore(db)
 	devices := NewDeviceConfigStore(db)
@@ -31,13 +30,35 @@ func Build(ctx context.Context, cfg *config.Config) (*stores.Storage, *DB, error
 		metrics = NewMetricsStore(db)
 	}
 
-	toEnsure := []interface{ EnsureTable(context.Context) error }{retained, sessions, queue, users, archives, devices}
+	sessionDB := db
+	if cfg.SessionStore() == config.StoreMemory {
+		sessionDB, err = OpenMemory("monstermq-sessions-" + cfg.NodeID)
+		if err != nil {
+			_ = closeAll(closers)
+			return nil, nil, err
+		}
+		closers = append(closers, sessionDB.Close)
+	}
+	sessions := NewSessionStore(sessionDB)
+
+	queueDB := db
+	if cfg.QueueStore() == config.StoreMemory {
+		queueDB, err = OpenMemory("monstermq-queue-" + cfg.NodeID)
+		if err != nil {
+			_ = closeAll(closers)
+			return nil, nil, err
+		}
+		closers = append(closers, queueDB.Close)
+	}
+	queue := NewQueueStore(queueDB, 30*time.Second)
+
+	toEnsure := []interface{ EnsureTable(context.Context) error }{retained, users, archives, devices, sessions, queue}
 	if metrics != nil {
 		toEnsure = append(toEnsure, metrics.(interface{ EnsureTable(context.Context) error }))
 	}
 	for _, t := range toEnsure {
 		if err := t.EnsureTable(ctx); err != nil {
-			_ = db.Close()
+			_ = closeAll(closers)
 			return nil, nil, err
 		}
 	}
@@ -52,7 +73,20 @@ func Build(ctx context.Context, cfg *config.Config) (*stores.Storage, *DB, error
 		ArchiveConfig: archives,
 		DeviceConfig:  devices,
 		Metrics:       metrics,
-		Closer:        db.Close,
+		Closer:        func() error { return closeAll(closers) },
 	}
 	return storage, db, nil
+}
+
+func closeAll(closers []func() error) error {
+	var first error
+	for _, closeFn := range closers {
+		if closeFn == nil {
+			continue
+		}
+		if err := closeFn(); err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
 }

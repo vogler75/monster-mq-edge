@@ -231,3 +231,112 @@ func TestQueueDisabledFallsBackToMochi(t *testing.T) {
 		t.Fatalf("queue disabled but %d rows landed in messagequeue", rows)
 	}
 }
+
+func TestSessionStoreMemoryDoesNotUseSQLiteFile(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "session-memory.db")
+	port := 25004
+	srv := startWithDB(t, port, dbPath, func(c *config.Config) {
+		c.SessionStoreType = config.StoreMemory
+	})
+
+	cl := mqtt.NewClient(persistentOpts(port, "memory-session"))
+	if tok := cl.Connect(); tok.WaitTimeout(2*time.Second) && tok.Error() != nil {
+		t.Fatal(tok.Error())
+	}
+	if tok := cl.Subscribe("memsess/+", 1, nil); tok.WaitTimeout(2*time.Second) && tok.Error() != nil {
+		t.Fatal(tok.Error())
+	}
+	cl.Disconnect(100)
+	time.Sleep(150 * time.Millisecond)
+
+	info, err := srv.Storage().Sessions.GetSession(context.Background(), "memory-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info == nil {
+		t.Fatal("expected in-memory session")
+	}
+
+	conn, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	for _, table := range []string{"sessions", "subscriptions"} {
+		var count int
+		if err := conn.QueryRowContext(context.Background(),
+			`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 0 {
+			t.Fatalf("expected no file-backed %s table", table)
+		}
+	}
+
+	srv.Close()
+	time.Sleep(150 * time.Millisecond)
+	srv2 := startWithDB(t, port, dbPath, func(c *config.Config) {
+		c.SessionStoreType = config.StoreMemory
+	})
+	defer srv2.Close()
+	info, err = srv2.Storage().Sessions.GetSession(context.Background(), "memory-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info != nil {
+		t.Fatal("expected in-memory session to be gone after restart")
+	}
+}
+
+func TestQueueStoreMemoryDoesNotUseSQLiteFile(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "queue-memory.db")
+	port := 25005
+	srv := startWithDB(t, port, dbPath, func(c *config.Config) {
+		c.QueueStoreType = config.StoreMemory
+	})
+	defer srv.Close()
+
+	sub := mqtt.NewClient(persistentOpts(port, "memory-queue-sub"))
+	if tok := sub.Connect(); tok.WaitTimeout(2*time.Second) && tok.Error() != nil {
+		t.Fatal(tok.Error())
+	}
+	if tok := sub.Subscribe("memqueue/+", 1, nil); tok.WaitTimeout(2*time.Second) && tok.Error() != nil {
+		t.Fatal(tok.Error())
+	}
+	sub.Disconnect(100)
+	time.Sleep(150 * time.Millisecond)
+
+	pub := mqtt.NewClient(mqttOpts(port, "memory-queue-pub"))
+	if tok := pub.Connect(); tok.WaitTimeout(2*time.Second) && tok.Error() != nil {
+		t.Fatal(tok.Error())
+	}
+	for _, payload := range []string{"m1", "m2", "m3"} {
+		if tok := pub.Publish("memqueue/topic", 1, false, payload); tok.WaitTimeout(2*time.Second) && tok.Error() != nil {
+			t.Fatal(tok.Error())
+		}
+	}
+	pub.Disconnect(100)
+	time.Sleep(200 * time.Millisecond)
+
+	queued, err := srv.Storage().Queue.CountAll(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if queued != 3 {
+		t.Fatalf("expected 3 in-memory queued messages, got %d", queued)
+	}
+
+	conn, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	var tableCount int
+	if err := conn.QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'messagequeue'`).Scan(&tableCount); err != nil {
+		t.Fatal(err)
+	}
+	if tableCount != 0 {
+		t.Fatal("expected no file-backed messagequeue table")
+	}
+}

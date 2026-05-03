@@ -22,9 +22,10 @@
       "default": 1048576
     },
     "DefaultStoreType":  { "$ref": "#/$defs/StoreBackend", "description": "Backend used by every store unless overridden below." },
-    "SessionStoreType":  { "$ref": "#/$defs/StoreBackend", "description": "Override for the session store; falls back to DefaultStoreType." },
+    "SessionStoreType":  { "$ref": "#/$defs/VolatileStoreBackend", "description": "Override for the session/subscription store; falls back to DefaultStoreType. MEMORY uses an in-memory SQLite database." },
     "RetainedStoreType": { "$ref": "#/$defs/RetainedStoreBackend", "description": "Override for the retained-message store; falls back to DefaultStoreType. MEMORY = mochi-mqtt's in-memory map only, no DB persistence and no startup load." },
     "ConfigStoreType":   { "$ref": "#/$defs/StoreBackend", "description": "Override for the device-config store; falls back to DefaultStoreType." },
+    "QueueStoreType":    { "$ref": "#/$defs/VolatileStoreBackend", "description": "Override for the queued-message store; falls back to DefaultStoreType. MEMORY uses an in-memory SQLite database and does not survive restart." },
     "SQLite": {
       "type": "object",
       "additionalProperties": false,
@@ -96,7 +97,8 @@
       "description": "Subsystem feature toggles. Mirrors the Features map in the main monster-mq broker.",
       "properties": {
         "MqttClient": { "type": "boolean", "description": "Enable the outbound MQTT bridge client manager." },
-        "WinCCUa":    { "type": "boolean", "description": "Enable the WinCC Unified bridge (GraphQL or Open Pipe transports)." }
+        "WinCCUa":    { "type": "boolean", "description": "Enable the WinCC Unified bridge (GraphQL or Open Pipe transports)." },
+        "WinCCOa":    { "type": "boolean", "description": "Enable the WinCC Open Architecture bridge (GraphQL/WebSocket transport)." }
       }
     },
     "QueuedMessagesEnabled": {
@@ -120,6 +122,10 @@
     "StoreBackend": {
       "type": "string",
       "enum": ["SQLITE", "POSTGRES", "MONGODB"]
+    },
+    "VolatileStoreBackend": {
+      "type": "string",
+      "enum": ["SQLITE", "POSTGRES", "MONGODB", "MEMORY"]
     },
     "RetainedStoreBackend": {
       "type": "string",

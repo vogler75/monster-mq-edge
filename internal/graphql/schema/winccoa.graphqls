@@ -1,0 +1,119 @@
+# WinCC Open Architecture bridge. Names and casing follow the Java broker
+# schema style so dashboard clients can share the same GraphQL contract.
+
+enum WinCCOaMessageFormat {
+    JSON_ISO
+    JSON_MS
+    RAW_VALUE
+}
+
+type WinCCOaTransformConfig {
+    removeSystemName: Boolean!
+    convertDotToSlash: Boolean!
+    convertUnderscoreToSlash: Boolean!
+    regexPattern: String
+    regexReplacement: String
+}
+
+type WinCCOaAddress {
+    query: String!
+    topic: String!
+    description: String!
+    answer: Boolean!
+    retained: Boolean!
+}
+
+type WinCCOaConnectionConfig {
+    graphqlEndpoint: String!
+    websocketEndpoint: String
+    username: String
+    token: String
+    reconnectDelay: Long!
+    connectionTimeout: Long!
+    messageFormat: WinCCOaMessageFormat!
+    transformConfig: WinCCOaTransformConfig!
+    addresses: [WinCCOaAddress!]!
+}
+
+type WinCCOaClientMetrics {
+    messagesIn: Float!
+    connected: Boolean!
+    timestamp: String!
+}
+
+type WinCCOaClient {
+    name: String!
+    namespace: String!
+    nodeId: String!
+    config: WinCCOaConnectionConfig!
+    enabled: Boolean!
+    createdAt: String!
+    updatedAt: String!
+    isOnCurrentNode: Boolean!
+    metrics: [WinCCOaClientMetrics!]!
+    metricsHistory(from: String, to: String, lastMinutes: Int): [WinCCOaClientMetrics!]!
+}
+
+extend type Query {
+    winCCOaClients(name: String, node: String): [WinCCOaClient!]!
+}
+
+input WinCCOaTransformConfigInput {
+    removeSystemName: Boolean = true
+    convertDotToSlash: Boolean = true
+    convertUnderscoreToSlash: Boolean = false
+    regexPattern: String
+    regexReplacement: String
+}
+
+input WinCCOaConnectionConfigInput {
+    graphqlEndpoint: String
+    websocketEndpoint: String
+    username: String
+    password: String
+    token: String
+    reconnectDelay: Long = 5000
+    connectionTimeout: Long = 10000
+    messageFormat: WinCCOaMessageFormat = JSON_ISO
+    transformConfig: WinCCOaTransformConfigInput
+    addresses: [WinCCOaAddressInput!]
+}
+
+input WinCCOaAddressInput {
+    query: String!
+    topic: String!
+    description: String
+    answer: Boolean = false
+    retained: Boolean = false
+}
+
+input WinCCOaClientInput {
+    name: String!
+    namespace: String!
+    nodeId: String!
+    enabled: Boolean = true
+    config: WinCCOaConnectionConfigInput!
+}
+
+type WinCCOaClientResult {
+    success: Boolean!
+    client: WinCCOaClient
+    errors: [String!]!
+}
+
+type WinCCOaDeviceMutations {
+    create(input: WinCCOaClientInput!): WinCCOaClientResult!
+    update(name: String!, input: WinCCOaClientInput!): WinCCOaClientResult!
+    delete(name: String!): Boolean!
+    start(name: String!): WinCCOaClientResult!
+    stop(name: String!): WinCCOaClientResult!
+    toggle(name: String!, enabled: Boolean!): WinCCOaClientResult!
+    reassign(name: String!, nodeId: String!): WinCCOaClientResult!
+    addAddress(deviceName: String!, input: WinCCOaAddressInput!): WinCCOaClientResult!
+    updateAddress(deviceName: String!, query: String!, input: WinCCOaAddressInput!): WinCCOaClientResult!
+    deleteAddress(deviceName: String!, query: String!): WinCCOaClientResult!
+}
+
+extend type Mutation {
+    winCCOaDevice: WinCCOaDeviceMutations!
+}

@@ -13,6 +13,7 @@ import (
 	"monstermq.io/edge/internal/archive"
 	mauth "monstermq.io/edge/internal/auth"
 	"monstermq.io/edge/internal/bridge/mqttclient"
+	"monstermq.io/edge/internal/bridge/winccoa"
 	"monstermq.io/edge/internal/bridge/winccua"
 	"monstermq.io/edge/internal/config"
 	gql "monstermq.io/edge/internal/graphql"
@@ -41,6 +42,7 @@ type Server struct {
 	collector   *metrics.Collector
 	bridges     *mqttclient.Manager
 	winCCUa     *winccua.Manager
+	winCCOa     *winccoa.Manager
 	gqlSrv      *gql.Server
 	metricsCtx  context.Context
 	metricsStop context.CancelFunc
@@ -71,6 +73,10 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 	}
 	if err != nil {
 		return nil, fmt.Errorf("storage init: %w", err)
+	}
+	if err := configureVolatileStores(ctx, cfg, storage); err != nil {
+		_ = storage.Close()
+		return nil, err
 	}
 	if err := ensureDefaultAdmin(ctx, cfg, storage, logger); err != nil {
 		return nil, fmt.Errorf("default admin init: %w", err)
@@ -207,18 +213,71 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 		winCCUa = winccua.NewManager(storage.DeviceConfig, publishFn, cfg.NodeID, logger)
 	}
 
+	var winCCOa *winccoa.Manager
+	if cfg.Features.WinCCOa {
+		winCCOa = winccoa.NewManager(storage.DeviceConfig, publishFn, cfg.NodeID, logger)
+	}
+
 	// 8. GraphQL server (HTTP + WebSocket)
 	var gqlSrv *gql.Server
 	if cfg.GraphQL.Enabled {
-		resolver := resolvers.New(cfg, storage, bus, archives, bridges, winCCUa, authCache, collector, logBus, logger, publishFn)
+		resolver := resolvers.New(cfg, storage, bus, archives, bridges, winCCUa, winCCOa, authCache, collector, logBus, logger, publishFn)
 		gqlSrv = gql.NewServer(cfg, resolver, logger)
 	}
 
 	return &Server{
 		cfg: cfg, logger: logger, mochi: server,
 		storage: storage, bus: bus, subs: subs, archives: archives, authCache: authCache,
-		collector: collector, bridges: bridges, winCCUa: winCCUa, gqlSrv: gqlSrv,
+		collector: collector, bridges: bridges, winCCUa: winCCUa, winCCOa: winCCOa, gqlSrv: gqlSrv,
 	}, nil
+}
+
+func configureVolatileStores(ctx context.Context, cfg *config.Config, storage *stores.Storage) error {
+	if storage.Backend == config.StoreSQLite {
+		return nil
+	}
+	if cfg.SessionStore() == config.StoreMemory {
+		db, err := storesqlite.OpenMemory("monstermq-sessions-" + cfg.NodeID)
+		if err != nil {
+			return err
+		}
+		sessions := storesqlite.NewSessionStore(db)
+		if err := sessions.EnsureTable(ctx); err != nil {
+			_ = db.Close()
+			return err
+		}
+		storage.Sessions = sessions
+		storage.Subscriptions = sessions
+		appendStorageCloser(storage, db.Close)
+	}
+	if cfg.QueueStore() == config.StoreMemory {
+		db, err := storesqlite.OpenMemory("monstermq-queue-" + cfg.NodeID)
+		if err != nil {
+			return err
+		}
+		queue := storesqlite.NewQueueStore(db, 30*time.Second)
+		if err := queue.EnsureTable(ctx); err != nil {
+			_ = db.Close()
+			return err
+		}
+		storage.Queue = queue
+		appendStorageCloser(storage, db.Close)
+	}
+	return nil
+}
+
+func appendStorageCloser(storage *stores.Storage, closeFn func() error) {
+	prev := storage.Closer
+	storage.Closer = func() error {
+		var first error
+		if prev != nil {
+			first = prev()
+		}
+		if err := closeFn(); err != nil && first == nil {
+			first = err
+		}
+		return first
+	}
 }
 
 func configureMetricsStore(cfg *config.Config, storage *stores.Storage) error {
@@ -268,6 +327,9 @@ func (s *Server) Serve() error {
 		if s.bridges != nil {
 			s.bridges.StartMetrics(s.metricsCtx, s.storage.Metrics, s.collector.Interval())
 		}
+		if s.winCCOa != nil {
+			s.winCCOa.StartMetrics(s.metricsCtx, s.storage.Metrics, s.collector.Interval())
+		}
 	}
 	if s.archives != nil {
 		s.archives.RunRetention(context.Background())
@@ -280,6 +342,11 @@ func (s *Server) Serve() error {
 	if s.winCCUa != nil {
 		if err := s.winCCUa.Start(context.Background()); err != nil {
 			s.logger.Warn("winccua start error", "err", err)
+		}
+	}
+	if s.winCCOa != nil {
+		if err := s.winCCOa.Start(context.Background()); err != nil {
+			s.logger.Warn("winccoa start error", "err", err)
 		}
 	}
 	if s.gqlSrv != nil {
@@ -298,6 +365,9 @@ func (s *Server) Close() error {
 	}
 	if s.winCCUa != nil {
 		s.winCCUa.Stop()
+	}
+	if s.winCCOa != nil {
+		s.winCCOa.Stop()
 	}
 	if s.metricsStop != nil {
 		s.metricsStop()

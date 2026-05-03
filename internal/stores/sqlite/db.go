@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	_ "modernc.org/sqlite"
@@ -20,12 +21,29 @@ type DB struct {
 }
 
 func Open(path string) (*DB, error) {
-	if dir := filepath.Dir(path); dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return nil, fmt.Errorf("mkdir %s: %w", dir, err)
-		}
+	return open(path, false)
+}
+
+func OpenMemory(name string) (*DB, error) {
+	if strings.TrimSpace(name) == "" {
+		name = "monstermq"
 	}
-	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(ON)", path)
+	return open(name, true)
+}
+
+func open(path string, memory bool) (*DB, error) {
+	var dsn string
+	if memory {
+		safe := strings.NewReplacer("/", "_", "\\", "_", ":", "_", "?", "_", "&", "_").Replace(path)
+		dsn = fmt.Sprintf("file:%s?mode=memory&cache=shared&_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)", safe)
+	} else {
+		if dir := filepath.Dir(path); dir != "" && dir != "." {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return nil, fmt.Errorf("mkdir %s: %w", dir, err)
+			}
+		}
+		dsn = fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(ON)", path)
+	}
 	conn, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite %s: %w", path, err)

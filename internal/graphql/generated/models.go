@@ -592,6 +592,109 @@ type UserPropertyInput struct {
 	Value string `json:"value"`
 }
 
+type WinCCOaAddress struct {
+	Query       string `json:"query"`
+	Topic       string `json:"topic"`
+	Description string `json:"description"`
+	Answer      bool   `json:"answer"`
+	Retained    bool   `json:"retained"`
+}
+
+type WinCCOaAddressInput struct {
+	Query       string  `json:"query"`
+	Topic       string  `json:"topic"`
+	Description *string `json:"description,omitempty"`
+	Answer      *bool   `json:"answer,omitempty"`
+	Retained    *bool   `json:"retained,omitempty"`
+}
+
+type WinCCOaClient struct {
+	Name            string                   `json:"name"`
+	Namespace       string                   `json:"namespace"`
+	NodeID          string                   `json:"nodeId"`
+	Config          *WinCCOaConnectionConfig `json:"config"`
+	Enabled         bool                     `json:"enabled"`
+	CreatedAt       string                   `json:"createdAt"`
+	UpdatedAt       string                   `json:"updatedAt"`
+	IsOnCurrentNode bool                     `json:"isOnCurrentNode"`
+	Metrics         []*WinCCOaClientMetrics  `json:"metrics"`
+	MetricsHistory  []*WinCCOaClientMetrics  `json:"metricsHistory"`
+}
+
+type WinCCOaClientInput struct {
+	Name      string                        `json:"name"`
+	Namespace string                        `json:"namespace"`
+	NodeID    string                        `json:"nodeId"`
+	Enabled   *bool                         `json:"enabled,omitempty"`
+	Config    *WinCCOaConnectionConfigInput `json:"config"`
+}
+
+type WinCCOaClientMetrics struct {
+	MessagesIn float64 `json:"messagesIn"`
+	Connected  bool    `json:"connected"`
+	Timestamp  string  `json:"timestamp"`
+}
+
+type WinCCOaClientResult struct {
+	Success bool           `json:"success"`
+	Client  *WinCCOaClient `json:"client,omitempty"`
+	Errors  []string       `json:"errors"`
+}
+
+type WinCCOaConnectionConfig struct {
+	GraphqlEndpoint   string                  `json:"graphqlEndpoint"`
+	WebsocketEndpoint *string                 `json:"websocketEndpoint,omitempty"`
+	Username          *string                 `json:"username,omitempty"`
+	Token             *string                 `json:"token,omitempty"`
+	ReconnectDelay    int64                   `json:"reconnectDelay"`
+	ConnectionTimeout int64                   `json:"connectionTimeout"`
+	MessageFormat     WinCCOaMessageFormat    `json:"messageFormat"`
+	TransformConfig   *WinCCOaTransformConfig `json:"transformConfig"`
+	Addresses         []*WinCCOaAddress       `json:"addresses"`
+}
+
+type WinCCOaConnectionConfigInput struct {
+	GraphqlEndpoint   *string                      `json:"graphqlEndpoint,omitempty"`
+	WebsocketEndpoint *string                      `json:"websocketEndpoint,omitempty"`
+	Username          *string                      `json:"username,omitempty"`
+	Password          *string                      `json:"password,omitempty"`
+	Token             *string                      `json:"token,omitempty"`
+	ReconnectDelay    *int64                       `json:"reconnectDelay,omitempty"`
+	ConnectionTimeout *int64                       `json:"connectionTimeout,omitempty"`
+	MessageFormat     *WinCCOaMessageFormat        `json:"messageFormat,omitempty"`
+	TransformConfig   *WinCCOaTransformConfigInput `json:"transformConfig,omitempty"`
+	Addresses         []*WinCCOaAddressInput       `json:"addresses,omitempty"`
+}
+
+type WinCCOaDeviceMutations struct {
+	Create        *WinCCOaClientResult `json:"create"`
+	Update        *WinCCOaClientResult `json:"update"`
+	Delete        bool                 `json:"delete"`
+	Start         *WinCCOaClientResult `json:"start"`
+	Stop          *WinCCOaClientResult `json:"stop"`
+	Toggle        *WinCCOaClientResult `json:"toggle"`
+	Reassign      *WinCCOaClientResult `json:"reassign"`
+	AddAddress    *WinCCOaClientResult `json:"addAddress"`
+	UpdateAddress *WinCCOaClientResult `json:"updateAddress"`
+	DeleteAddress *WinCCOaClientResult `json:"deleteAddress"`
+}
+
+type WinCCOaTransformConfig struct {
+	RemoveSystemName         bool    `json:"removeSystemName"`
+	ConvertDotToSlash        bool    `json:"convertDotToSlash"`
+	ConvertUnderscoreToSlash bool    `json:"convertUnderscoreToSlash"`
+	RegexPattern             *string `json:"regexPattern,omitempty"`
+	RegexReplacement         *string `json:"regexReplacement,omitempty"`
+}
+
+type WinCCOaTransformConfigInput struct {
+	RemoveSystemName         *bool   `json:"removeSystemName,omitempty"`
+	ConvertDotToSlash        *bool   `json:"convertDotToSlash,omitempty"`
+	ConvertUnderscoreToSlash *bool   `json:"convertUnderscoreToSlash,omitempty"`
+	RegexPattern             *string `json:"regexPattern,omitempty"`
+	RegexReplacement         *string `json:"regexReplacement,omitempty"`
+}
+
 type WinCCUaAddress struct {
 	Type           WinCCUaAddressType `json:"type"`
 	Topic          string             `json:"topic"`
@@ -1166,6 +1269,63 @@ func (e *PayloadFormat) UnmarshalJSON(b []byte) error {
 }
 
 func (e PayloadFormat) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type WinCCOaMessageFormat string
+
+const (
+	WinCCOaMessageFormatJSONIso  WinCCOaMessageFormat = "JSON_ISO"
+	WinCCOaMessageFormatJSONMs   WinCCOaMessageFormat = "JSON_MS"
+	WinCCOaMessageFormatRawValue WinCCOaMessageFormat = "RAW_VALUE"
+)
+
+var AllWinCCOaMessageFormat = []WinCCOaMessageFormat{
+	WinCCOaMessageFormatJSONIso,
+	WinCCOaMessageFormatJSONMs,
+	WinCCOaMessageFormatRawValue,
+}
+
+func (e WinCCOaMessageFormat) IsValid() bool {
+	switch e {
+	case WinCCOaMessageFormatJSONIso, WinCCOaMessageFormatJSONMs, WinCCOaMessageFormatRawValue:
+		return true
+	}
+	return false
+}
+
+func (e WinCCOaMessageFormat) String() string {
+	return string(e)
+}
+
+func (e *WinCCOaMessageFormat) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = WinCCOaMessageFormat(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid WinCCOaMessageFormat", str)
+	}
+	return nil
+}
+
+func (e WinCCOaMessageFormat) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *WinCCOaMessageFormat) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e WinCCOaMessageFormat) MarshalJSON() ([]byte, error) {
 	var buf bytes.Buffer
 	e.MarshalGQL(&buf)
 	return buf.Bytes(), nil

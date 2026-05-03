@@ -39,6 +39,8 @@ type ResolverRoot interface {
 	Topic() TopicResolver
 	UserInfo() UserInfoResolver
 	UserManagementMutations() UserManagementMutationsResolver
+	WinCCOaClient() WinCCOaClientResolver
+	WinCCOaDeviceMutations() WinCCOaDeviceMutationsResolver
 	WinCCUaClient() WinCCUaClientResolver
 	WinCCUaDeviceMutations() WinCCUaDeviceMutationsResolver
 }
@@ -94,6 +96,7 @@ type MutationResolver interface {
 	Session(ctx context.Context) (*SessionMutations, error)
 	ArchiveGroup(ctx context.Context) (*ArchiveGroupMutations, error)
 	MqttClient(ctx context.Context) (*MqttClientMutations, error)
+	WinCCOaDevice(ctx context.Context) (*WinCCOaDeviceMutations, error)
 	WinCCUaDevice(ctx context.Context) (*WinCCUaDeviceMutations, error)
 }
 type QueryResolver interface {
@@ -119,6 +122,7 @@ type QueryResolver interface {
 	DatabaseConnectionNames(ctx context.Context, typeArg DatabaseConnectionType) ([]string, error)
 	DatabaseConnection(ctx context.Context, name string) (*DatabaseConnectionInfo, error)
 	MqttClients(ctx context.Context, name *string, node *string) ([]*MqttClient, error)
+	WinCCOaClients(ctx context.Context, name *string, node *string) ([]*WinCCOaClient, error)
 	WinCCUaClients(ctx context.Context, name *string, node *string) ([]*WinCCUaClient, error)
 }
 type SessionResolver interface {
@@ -150,6 +154,22 @@ type UserManagementMutationsResolver interface {
 	CreateACLRule(ctx context.Context, obj *UserManagementMutations, input CreateACLRuleInput) (*UserManagementResult, error)
 	UpdateACLRule(ctx context.Context, obj *UserManagementMutations, input UpdateACLRuleInput) (*UserManagementResult, error)
 	DeleteACLRule(ctx context.Context, obj *UserManagementMutations, id string) (*UserManagementResult, error)
+}
+type WinCCOaClientResolver interface {
+	Metrics(ctx context.Context, obj *WinCCOaClient) ([]*WinCCOaClientMetrics, error)
+	MetricsHistory(ctx context.Context, obj *WinCCOaClient, from *string, to *string, lastMinutes *int) ([]*WinCCOaClientMetrics, error)
+}
+type WinCCOaDeviceMutationsResolver interface {
+	Create(ctx context.Context, obj *WinCCOaDeviceMutations, input WinCCOaClientInput) (*WinCCOaClientResult, error)
+	Update(ctx context.Context, obj *WinCCOaDeviceMutations, name string, input WinCCOaClientInput) (*WinCCOaClientResult, error)
+	Delete(ctx context.Context, obj *WinCCOaDeviceMutations, name string) (bool, error)
+	Start(ctx context.Context, obj *WinCCOaDeviceMutations, name string) (*WinCCOaClientResult, error)
+	Stop(ctx context.Context, obj *WinCCOaDeviceMutations, name string) (*WinCCOaClientResult, error)
+	Toggle(ctx context.Context, obj *WinCCOaDeviceMutations, name string, enabled bool) (*WinCCOaClientResult, error)
+	Reassign(ctx context.Context, obj *WinCCOaDeviceMutations, name string, nodeID string) (*WinCCOaClientResult, error)
+	AddAddress(ctx context.Context, obj *WinCCOaDeviceMutations, deviceName string, input WinCCOaAddressInput) (*WinCCOaClientResult, error)
+	UpdateAddress(ctx context.Context, obj *WinCCOaDeviceMutations, deviceName string, query string, input WinCCOaAddressInput) (*WinCCOaClientResult, error)
+	DeleteAddress(ctx context.Context, obj *WinCCOaDeviceMutations, deviceName string, query string) (*WinCCOaClientResult, error)
 }
 type WinCCUaClientResolver interface {
 	Metrics(ctx context.Context, obj *WinCCUaClient) ([]*WinCCUaClientMetrics, error)
@@ -202,6 +222,10 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 		ec.unmarshalInputUpdateDatabaseConnectionInput,
 		ec.unmarshalInputUpdateUserInput,
 		ec.unmarshalInputUserPropertyInput,
+		ec.unmarshalInputWinCCOaAddressInput,
+		ec.unmarshalInputWinCCOaClientInput,
+		ec.unmarshalInputWinCCOaConnectionConfigInput,
+		ec.unmarshalInputWinCCOaTransformConfigInput,
 		ec.unmarshalInputWinCCUaAddressInput,
 		ec.unmarshalInputWinCCUaClientInput,
 		ec.unmarshalInputWinCCUaConnectionConfigInput,
@@ -1019,6 +1043,126 @@ type Subscription {
         sourceMethod: String
         message: String
     ): SystemLogEntry!
+}
+`, BuiltIn: false},
+	{Name: "../schema/winccoa.graphqls", Input: `# WinCC Open Architecture bridge. Names and casing follow the Java broker
+# schema style so dashboard clients can share the same GraphQL contract.
+
+enum WinCCOaMessageFormat {
+    JSON_ISO
+    JSON_MS
+    RAW_VALUE
+}
+
+type WinCCOaTransformConfig {
+    removeSystemName: Boolean!
+    convertDotToSlash: Boolean!
+    convertUnderscoreToSlash: Boolean!
+    regexPattern: String
+    regexReplacement: String
+}
+
+type WinCCOaAddress {
+    query: String!
+    topic: String!
+    description: String!
+    answer: Boolean!
+    retained: Boolean!
+}
+
+type WinCCOaConnectionConfig {
+    graphqlEndpoint: String!
+    websocketEndpoint: String
+    username: String
+    token: String
+    reconnectDelay: Long!
+    connectionTimeout: Long!
+    messageFormat: WinCCOaMessageFormat!
+    transformConfig: WinCCOaTransformConfig!
+    addresses: [WinCCOaAddress!]!
+}
+
+type WinCCOaClientMetrics {
+    messagesIn: Float!
+    connected: Boolean!
+    timestamp: String!
+}
+
+type WinCCOaClient {
+    name: String!
+    namespace: String!
+    nodeId: String!
+    config: WinCCOaConnectionConfig!
+    enabled: Boolean!
+    createdAt: String!
+    updatedAt: String!
+    isOnCurrentNode: Boolean!
+    metrics: [WinCCOaClientMetrics!]!
+    metricsHistory(from: String, to: String, lastMinutes: Int): [WinCCOaClientMetrics!]!
+}
+
+extend type Query {
+    winCCOaClients(name: String, node: String): [WinCCOaClient!]!
+}
+
+input WinCCOaTransformConfigInput {
+    removeSystemName: Boolean = true
+    convertDotToSlash: Boolean = true
+    convertUnderscoreToSlash: Boolean = false
+    regexPattern: String
+    regexReplacement: String
+}
+
+input WinCCOaConnectionConfigInput {
+    graphqlEndpoint: String
+    websocketEndpoint: String
+    username: String
+    password: String
+    token: String
+    reconnectDelay: Long = 5000
+    connectionTimeout: Long = 10000
+    messageFormat: WinCCOaMessageFormat = JSON_ISO
+    transformConfig: WinCCOaTransformConfigInput
+    addresses: [WinCCOaAddressInput!]
+}
+
+input WinCCOaAddressInput {
+    query: String!
+    topic: String!
+    description: String
+    answer: Boolean = false
+    retained: Boolean = false
+}
+
+input WinCCOaClientInput {
+    name: String!
+    namespace: String!
+    nodeId: String!
+    enabled: Boolean = true
+    config: WinCCOaConnectionConfigInput!
+}
+
+type WinCCOaClientResult {
+    success: Boolean!
+    client: WinCCOaClient
+    errors: [String!]!
+}
+
+type WinCCOaDeviceMutations {
+    create(input: WinCCOaClientInput!): WinCCOaClientResult!
+    update(name: String!, input: WinCCOaClientInput!): WinCCOaClientResult!
+    delete(name: String!): Boolean!
+    start(name: String!): WinCCOaClientResult!
+    stop(name: String!): WinCCOaClientResult!
+    toggle(name: String!, enabled: Boolean!): WinCCOaClientResult!
+    reassign(name: String!, nodeId: String!): WinCCOaClientResult!
+    addAddress(deviceName: String!, input: WinCCOaAddressInput!): WinCCOaClientResult!
+    updateAddress(deviceName: String!, query: String!, input: WinCCOaAddressInput!): WinCCOaClientResult!
+    deleteAddress(deviceName: String!, query: String!): WinCCOaClientResult!
+}
+
+extend type Mutation {
+    winCCOaDevice: WinCCOaDeviceMutations!
 }
 `, BuiltIn: false},
 	{Name: "../schema/winccua.graphqls", Input: `# WinCC Unified — verbatim subset of the Kotlin schema in
@@ -1944,6 +2088,22 @@ func (ec *executionContext) field_Query_users_args(ctx context.Context, rawArgs 
 	return args, nil
 }
 
+func (ec *executionContext) field_Query_winCCOaClients_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name", ec.unmarshalOString2ᚖstring)
+	if err != nil {
+		return nil, err
+	}
+	args["name"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "node", ec.unmarshalOString2ᚖstring)
+	if err != nil {
+		return nil, err
+	}
+	args["node"] = arg1
+	return args, nil
+}
+
 func (ec *executionContext) field_Query_winCCUaClients_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
@@ -2160,6 +2320,172 @@ func (ec *executionContext) field_UserManagementMutations_updateUser_args(ctx co
 		return nil, err
 	}
 	args["input"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_WinCCOaClient_metricsHistory_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "from", ec.unmarshalOString2ᚖstring)
+	if err != nil {
+		return nil, err
+	}
+	args["from"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "to", ec.unmarshalOString2ᚖstring)
+	if err != nil {
+		return nil, err
+	}
+	args["to"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "lastMinutes", ec.unmarshalOInt2ᚖint)
+	if err != nil {
+		return nil, err
+	}
+	args["lastMinutes"] = arg2
+	return args, nil
+}
+
+func (ec *executionContext) field_WinCCOaDeviceMutations_addAddress_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "deviceName", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["deviceName"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "input", ec.unmarshalNWinCCOaAddressInput2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaAddressInput)
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg1
+	return args, nil
+}
+
+func (ec *executionContext) field_WinCCOaDeviceMutations_create_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input", ec.unmarshalNWinCCOaClientInput2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaClientInput)
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_WinCCOaDeviceMutations_deleteAddress_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "deviceName", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["deviceName"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "query", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["query"] = arg1
+	return args, nil
+}
+
+func (ec *executionContext) field_WinCCOaDeviceMutations_delete_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["name"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_WinCCOaDeviceMutations_reassign_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["name"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "nodeId", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["nodeId"] = arg1
+	return args, nil
+}
+
+func (ec *executionContext) field_WinCCOaDeviceMutations_start_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["name"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_WinCCOaDeviceMutations_stop_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["name"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_WinCCOaDeviceMutations_toggle_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["name"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "enabled", ec.unmarshalNBoolean2bool)
+	if err != nil {
+		return nil, err
+	}
+	args["enabled"] = arg1
+	return args, nil
+}
+
+func (ec *executionContext) field_WinCCOaDeviceMutations_updateAddress_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "deviceName", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["deviceName"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "query", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["query"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "input", ec.unmarshalNWinCCOaAddressInput2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaAddressInput)
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg2
+	return args, nil
+}
+
+func (ec *executionContext) field_WinCCOaDeviceMutations_update_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["name"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "input", ec.unmarshalNWinCCOaClientInput2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaClientInput)
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg1
 	return args, nil
 }
 
@@ -9554,6 +9880,57 @@ func (ec *executionContext) fieldContext_Mutation_mqttClient(_ context.Context, 
 	return fc, nil
 }
 
+func (ec *executionContext) _Mutation_winCCOaDevice(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Mutation_winCCOaDevice,
+		func(ctx context.Context) (any, error) {
+			return ec.Resolvers.Mutation().WinCCOaDevice(ctx)
+		},
+		nil,
+		ec.marshalNWinCCOaDeviceMutations2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaDeviceMutations,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Mutation_winCCOaDevice(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "create":
+				return ec.fieldContext_WinCCOaDeviceMutations_create(ctx, field)
+			case "update":
+				return ec.fieldContext_WinCCOaDeviceMutations_update(ctx, field)
+			case "delete":
+				return ec.fieldContext_WinCCOaDeviceMutations_delete(ctx, field)
+			case "start":
+				return ec.fieldContext_WinCCOaDeviceMutations_start(ctx, field)
+			case "stop":
+				return ec.fieldContext_WinCCOaDeviceMutations_stop(ctx, field)
+			case "toggle":
+				return ec.fieldContext_WinCCOaDeviceMutations_toggle(ctx, field)
+			case "reassign":
+				return ec.fieldContext_WinCCOaDeviceMutations_reassign(ctx, field)
+			case "addAddress":
+				return ec.fieldContext_WinCCOaDeviceMutations_addAddress(ctx, field)
+			case "updateAddress":
+				return ec.fieldContext_WinCCOaDeviceMutations_updateAddress(ctx, field)
+			case "deleteAddress":
+				return ec.fieldContext_WinCCOaDeviceMutations_deleteAddress(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type WinCCOaDeviceMutations", field.Name)
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Mutation_winCCUaDevice(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -11280,6 +11657,69 @@ func (ec *executionContext) fieldContext_Query_mqttClients(ctx context.Context, 
 	}()
 	ctx = graphql.WithFieldContext(ctx, fc)
 	if fc.Args, err = ec.field_Query_mqttClients_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_winCCOaClients(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Query_winCCOaClients,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().WinCCOaClients(ctx, fc.Args["name"].(*string), fc.Args["node"].(*string))
+		},
+		nil,
+		ec.marshalNWinCCOaClient2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaClientᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Query_winCCOaClients(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "name":
+				return ec.fieldContext_WinCCOaClient_name(ctx, field)
+			case "namespace":
+				return ec.fieldContext_WinCCOaClient_namespace(ctx, field)
+			case "nodeId":
+				return ec.fieldContext_WinCCOaClient_nodeId(ctx, field)
+			case "config":
+				return ec.fieldContext_WinCCOaClient_config(ctx, field)
+			case "enabled":
+				return ec.fieldContext_WinCCOaClient_enabled(ctx, field)
+			case "createdAt":
+				return ec.fieldContext_WinCCOaClient_createdAt(ctx, field)
+			case "updatedAt":
+				return ec.fieldContext_WinCCOaClient_updatedAt(ctx, field)
+			case "isOnCurrentNode":
+				return ec.fieldContext_WinCCOaClient_isOnCurrentNode(ctx, field)
+			case "metrics":
+				return ec.fieldContext_WinCCOaClient_metrics(ctx, field)
+			case "metricsHistory":
+				return ec.fieldContext_WinCCOaClient_metricsHistory(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type WinCCOaClient", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_winCCOaClients_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
 	}
@@ -14576,6 +15016,1597 @@ func (ec *executionContext) _UserProperty_value(ctx context.Context, field graph
 func (ec *executionContext) fieldContext_UserProperty_value(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "UserProperty",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaAddress_query(ctx context.Context, field graphql.CollectedField, obj *WinCCOaAddress) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaAddress_query,
+		func(ctx context.Context) (any, error) {
+			return obj.Query, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaAddress_query(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaAddress",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaAddress_topic(ctx context.Context, field graphql.CollectedField, obj *WinCCOaAddress) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaAddress_topic,
+		func(ctx context.Context) (any, error) {
+			return obj.Topic, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaAddress_topic(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaAddress",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaAddress_description(ctx context.Context, field graphql.CollectedField, obj *WinCCOaAddress) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaAddress_description,
+		func(ctx context.Context) (any, error) {
+			return obj.Description, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaAddress_description(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaAddress",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaAddress_answer(ctx context.Context, field graphql.CollectedField, obj *WinCCOaAddress) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaAddress_answer,
+		func(ctx context.Context) (any, error) {
+			return obj.Answer, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaAddress_answer(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaAddress",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaAddress_retained(ctx context.Context, field graphql.CollectedField, obj *WinCCOaAddress) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaAddress_retained,
+		func(ctx context.Context) (any, error) {
+			return obj.Retained, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaAddress_retained(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaAddress",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaClient_name(ctx context.Context, field graphql.CollectedField, obj *WinCCOaClient) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaClient_name,
+		func(ctx context.Context) (any, error) {
+			return obj.Name, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaClient_name(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaClient",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaClient_namespace(ctx context.Context, field graphql.CollectedField, obj *WinCCOaClient) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaClient_namespace,
+		func(ctx context.Context) (any, error) {
+			return obj.Namespace, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaClient_namespace(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaClient",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaClient_nodeId(ctx context.Context, field graphql.CollectedField, obj *WinCCOaClient) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaClient_nodeId,
+		func(ctx context.Context) (any, error) {
+			return obj.NodeID, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaClient_nodeId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaClient",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaClient_config(ctx context.Context, field graphql.CollectedField, obj *WinCCOaClient) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaClient_config,
+		func(ctx context.Context) (any, error) {
+			return obj.Config, nil
+		},
+		nil,
+		ec.marshalNWinCCOaConnectionConfig2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaConnectionConfig,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaClient_config(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaClient",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "graphqlEndpoint":
+				return ec.fieldContext_WinCCOaConnectionConfig_graphqlEndpoint(ctx, field)
+			case "websocketEndpoint":
+				return ec.fieldContext_WinCCOaConnectionConfig_websocketEndpoint(ctx, field)
+			case "username":
+				return ec.fieldContext_WinCCOaConnectionConfig_username(ctx, field)
+			case "token":
+				return ec.fieldContext_WinCCOaConnectionConfig_token(ctx, field)
+			case "reconnectDelay":
+				return ec.fieldContext_WinCCOaConnectionConfig_reconnectDelay(ctx, field)
+			case "connectionTimeout":
+				return ec.fieldContext_WinCCOaConnectionConfig_connectionTimeout(ctx, field)
+			case "messageFormat":
+				return ec.fieldContext_WinCCOaConnectionConfig_messageFormat(ctx, field)
+			case "transformConfig":
+				return ec.fieldContext_WinCCOaConnectionConfig_transformConfig(ctx, field)
+			case "addresses":
+				return ec.fieldContext_WinCCOaConnectionConfig_addresses(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type WinCCOaConnectionConfig", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaClient_enabled(ctx context.Context, field graphql.CollectedField, obj *WinCCOaClient) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaClient_enabled,
+		func(ctx context.Context) (any, error) {
+			return obj.Enabled, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaClient_enabled(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaClient",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaClient_createdAt(ctx context.Context, field graphql.CollectedField, obj *WinCCOaClient) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaClient_createdAt,
+		func(ctx context.Context) (any, error) {
+			return obj.CreatedAt, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaClient_createdAt(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaClient",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaClient_updatedAt(ctx context.Context, field graphql.CollectedField, obj *WinCCOaClient) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaClient_updatedAt,
+		func(ctx context.Context) (any, error) {
+			return obj.UpdatedAt, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaClient_updatedAt(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaClient",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaClient_isOnCurrentNode(ctx context.Context, field graphql.CollectedField, obj *WinCCOaClient) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaClient_isOnCurrentNode,
+		func(ctx context.Context) (any, error) {
+			return obj.IsOnCurrentNode, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaClient_isOnCurrentNode(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaClient",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaClient_metrics(ctx context.Context, field graphql.CollectedField, obj *WinCCOaClient) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaClient_metrics,
+		func(ctx context.Context) (any, error) {
+			return ec.Resolvers.WinCCOaClient().Metrics(ctx, obj)
+		},
+		nil,
+		ec.marshalNWinCCOaClientMetrics2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaClientMetricsᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaClient_metrics(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaClient",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "messagesIn":
+				return ec.fieldContext_WinCCOaClientMetrics_messagesIn(ctx, field)
+			case "connected":
+				return ec.fieldContext_WinCCOaClientMetrics_connected(ctx, field)
+			case "timestamp":
+				return ec.fieldContext_WinCCOaClientMetrics_timestamp(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type WinCCOaClientMetrics", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaClient_metricsHistory(ctx context.Context, field graphql.CollectedField, obj *WinCCOaClient) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaClient_metricsHistory,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.WinCCOaClient().MetricsHistory(ctx, obj, fc.Args["from"].(*string), fc.Args["to"].(*string), fc.Args["lastMinutes"].(*int))
+		},
+		nil,
+		ec.marshalNWinCCOaClientMetrics2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaClientMetricsᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaClient_metricsHistory(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaClient",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "messagesIn":
+				return ec.fieldContext_WinCCOaClientMetrics_messagesIn(ctx, field)
+			case "connected":
+				return ec.fieldContext_WinCCOaClientMetrics_connected(ctx, field)
+			case "timestamp":
+				return ec.fieldContext_WinCCOaClientMetrics_timestamp(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type WinCCOaClientMetrics", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_WinCCOaClient_metricsHistory_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaClientMetrics_messagesIn(ctx context.Context, field graphql.CollectedField, obj *WinCCOaClientMetrics) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaClientMetrics_messagesIn,
+		func(ctx context.Context) (any, error) {
+			return obj.MessagesIn, nil
+		},
+		nil,
+		ec.marshalNFloat2float64,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaClientMetrics_messagesIn(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaClientMetrics",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Float does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaClientMetrics_connected(ctx context.Context, field graphql.CollectedField, obj *WinCCOaClientMetrics) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaClientMetrics_connected,
+		func(ctx context.Context) (any, error) {
+			return obj.Connected, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaClientMetrics_connected(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaClientMetrics",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaClientMetrics_timestamp(ctx context.Context, field graphql.CollectedField, obj *WinCCOaClientMetrics) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaClientMetrics_timestamp,
+		func(ctx context.Context) (any, error) {
+			return obj.Timestamp, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaClientMetrics_timestamp(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaClientMetrics",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaClientResult_success(ctx context.Context, field graphql.CollectedField, obj *WinCCOaClientResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaClientResult_success,
+		func(ctx context.Context) (any, error) {
+			return obj.Success, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaClientResult_success(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaClientResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaClientResult_client(ctx context.Context, field graphql.CollectedField, obj *WinCCOaClientResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaClientResult_client,
+		func(ctx context.Context) (any, error) {
+			return obj.Client, nil
+		},
+		nil,
+		ec.marshalOWinCCOaClient2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaClient,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaClientResult_client(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaClientResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "name":
+				return ec.fieldContext_WinCCOaClient_name(ctx, field)
+			case "namespace":
+				return ec.fieldContext_WinCCOaClient_namespace(ctx, field)
+			case "nodeId":
+				return ec.fieldContext_WinCCOaClient_nodeId(ctx, field)
+			case "config":
+				return ec.fieldContext_WinCCOaClient_config(ctx, field)
+			case "enabled":
+				return ec.fieldContext_WinCCOaClient_enabled(ctx, field)
+			case "createdAt":
+				return ec.fieldContext_WinCCOaClient_createdAt(ctx, field)
+			case "updatedAt":
+				return ec.fieldContext_WinCCOaClient_updatedAt(ctx, field)
+			case "isOnCurrentNode":
+				return ec.fieldContext_WinCCOaClient_isOnCurrentNode(ctx, field)
+			case "metrics":
+				return ec.fieldContext_WinCCOaClient_metrics(ctx, field)
+			case "metricsHistory":
+				return ec.fieldContext_WinCCOaClient_metricsHistory(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type WinCCOaClient", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaClientResult_errors(ctx context.Context, field graphql.CollectedField, obj *WinCCOaClientResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaClientResult_errors,
+		func(ctx context.Context) (any, error) {
+			return obj.Errors, nil
+		},
+		nil,
+		ec.marshalNString2ᚕstringᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaClientResult_errors(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaClientResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaConnectionConfig_graphqlEndpoint(ctx context.Context, field graphql.CollectedField, obj *WinCCOaConnectionConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaConnectionConfig_graphqlEndpoint,
+		func(ctx context.Context) (any, error) {
+			return obj.GraphqlEndpoint, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaConnectionConfig_graphqlEndpoint(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaConnectionConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaConnectionConfig_websocketEndpoint(ctx context.Context, field graphql.CollectedField, obj *WinCCOaConnectionConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaConnectionConfig_websocketEndpoint,
+		func(ctx context.Context) (any, error) {
+			return obj.WebsocketEndpoint, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaConnectionConfig_websocketEndpoint(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaConnectionConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaConnectionConfig_username(ctx context.Context, field graphql.CollectedField, obj *WinCCOaConnectionConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaConnectionConfig_username,
+		func(ctx context.Context) (any, error) {
+			return obj.Username, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaConnectionConfig_username(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaConnectionConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaConnectionConfig_token(ctx context.Context, field graphql.CollectedField, obj *WinCCOaConnectionConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaConnectionConfig_token,
+		func(ctx context.Context) (any, error) {
+			return obj.Token, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaConnectionConfig_token(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaConnectionConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaConnectionConfig_reconnectDelay(ctx context.Context, field graphql.CollectedField, obj *WinCCOaConnectionConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaConnectionConfig_reconnectDelay,
+		func(ctx context.Context) (any, error) {
+			return obj.ReconnectDelay, nil
+		},
+		nil,
+		ec.marshalNLong2int64,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaConnectionConfig_reconnectDelay(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaConnectionConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Long does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaConnectionConfig_connectionTimeout(ctx context.Context, field graphql.CollectedField, obj *WinCCOaConnectionConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaConnectionConfig_connectionTimeout,
+		func(ctx context.Context) (any, error) {
+			return obj.ConnectionTimeout, nil
+		},
+		nil,
+		ec.marshalNLong2int64,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaConnectionConfig_connectionTimeout(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaConnectionConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Long does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaConnectionConfig_messageFormat(ctx context.Context, field graphql.CollectedField, obj *WinCCOaConnectionConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaConnectionConfig_messageFormat,
+		func(ctx context.Context) (any, error) {
+			return obj.MessageFormat, nil
+		},
+		nil,
+		ec.marshalNWinCCOaMessageFormat2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaMessageFormat,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaConnectionConfig_messageFormat(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaConnectionConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type WinCCOaMessageFormat does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaConnectionConfig_transformConfig(ctx context.Context, field graphql.CollectedField, obj *WinCCOaConnectionConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaConnectionConfig_transformConfig,
+		func(ctx context.Context) (any, error) {
+			return obj.TransformConfig, nil
+		},
+		nil,
+		ec.marshalNWinCCOaTransformConfig2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaTransformConfig,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaConnectionConfig_transformConfig(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaConnectionConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "removeSystemName":
+				return ec.fieldContext_WinCCOaTransformConfig_removeSystemName(ctx, field)
+			case "convertDotToSlash":
+				return ec.fieldContext_WinCCOaTransformConfig_convertDotToSlash(ctx, field)
+			case "convertUnderscoreToSlash":
+				return ec.fieldContext_WinCCOaTransformConfig_convertUnderscoreToSlash(ctx, field)
+			case "regexPattern":
+				return ec.fieldContext_WinCCOaTransformConfig_regexPattern(ctx, field)
+			case "regexReplacement":
+				return ec.fieldContext_WinCCOaTransformConfig_regexReplacement(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type WinCCOaTransformConfig", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaConnectionConfig_addresses(ctx context.Context, field graphql.CollectedField, obj *WinCCOaConnectionConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaConnectionConfig_addresses,
+		func(ctx context.Context) (any, error) {
+			return obj.Addresses, nil
+		},
+		nil,
+		ec.marshalNWinCCOaAddress2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaAddressᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaConnectionConfig_addresses(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaConnectionConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "query":
+				return ec.fieldContext_WinCCOaAddress_query(ctx, field)
+			case "topic":
+				return ec.fieldContext_WinCCOaAddress_topic(ctx, field)
+			case "description":
+				return ec.fieldContext_WinCCOaAddress_description(ctx, field)
+			case "answer":
+				return ec.fieldContext_WinCCOaAddress_answer(ctx, field)
+			case "retained":
+				return ec.fieldContext_WinCCOaAddress_retained(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type WinCCOaAddress", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaDeviceMutations_create(ctx context.Context, field graphql.CollectedField, obj *WinCCOaDeviceMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaDeviceMutations_create,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.WinCCOaDeviceMutations().Create(ctx, obj, fc.Args["input"].(WinCCOaClientInput))
+		},
+		nil,
+		ec.marshalNWinCCOaClientResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaClientResult,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaDeviceMutations_create(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaDeviceMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "success":
+				return ec.fieldContext_WinCCOaClientResult_success(ctx, field)
+			case "client":
+				return ec.fieldContext_WinCCOaClientResult_client(ctx, field)
+			case "errors":
+				return ec.fieldContext_WinCCOaClientResult_errors(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type WinCCOaClientResult", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_WinCCOaDeviceMutations_create_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaDeviceMutations_update(ctx context.Context, field graphql.CollectedField, obj *WinCCOaDeviceMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaDeviceMutations_update,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.WinCCOaDeviceMutations().Update(ctx, obj, fc.Args["name"].(string), fc.Args["input"].(WinCCOaClientInput))
+		},
+		nil,
+		ec.marshalNWinCCOaClientResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaClientResult,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaDeviceMutations_update(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaDeviceMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "success":
+				return ec.fieldContext_WinCCOaClientResult_success(ctx, field)
+			case "client":
+				return ec.fieldContext_WinCCOaClientResult_client(ctx, field)
+			case "errors":
+				return ec.fieldContext_WinCCOaClientResult_errors(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type WinCCOaClientResult", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_WinCCOaDeviceMutations_update_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaDeviceMutations_delete(ctx context.Context, field graphql.CollectedField, obj *WinCCOaDeviceMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaDeviceMutations_delete,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.WinCCOaDeviceMutations().Delete(ctx, obj, fc.Args["name"].(string))
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaDeviceMutations_delete(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaDeviceMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_WinCCOaDeviceMutations_delete_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaDeviceMutations_start(ctx context.Context, field graphql.CollectedField, obj *WinCCOaDeviceMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaDeviceMutations_start,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.WinCCOaDeviceMutations().Start(ctx, obj, fc.Args["name"].(string))
+		},
+		nil,
+		ec.marshalNWinCCOaClientResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaClientResult,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaDeviceMutations_start(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaDeviceMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "success":
+				return ec.fieldContext_WinCCOaClientResult_success(ctx, field)
+			case "client":
+				return ec.fieldContext_WinCCOaClientResult_client(ctx, field)
+			case "errors":
+				return ec.fieldContext_WinCCOaClientResult_errors(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type WinCCOaClientResult", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_WinCCOaDeviceMutations_start_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaDeviceMutations_stop(ctx context.Context, field graphql.CollectedField, obj *WinCCOaDeviceMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaDeviceMutations_stop,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.WinCCOaDeviceMutations().Stop(ctx, obj, fc.Args["name"].(string))
+		},
+		nil,
+		ec.marshalNWinCCOaClientResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaClientResult,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaDeviceMutations_stop(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaDeviceMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "success":
+				return ec.fieldContext_WinCCOaClientResult_success(ctx, field)
+			case "client":
+				return ec.fieldContext_WinCCOaClientResult_client(ctx, field)
+			case "errors":
+				return ec.fieldContext_WinCCOaClientResult_errors(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type WinCCOaClientResult", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_WinCCOaDeviceMutations_stop_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaDeviceMutations_toggle(ctx context.Context, field graphql.CollectedField, obj *WinCCOaDeviceMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaDeviceMutations_toggle,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.WinCCOaDeviceMutations().Toggle(ctx, obj, fc.Args["name"].(string), fc.Args["enabled"].(bool))
+		},
+		nil,
+		ec.marshalNWinCCOaClientResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaClientResult,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaDeviceMutations_toggle(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaDeviceMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "success":
+				return ec.fieldContext_WinCCOaClientResult_success(ctx, field)
+			case "client":
+				return ec.fieldContext_WinCCOaClientResult_client(ctx, field)
+			case "errors":
+				return ec.fieldContext_WinCCOaClientResult_errors(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type WinCCOaClientResult", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_WinCCOaDeviceMutations_toggle_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaDeviceMutations_reassign(ctx context.Context, field graphql.CollectedField, obj *WinCCOaDeviceMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaDeviceMutations_reassign,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.WinCCOaDeviceMutations().Reassign(ctx, obj, fc.Args["name"].(string), fc.Args["nodeId"].(string))
+		},
+		nil,
+		ec.marshalNWinCCOaClientResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaClientResult,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaDeviceMutations_reassign(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaDeviceMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "success":
+				return ec.fieldContext_WinCCOaClientResult_success(ctx, field)
+			case "client":
+				return ec.fieldContext_WinCCOaClientResult_client(ctx, field)
+			case "errors":
+				return ec.fieldContext_WinCCOaClientResult_errors(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type WinCCOaClientResult", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_WinCCOaDeviceMutations_reassign_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaDeviceMutations_addAddress(ctx context.Context, field graphql.CollectedField, obj *WinCCOaDeviceMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaDeviceMutations_addAddress,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.WinCCOaDeviceMutations().AddAddress(ctx, obj, fc.Args["deviceName"].(string), fc.Args["input"].(WinCCOaAddressInput))
+		},
+		nil,
+		ec.marshalNWinCCOaClientResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaClientResult,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaDeviceMutations_addAddress(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaDeviceMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "success":
+				return ec.fieldContext_WinCCOaClientResult_success(ctx, field)
+			case "client":
+				return ec.fieldContext_WinCCOaClientResult_client(ctx, field)
+			case "errors":
+				return ec.fieldContext_WinCCOaClientResult_errors(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type WinCCOaClientResult", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_WinCCOaDeviceMutations_addAddress_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaDeviceMutations_updateAddress(ctx context.Context, field graphql.CollectedField, obj *WinCCOaDeviceMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaDeviceMutations_updateAddress,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.WinCCOaDeviceMutations().UpdateAddress(ctx, obj, fc.Args["deviceName"].(string), fc.Args["query"].(string), fc.Args["input"].(WinCCOaAddressInput))
+		},
+		nil,
+		ec.marshalNWinCCOaClientResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaClientResult,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaDeviceMutations_updateAddress(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaDeviceMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "success":
+				return ec.fieldContext_WinCCOaClientResult_success(ctx, field)
+			case "client":
+				return ec.fieldContext_WinCCOaClientResult_client(ctx, field)
+			case "errors":
+				return ec.fieldContext_WinCCOaClientResult_errors(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type WinCCOaClientResult", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_WinCCOaDeviceMutations_updateAddress_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaDeviceMutations_deleteAddress(ctx context.Context, field graphql.CollectedField, obj *WinCCOaDeviceMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaDeviceMutations_deleteAddress,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.WinCCOaDeviceMutations().DeleteAddress(ctx, obj, fc.Args["deviceName"].(string), fc.Args["query"].(string))
+		},
+		nil,
+		ec.marshalNWinCCOaClientResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaClientResult,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaDeviceMutations_deleteAddress(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaDeviceMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "success":
+				return ec.fieldContext_WinCCOaClientResult_success(ctx, field)
+			case "client":
+				return ec.fieldContext_WinCCOaClientResult_client(ctx, field)
+			case "errors":
+				return ec.fieldContext_WinCCOaClientResult_errors(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type WinCCOaClientResult", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_WinCCOaDeviceMutations_deleteAddress_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaTransformConfig_removeSystemName(ctx context.Context, field graphql.CollectedField, obj *WinCCOaTransformConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaTransformConfig_removeSystemName,
+		func(ctx context.Context) (any, error) {
+			return obj.RemoveSystemName, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaTransformConfig_removeSystemName(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaTransformConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaTransformConfig_convertDotToSlash(ctx context.Context, field graphql.CollectedField, obj *WinCCOaTransformConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaTransformConfig_convertDotToSlash,
+		func(ctx context.Context) (any, error) {
+			return obj.ConvertDotToSlash, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaTransformConfig_convertDotToSlash(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaTransformConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaTransformConfig_convertUnderscoreToSlash(ctx context.Context, field graphql.CollectedField, obj *WinCCOaTransformConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaTransformConfig_convertUnderscoreToSlash,
+		func(ctx context.Context) (any, error) {
+			return obj.ConvertUnderscoreToSlash, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaTransformConfig_convertUnderscoreToSlash(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaTransformConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaTransformConfig_regexPattern(ctx context.Context, field graphql.CollectedField, obj *WinCCOaTransformConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaTransformConfig_regexPattern,
+		func(ctx context.Context) (any, error) {
+			return obj.RegexPattern, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaTransformConfig_regexPattern(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaTransformConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WinCCOaTransformConfig_regexReplacement(ctx context.Context, field graphql.CollectedField, obj *WinCCOaTransformConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WinCCOaTransformConfig_regexReplacement,
+		func(ctx context.Context) (any, error) {
+			return obj.RegexReplacement, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_WinCCOaTransformConfig_regexReplacement(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WinCCOaTransformConfig",
 		Field:      field,
 		IsMethod:   false,
 		IsResolver: false,
@@ -18902,6 +20933,304 @@ func (ec *executionContext) unmarshalInputUserPropertyInput(ctx context.Context,
 	return it, nil
 }
 
+func (ec *executionContext) unmarshalInputWinCCOaAddressInput(ctx context.Context, obj any) (WinCCOaAddressInput, error) {
+	var it WinCCOaAddressInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	if _, present := asMap["answer"]; !present {
+		asMap["answer"] = false
+	}
+	if _, present := asMap["retained"]; !present {
+		asMap["retained"] = false
+	}
+
+	fieldsInOrder := [...]string{"query", "topic", "description", "answer", "retained"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "query":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("query"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Query = data
+		case "topic":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("topic"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Topic = data
+		case "description":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("description"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Description = data
+		case "answer":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("answer"))
+			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Answer = data
+		case "retained":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("retained"))
+			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Retained = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputWinCCOaClientInput(ctx context.Context, obj any) (WinCCOaClientInput, error) {
+	var it WinCCOaClientInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	if _, present := asMap["enabled"]; !present {
+		asMap["enabled"] = true
+	}
+
+	fieldsInOrder := [...]string{"name", "namespace", "nodeId", "enabled", "config"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "name":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("name"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Name = data
+		case "namespace":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("namespace"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Namespace = data
+		case "nodeId":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("nodeId"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.NodeID = data
+		case "enabled":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("enabled"))
+			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Enabled = data
+		case "config":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("config"))
+			data, err := ec.unmarshalNWinCCOaConnectionConfigInput2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaConnectionConfigInput(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Config = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputWinCCOaConnectionConfigInput(ctx context.Context, obj any) (WinCCOaConnectionConfigInput, error) {
+	var it WinCCOaConnectionConfigInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	if _, present := asMap["reconnectDelay"]; !present {
+		asMap["reconnectDelay"] = 5000
+	}
+	if _, present := asMap["connectionTimeout"]; !present {
+		asMap["connectionTimeout"] = 10000
+	}
+	if _, present := asMap["messageFormat"]; !present {
+		asMap["messageFormat"] = "JSON_ISO"
+	}
+
+	fieldsInOrder := [...]string{"graphqlEndpoint", "websocketEndpoint", "username", "password", "token", "reconnectDelay", "connectionTimeout", "messageFormat", "transformConfig", "addresses"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "graphqlEndpoint":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("graphqlEndpoint"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.GraphqlEndpoint = data
+		case "websocketEndpoint":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("websocketEndpoint"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.WebsocketEndpoint = data
+		case "username":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("username"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Username = data
+		case "password":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("password"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Password = data
+		case "token":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("token"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Token = data
+		case "reconnectDelay":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("reconnectDelay"))
+			data, err := ec.unmarshalOLong2ᚖint64(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ReconnectDelay = data
+		case "connectionTimeout":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("connectionTimeout"))
+			data, err := ec.unmarshalOLong2ᚖint64(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ConnectionTimeout = data
+		case "messageFormat":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("messageFormat"))
+			data, err := ec.unmarshalOWinCCOaMessageFormat2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaMessageFormat(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.MessageFormat = data
+		case "transformConfig":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("transformConfig"))
+			data, err := ec.unmarshalOWinCCOaTransformConfigInput2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaTransformConfigInput(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.TransformConfig = data
+		case "addresses":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("addresses"))
+			data, err := ec.unmarshalOWinCCOaAddressInput2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaAddressInputᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Addresses = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputWinCCOaTransformConfigInput(ctx context.Context, obj any) (WinCCOaTransformConfigInput, error) {
+	var it WinCCOaTransformConfigInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	if _, present := asMap["removeSystemName"]; !present {
+		asMap["removeSystemName"] = true
+	}
+	if _, present := asMap["convertDotToSlash"]; !present {
+		asMap["convertDotToSlash"] = true
+	}
+	if _, present := asMap["convertUnderscoreToSlash"]; !present {
+		asMap["convertUnderscoreToSlash"] = false
+	}
+
+	fieldsInOrder := [...]string{"removeSystemName", "convertDotToSlash", "convertUnderscoreToSlash", "regexPattern", "regexReplacement"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "removeSystemName":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("removeSystemName"))
+			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.RemoveSystemName = data
+		case "convertDotToSlash":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("convertDotToSlash"))
+			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ConvertDotToSlash = data
+		case "convertUnderscoreToSlash":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("convertUnderscoreToSlash"))
+			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ConvertUnderscoreToSlash = data
+		case "regexPattern":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("regexPattern"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.RegexPattern = data
+		case "regexReplacement":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("regexReplacement"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.RegexReplacement = data
+		}
+	}
+	return it, nil
+}
+
 func (ec *executionContext) unmarshalInputWinCCUaAddressInput(ctx context.Context, obj any) (WinCCUaAddressInput, error) {
 	var it WinCCUaAddressInput
 	if obj == nil {
@@ -21765,6 +24094,13 @@ func (ec *executionContext) _Mutation(ctx context.Context, sel ast.SelectionSet)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
+		case "winCCOaDevice":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_winCCOaDevice(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
 		case "winCCUaDevice":
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Mutation_winCCUaDevice(ctx, field)
@@ -22407,6 +24743,28 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 					}
 				}()
 				res = ec._Query_mqttClients(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "winCCOaClients":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_winCCOaClients(ctx, field)
 				if res == graphql.Null {
 					atomic.AddUint32(&fs.Invalids, 1)
 				}
@@ -23737,6 +26095,823 @@ func (ec *executionContext) _UserProperty(ctx context.Context, sel ast.Selection
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var winCCOaAddressImplementors = []string{"WinCCOaAddress"}
+
+func (ec *executionContext) _WinCCOaAddress(ctx context.Context, sel ast.SelectionSet, obj *WinCCOaAddress) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, winCCOaAddressImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("WinCCOaAddress")
+		case "query":
+			out.Values[i] = ec._WinCCOaAddress_query(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "topic":
+			out.Values[i] = ec._WinCCOaAddress_topic(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "description":
+			out.Values[i] = ec._WinCCOaAddress_description(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "answer":
+			out.Values[i] = ec._WinCCOaAddress_answer(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "retained":
+			out.Values[i] = ec._WinCCOaAddress_retained(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var winCCOaClientImplementors = []string{"WinCCOaClient"}
+
+func (ec *executionContext) _WinCCOaClient(ctx context.Context, sel ast.SelectionSet, obj *WinCCOaClient) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, winCCOaClientImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("WinCCOaClient")
+		case "name":
+			out.Values[i] = ec._WinCCOaClient_name(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "namespace":
+			out.Values[i] = ec._WinCCOaClient_namespace(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "nodeId":
+			out.Values[i] = ec._WinCCOaClient_nodeId(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "config":
+			out.Values[i] = ec._WinCCOaClient_config(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "enabled":
+			out.Values[i] = ec._WinCCOaClient_enabled(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "createdAt":
+			out.Values[i] = ec._WinCCOaClient_createdAt(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "updatedAt":
+			out.Values[i] = ec._WinCCOaClient_updatedAt(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "isOnCurrentNode":
+			out.Values[i] = ec._WinCCOaClient_isOnCurrentNode(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "metrics":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._WinCCOaClient_metrics(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "metricsHistory":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._WinCCOaClient_metricsHistory(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var winCCOaClientMetricsImplementors = []string{"WinCCOaClientMetrics"}
+
+func (ec *executionContext) _WinCCOaClientMetrics(ctx context.Context, sel ast.SelectionSet, obj *WinCCOaClientMetrics) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, winCCOaClientMetricsImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("WinCCOaClientMetrics")
+		case "messagesIn":
+			out.Values[i] = ec._WinCCOaClientMetrics_messagesIn(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "connected":
+			out.Values[i] = ec._WinCCOaClientMetrics_connected(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "timestamp":
+			out.Values[i] = ec._WinCCOaClientMetrics_timestamp(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var winCCOaClientResultImplementors = []string{"WinCCOaClientResult"}
+
+func (ec *executionContext) _WinCCOaClientResult(ctx context.Context, sel ast.SelectionSet, obj *WinCCOaClientResult) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, winCCOaClientResultImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("WinCCOaClientResult")
+		case "success":
+			out.Values[i] = ec._WinCCOaClientResult_success(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "client":
+			out.Values[i] = ec._WinCCOaClientResult_client(ctx, field, obj)
+		case "errors":
+			out.Values[i] = ec._WinCCOaClientResult_errors(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var winCCOaConnectionConfigImplementors = []string{"WinCCOaConnectionConfig"}
+
+func (ec *executionContext) _WinCCOaConnectionConfig(ctx context.Context, sel ast.SelectionSet, obj *WinCCOaConnectionConfig) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, winCCOaConnectionConfigImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("WinCCOaConnectionConfig")
+		case "graphqlEndpoint":
+			out.Values[i] = ec._WinCCOaConnectionConfig_graphqlEndpoint(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "websocketEndpoint":
+			out.Values[i] = ec._WinCCOaConnectionConfig_websocketEndpoint(ctx, field, obj)
+		case "username":
+			out.Values[i] = ec._WinCCOaConnectionConfig_username(ctx, field, obj)
+		case "token":
+			out.Values[i] = ec._WinCCOaConnectionConfig_token(ctx, field, obj)
+		case "reconnectDelay":
+			out.Values[i] = ec._WinCCOaConnectionConfig_reconnectDelay(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "connectionTimeout":
+			out.Values[i] = ec._WinCCOaConnectionConfig_connectionTimeout(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "messageFormat":
+			out.Values[i] = ec._WinCCOaConnectionConfig_messageFormat(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "transformConfig":
+			out.Values[i] = ec._WinCCOaConnectionConfig_transformConfig(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "addresses":
+			out.Values[i] = ec._WinCCOaConnectionConfig_addresses(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var winCCOaDeviceMutationsImplementors = []string{"WinCCOaDeviceMutations"}
+
+func (ec *executionContext) _WinCCOaDeviceMutations(ctx context.Context, sel ast.SelectionSet, obj *WinCCOaDeviceMutations) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, winCCOaDeviceMutationsImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("WinCCOaDeviceMutations")
+		case "create":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._WinCCOaDeviceMutations_create(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "update":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._WinCCOaDeviceMutations_update(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "delete":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._WinCCOaDeviceMutations_delete(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "start":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._WinCCOaDeviceMutations_start(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "stop":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._WinCCOaDeviceMutations_stop(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "toggle":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._WinCCOaDeviceMutations_toggle(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "reassign":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._WinCCOaDeviceMutations_reassign(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "addAddress":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._WinCCOaDeviceMutations_addAddress(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "updateAddress":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._WinCCOaDeviceMutations_updateAddress(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "deleteAddress":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._WinCCOaDeviceMutations_deleteAddress(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var winCCOaTransformConfigImplementors = []string{"WinCCOaTransformConfig"}
+
+func (ec *executionContext) _WinCCOaTransformConfig(ctx context.Context, sel ast.SelectionSet, obj *WinCCOaTransformConfig) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, winCCOaTransformConfigImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("WinCCOaTransformConfig")
+		case "removeSystemName":
+			out.Values[i] = ec._WinCCOaTransformConfig_removeSystemName(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "convertDotToSlash":
+			out.Values[i] = ec._WinCCOaTransformConfig_convertDotToSlash(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "convertUnderscoreToSlash":
+			out.Values[i] = ec._WinCCOaTransformConfig_convertUnderscoreToSlash(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "regexPattern":
+			out.Values[i] = ec._WinCCOaTransformConfig_regexPattern(ctx, field, obj)
+		case "regexReplacement":
+			out.Values[i] = ec._WinCCOaTransformConfig_regexReplacement(ctx, field, obj)
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}
@@ -26002,6 +29177,162 @@ func (ec *executionContext) unmarshalNUserPropertyInput2ᚖmonstermqᚗioᚋedge
 	return &res, graphql.ErrorOnPath(ctx, err)
 }
 
+func (ec *executionContext) marshalNWinCCOaAddress2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaAddressᚄ(ctx context.Context, sel ast.SelectionSet, v []*WinCCOaAddress) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNWinCCOaAddress2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaAddress(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNWinCCOaAddress2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaAddress(ctx context.Context, sel ast.SelectionSet, v *WinCCOaAddress) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._WinCCOaAddress(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalNWinCCOaAddressInput2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaAddressInput(ctx context.Context, v any) (WinCCOaAddressInput, error) {
+	res, err := ec.unmarshalInputWinCCOaAddressInput(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNWinCCOaAddressInput2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaAddressInput(ctx context.Context, v any) (*WinCCOaAddressInput, error) {
+	res, err := ec.unmarshalInputWinCCOaAddressInput(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNWinCCOaClient2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaClientᚄ(ctx context.Context, sel ast.SelectionSet, v []*WinCCOaClient) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNWinCCOaClient2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaClient(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNWinCCOaClient2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaClient(ctx context.Context, sel ast.SelectionSet, v *WinCCOaClient) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._WinCCOaClient(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalNWinCCOaClientInput2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaClientInput(ctx context.Context, v any) (WinCCOaClientInput, error) {
+	res, err := ec.unmarshalInputWinCCOaClientInput(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNWinCCOaClientMetrics2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaClientMetricsᚄ(ctx context.Context, sel ast.SelectionSet, v []*WinCCOaClientMetrics) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNWinCCOaClientMetrics2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaClientMetrics(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNWinCCOaClientMetrics2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaClientMetrics(ctx context.Context, sel ast.SelectionSet, v *WinCCOaClientMetrics) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._WinCCOaClientMetrics(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNWinCCOaClientResult2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaClientResult(ctx context.Context, sel ast.SelectionSet, v WinCCOaClientResult) graphql.Marshaler {
+	return ec._WinCCOaClientResult(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNWinCCOaClientResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaClientResult(ctx context.Context, sel ast.SelectionSet, v *WinCCOaClientResult) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._WinCCOaClientResult(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNWinCCOaConnectionConfig2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaConnectionConfig(ctx context.Context, sel ast.SelectionSet, v *WinCCOaConnectionConfig) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._WinCCOaConnectionConfig(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalNWinCCOaConnectionConfigInput2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaConnectionConfigInput(ctx context.Context, v any) (*WinCCOaConnectionConfigInput, error) {
+	res, err := ec.unmarshalInputWinCCOaConnectionConfigInput(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNWinCCOaDeviceMutations2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaDeviceMutations(ctx context.Context, sel ast.SelectionSet, v WinCCOaDeviceMutations) graphql.Marshaler {
+	return ec._WinCCOaDeviceMutations(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNWinCCOaDeviceMutations2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaDeviceMutations(ctx context.Context, sel ast.SelectionSet, v *WinCCOaDeviceMutations) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._WinCCOaDeviceMutations(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalNWinCCOaMessageFormat2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaMessageFormat(ctx context.Context, v any) (WinCCOaMessageFormat, error) {
+	var res WinCCOaMessageFormat
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNWinCCOaMessageFormat2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaMessageFormat(ctx context.Context, sel ast.SelectionSet, v WinCCOaMessageFormat) graphql.Marshaler {
+	return v
+}
+
+func (ec *executionContext) marshalNWinCCOaTransformConfig2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaTransformConfig(ctx context.Context, sel ast.SelectionSet, v *WinCCOaTransformConfig) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._WinCCOaTransformConfig(ctx, sel, v)
+}
+
 func (ec *executionContext) marshalNWinCCUaAddress2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaAddressᚄ(ctx context.Context, sel ast.SelectionSet, v []*WinCCUaAddress) graphql.Marshaler {
 	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
 		fc := graphql.GetFieldContext(ctx)
@@ -26722,6 +30053,55 @@ func (ec *executionContext) unmarshalOUserPropertyInput2ᚕᚖmonstermqᚗioᚋe
 		}
 	}
 	return res, nil
+}
+
+func (ec *executionContext) unmarshalOWinCCOaAddressInput2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaAddressInputᚄ(ctx context.Context, v any) ([]*WinCCOaAddressInput, error) {
+	if v == nil {
+		return nil, nil
+	}
+	var vSlice []any
+	vSlice = graphql.CoerceList(v)
+	var err error
+	res := make([]*WinCCOaAddressInput, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNWinCCOaAddressInput2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaAddressInput(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) marshalOWinCCOaClient2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaClient(ctx context.Context, sel ast.SelectionSet, v *WinCCOaClient) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._WinCCOaClient(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalOWinCCOaMessageFormat2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaMessageFormat(ctx context.Context, v any) (*WinCCOaMessageFormat, error) {
+	if v == nil {
+		return nil, nil
+	}
+	var res = new(WinCCOaMessageFormat)
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalOWinCCOaMessageFormat2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaMessageFormat(ctx context.Context, sel ast.SelectionSet, v *WinCCOaMessageFormat) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return v
+}
+
+func (ec *executionContext) unmarshalOWinCCOaTransformConfigInput2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaTransformConfigInput(ctx context.Context, v any) (*WinCCOaTransformConfigInput, error) {
+	if v == nil {
+		return nil, nil
+	}
+	res, err := ec.unmarshalInputWinCCOaTransformConfigInput(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
 }
 
 func (ec *executionContext) marshalOWinCCUaClient2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCUaClient(ctx context.Context, sel ast.SelectionSet, v *WinCCUaClient) graphql.Marshaler {

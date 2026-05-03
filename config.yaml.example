@@ -7,9 +7,10 @@ WSS:  { Enabled: false, Port: 8884, Address: "0.0.0.0", KeyStorePath: "data/keys
 MaxMessageSize: 1048576
 
 DefaultStoreType: SQLITE
-SessionStoreType: SQLITE
-RetainedStoreType: SQLITE
+SessionStoreType: MEMORY
+RetainedStoreType: MEMORY
 ConfigStoreType: SQLITE
+QueueStoreType: MEMORY
 
 SQLite:
   Path: ./data/monstermq.db
@@ -48,8 +49,10 @@ GraphQL:
 Features:
   MqttClient: true
   WinCCUa: false
+  WinCCOa: false
 
-# QueuedMessagesEnabled: true  -> messages for offline persistent (clean=false)
-# sessions are stored in the QueueStore table and survive broker restarts.
-# false -> rely on mochi-mqtt's in-memory inflight buffer (lost on restart).
+# QueuedMessagesEnabled: true  -> use QueueStoreType for offline persistent
+# (clean=false) sessions. With QueueStoreType: MEMORY, queued messages are
+# retained only until broker restart.
+# false -> rely on mochi-mqtt's in-memory inflight buffer.
 QueuedMessagesEnabled: true

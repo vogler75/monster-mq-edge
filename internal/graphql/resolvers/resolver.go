@@ -13,6 +13,7 @@ import (
 	"monstermq.io/edge/internal/archive"
 	"monstermq.io/edge/internal/auth"
 	"monstermq.io/edge/internal/bridge/mqttclient"
+	"monstermq.io/edge/internal/bridge/winccoa"
 	"monstermq.io/edge/internal/bridge/winccua"
 	"monstermq.io/edge/internal/config"
 	"monstermq.io/edge/internal/graphql/generated"
@@ -32,6 +33,7 @@ type Resolver struct {
 	Archives  *archive.Manager
 	Bridges   *mqttclient.Manager
 	WinCCUa   *winccua.Manager
+	WinCCOa   *winccoa.Manager
 	AuthCache *auth.Cache
 	Collector *metrics.Collector
 	LogBus    *mlog.Bus
@@ -44,7 +46,7 @@ type Resolver struct {
 }
 
 func New(cfg *config.Config, storage *stores.Storage, bus *pubsub.Bus, archives *archive.Manager,
-	bridges *mqttclient.Manager, winCCUa *winccua.Manager,
+	bridges *mqttclient.Manager, winCCUa *winccua.Manager, winCCOa *winccoa.Manager,
 	authCache *auth.Cache, collector *metrics.Collector,
 	logBus *mlog.Bus, logger *slog.Logger,
 	publish func(string, []byte, bool, byte) error) *Resolver {
@@ -55,6 +57,7 @@ func New(cfg *config.Config, storage *stores.Storage, bus *pubsub.Bus, archives 
 		Archives:  archives,
 		Bridges:   bridges,
 		WinCCUa:   winCCUa,
+		WinCCOa:   winCCOa,
 		AuthCache: authCache,
 		Collector: collector,
 		LogBus:    logBus,
@@ -75,6 +78,9 @@ func (r *Resolver) enabledFeatures() []string {
 	}
 	if r.Cfg.Features.WinCCUa {
 		out = append(out, "WinCCUa")
+	}
+	if r.Cfg.Features.WinCCOa {
+		out = append(out, "WinCCOa")
 	}
 	return out
 }
@@ -109,6 +115,12 @@ func (r *Resolver) WinCCUaClient() generated.WinCCUaClientResolver {
 func (r *Resolver) WinCCUaDeviceMutations() generated.WinCCUaDeviceMutationsResolver {
 	return &winCCUaDeviceMutationsResolver{r}
 }
+func (r *Resolver) WinCCOaClient() generated.WinCCOaClientResolver {
+	return &winCCOaClientResolver{r}
+}
+func (r *Resolver) WinCCOaDeviceMutations() generated.WinCCOaDeviceMutationsResolver {
+	return &winCCOaDeviceMutationsResolver{r}
+}
 func (r *Resolver) Topic() generated.TopicResolver { return &topicResolver{r} }
 
 type mutationResolver struct{ *Resolver }
@@ -125,6 +137,8 @@ type mqttClientResolver struct{ *Resolver }
 type mqttClientMutationsResolver struct{ *Resolver }
 type winCCUaClientResolver struct{ *Resolver }
 type winCCUaDeviceMutationsResolver struct{ *Resolver }
+type winCCOaClientResolver struct{ *Resolver }
+type winCCOaDeviceMutationsResolver struct{ *Resolver }
 type topicResolver struct{ *Resolver }
 
 func (r *topicResolver) Value(ctx context.Context, obj *generated.Topic, format *generated.DataFormat) (*generated.TopicValue, error) {
@@ -388,6 +402,9 @@ func (r *mutationResolver) MqttClient(ctx context.Context) (*generated.MqttClien
 }
 func (r *mutationResolver) WinCCUaDevice(ctx context.Context) (*generated.WinCCUaDeviceMutations, error) {
 	return &generated.WinCCUaDeviceMutations{}, nil
+}
+func (r *mutationResolver) WinCCOaDevice(ctx context.Context) (*generated.WinCCOaDeviceMutations, error) {
+	return &generated.WinCCOaDeviceMutations{}, nil
 }
 
 // Queries -------------------------------------------------------------------
