@@ -336,3 +336,92 @@ func TestGraphQLUserManagement(t *testing.T) {
 		t.Fatalf("users %v", users)
 	}
 }
+
+func TestGraphQLDeviceImportExport(t *testing.T) {
+	srv, url := startWithGraphQL(t, 23022, 28022, func(c *config.Config) {
+		c.Features.DeviceImportExport = true
+		c.Features.MqttClient = true
+	})
+	defer srv.Close()
+
+	data := gqlQuery(t, url, `mutation Import($configs: [DeviceInput!]!) {
+        importDevices(configs: $configs) { success imported failed total errors }
+    }`, map[string]any{"configs": []any{
+		map[string]any{
+			"name":      "mqtt-export",
+			"namespace": "default",
+			"nodeId":    "g-28022",
+			"type":      "MQTT-Client",
+			"enabled":   true,
+			"config": map[string]any{
+				"brokerUrl":    "tcp://localhost:1883",
+				"clientId":     "edge-export",
+				"cleanSession": true,
+				"addresses": []any{
+					map[string]any{
+						"mode":        "PUBLISH",
+						"remoteTopic": "remote/#",
+						"localTopic":  "local/#",
+						"removePath":  true,
+					},
+				},
+			},
+		},
+	}})
+	result := data["importDevices"].(map[string]any)
+	if result["success"] != true || int(result["imported"].(float64)) != 1 || int(result["failed"].(float64)) != 0 {
+		t.Fatalf("importDevices result: %v", result)
+	}
+
+	data = gqlQuery(t, url, `{ getDevices(names: ["mqtt-export"]) {
+        name namespace nodeId enabled type config createdAt updatedAt
+    } }`, nil)
+	devices := data["getDevices"].([]any)
+	if len(devices) != 1 {
+		t.Fatalf("getDevices count = %d, want 1: %v", len(devices), devices)
+	}
+	device := devices[0].(map[string]any)
+	if device["type"] != "MQTT-Client" {
+		t.Fatalf("exported type = %v", device["type"])
+	}
+	if device["enabled"] != false {
+		t.Fatalf("import should force enabled=false: %v", device)
+	}
+	cfg := device["config"].(map[string]any)
+	if cfg["brokerUrl"] != "tcp://localhost:1883" {
+		t.Fatalf("config not exported as object: %v", cfg)
+	}
+
+	data = gqlQuery(t, url, `{ mqttClients(name: "mqtt-export") { name enabled config { brokerUrl clientId addresses { remoteTopic } } } }`, nil)
+	clients := data["mqttClients"].([]any)
+	if len(clients) != 1 {
+		t.Fatalf("mqttClients count = %d, want 1: %v", len(clients), clients)
+	}
+	client := clients[0].(map[string]any)
+	if client["enabled"] != false || client["config"].(map[string]any)["brokerUrl"] != "tcp://localhost:1883" {
+		t.Fatalf("typed mqtt client view mismatch: %v", client)
+	}
+}
+
+func TestGraphQLDeviceImportExportDisabled(t *testing.T) {
+	srv, url := startWithGraphQL(t, 23023, 28023)
+	defer srv.Close()
+
+	data := gqlQuery(t, url, `{ getDevices { name } }`, nil)
+	if len(data["getDevices"].([]any)) != 0 {
+		t.Fatalf("disabled getDevices should be empty: %v", data)
+	}
+
+	data = gqlQuery(t, url, `mutation {
+        importDevices(configs: [{
+            name: "disabled",
+            namespace: "default",
+            nodeId: "g-28023",
+            config: {}
+        }]) { success imported failed total errors }
+    }`, nil)
+	result := data["importDevices"].(map[string]any)
+	if result["success"] != false || int(result["failed"].(float64)) != 1 || int(result["total"].(float64)) != 1 {
+		t.Fatalf("disabled importDevices result: %v", result)
+	}
+}

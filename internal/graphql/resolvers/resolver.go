@@ -82,6 +82,9 @@ func (r *Resolver) enabledFeatures() []string {
 	if r.Cfg.Features.WinCCOa {
 		out = append(out, "WinCCOa")
 	}
+	if r.Cfg.Features.DeviceImportExport {
+		out = append(out, "DeviceImportExport")
+	}
 	return out
 }
 
@@ -307,6 +310,90 @@ func parseTimeArg(s *string) (*time.Time, error) {
 	return &t, nil
 }
 
+func deviceToGenericGraphQL(d stores.DeviceConfig) *generated.Device {
+	return &generated.Device{
+		Name:      d.Name,
+		Namespace: d.Namespace,
+		NodeID:    d.NodeID,
+		Config:    parseDeviceConfigObject(d.Config),
+		Enabled:   d.Enabled,
+		Type:      deviceTypeToExternal(d.Type),
+		CreatedAt: timeStringPtr(d.CreatedAt),
+		UpdatedAt: timeStringPtr(d.UpdatedAt),
+	}
+}
+
+func deviceInputToStore(in generated.DeviceInput) (stores.DeviceConfig, error) {
+	name := strings.TrimSpace(in.Name)
+	namespace := strings.TrimSpace(in.Namespace)
+	nodeID := strings.TrimSpace(in.NodeID)
+	if name == "" {
+		return stores.DeviceConfig{}, fmt.Errorf("name must not be blank")
+	}
+	if namespace == "" {
+		return stores.DeviceConfig{}, fmt.Errorf("namespace must not be blank")
+	}
+	if nodeID == "" {
+		return stores.DeviceConfig{}, fmt.Errorf("nodeId must not be blank")
+	}
+	if in.Config == nil {
+		return stores.DeviceConfig{}, fmt.Errorf("config must be a JSON object")
+	}
+	cfg, err := json.Marshal(in.Config)
+	if err != nil {
+		return stores.DeviceConfig{}, fmt.Errorf("config must be a JSON object: %w", err)
+	}
+	deviceType := "OPCUA-Client"
+	if in.Type != nil && strings.TrimSpace(*in.Type) != "" {
+		deviceType = strings.TrimSpace(*in.Type)
+	}
+	return stores.DeviceConfig{
+		Name:      name,
+		Namespace: namespace,
+		NodeID:    nodeID,
+		Type:      deviceTypeToInternal(deviceType),
+		Enabled:   false,
+		Config:    string(cfg),
+	}, nil
+}
+
+func parseDeviceConfigObject(raw string) map[string]any {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var out map[string]any
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+func deviceTypeToExternal(t string) string {
+	switch t {
+	case "", "MQTT_CLIENT":
+		return "MQTT-Client"
+	default:
+		return t
+	}
+}
+
+func deviceTypeToInternal(t string) string {
+	switch t {
+	case "MQTT-Client":
+		return "MQTT_CLIENT"
+	default:
+		return t
+	}
+}
+
+func timeStringPtr(t time.Time) *string {
+	if t.IsZero() {
+		return nil
+	}
+	v := formatTime(t)
+	return &v
+}
+
 // Mutations -----------------------------------------------------------------
 
 func (r *mutationResolver) Login(ctx context.Context, username, password string) (*generated.LoginResult, error) {
@@ -388,6 +475,54 @@ func (r *mutationResolver) PurgeQueuedMessages(ctx context.Context, clientID *st
 	return &generated.PurgeResult{Success: true, PurgedCount: n}, nil
 }
 
+func (r *mutationResolver) ImportDevices(ctx context.Context, configs []*generated.DeviceInput) (*generated.ImportDeviceConfigResult, error) {
+	res := &generated.ImportDeviceConfigResult{Total: len(configs), Errors: []string{}}
+	if !r.Cfg.Features.DeviceImportExport {
+		res.Failed = len(configs)
+		res.Errors = append(res.Errors, "DeviceImportExport feature is not enabled on this node")
+		return res, nil
+	}
+	if r.Cfg.UserManagement.Enabled {
+		res.Failed = len(configs)
+		res.Errors = append(res.Errors, "admin authorization required")
+		return res, nil
+	}
+	if r.Storage == nil || r.Storage.DeviceConfig == nil {
+		res.Failed = len(configs)
+		res.Errors = append(res.Errors, "device config store unavailable")
+		return res, nil
+	}
+	if len(configs) == 0 {
+		res.Errors = append(res.Errors, "configs must not be empty")
+		return res, nil
+	}
+
+	for i, in := range configs {
+		if in == nil {
+			res.Failed++
+			res.Errors = append(res.Errors, fmt.Sprintf("config[%d]: missing device config", i))
+			continue
+		}
+		device, err := deviceInputToStore(*in)
+		if err != nil {
+			res.Failed++
+			res.Errors = append(res.Errors, fmt.Sprintf("config[%d] %q: %s", i, in.Name, err.Error()))
+			continue
+		}
+		if err := r.Storage.DeviceConfig.Save(ctx, device); err != nil {
+			res.Failed++
+			res.Errors = append(res.Errors, fmt.Sprintf("config[%d] %q: %s", i, in.Name, err.Error()))
+			continue
+		}
+		res.Imported++
+	}
+	res.Success = res.Imported > 0
+	if res.Imported > 0 {
+		r.reloadDeviceManagers(ctx, "device import")
+	}
+	return res, nil
+}
+
 func (r *mutationResolver) User(ctx context.Context) (*generated.UserManagementMutations, error) {
 	return &generated.UserManagementMutations{}, nil
 }
@@ -414,6 +549,35 @@ func (r *queryResolver) CurrentUser(ctx context.Context) (*generated.CurrentUser
 		return &generated.CurrentUser{Username: "Anonymous", IsAdmin: true}, nil
 	}
 	return &generated.CurrentUser{Username: "Anonymous", IsAdmin: false}, nil
+}
+
+func (r *queryResolver) GetDevices(ctx context.Context, names []string) ([]*generated.Device, error) {
+	if !r.Cfg.Features.DeviceImportExport {
+		return []*generated.Device{}, nil
+	}
+	if r.Storage == nil || r.Storage.DeviceConfig == nil {
+		return nil, fmt.Errorf("device config store unavailable")
+	}
+	devices, err := r.Storage.DeviceConfig.GetAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	nameSet := map[string]struct{}{}
+	if len(names) > 0 {
+		for _, name := range names {
+			nameSet[name] = struct{}{}
+		}
+	}
+	out := []*generated.Device{}
+	for _, d := range devices {
+		if len(nameSet) > 0 {
+			if _, ok := nameSet[d.Name]; !ok {
+				continue
+			}
+		}
+		out = append(out, deviceToGenericGraphQL(d))
+	}
+	return out, nil
 }
 
 func (r *queryResolver) BrokerConfig(ctx context.Context) (*generated.BrokerConfig, error) {
@@ -1913,6 +2077,12 @@ func (r *Resolver) reloadBridges(ctx context.Context, reason string) {
 	if err := r.Bridges.Reload(ctx); err != nil {
 		r.Logger.Warn("bridge reload after "+reason+" failed", "err", err)
 	}
+}
+
+func (r *Resolver) reloadDeviceManagers(ctx context.Context, reason string) {
+	r.reloadBridges(ctx, reason)
+	r.reloadWinCCUa(ctx, reason)
+	r.reloadWinCCOa(ctx, reason)
 }
 
 // AddAddress / UpdateAddress / DeleteAddress mutate the addresses array

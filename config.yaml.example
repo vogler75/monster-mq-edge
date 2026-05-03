@@ -50,6 +50,7 @@ Features:
   MqttClient: true
   WinCCUa: false
   WinCCOa: false
+  DeviceImportExport: true
 
 # QueuedMessagesEnabled: true  -> use QueueStoreType for offline persistent
 # (clean=false) sessions. With QueueStoreType: MEMORY, queued messages are

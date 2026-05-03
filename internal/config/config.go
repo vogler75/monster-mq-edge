@@ -105,9 +105,10 @@ type GraphQLConfig struct {
 // section in the Java monster-mq broker. Each field enables/disables a
 // subsystem at startup. Add new flags here as they come online.
 type FeaturesConfig struct {
-	MqttClient bool `yaml:"MqttClient"`
-	WinCCUa    bool `yaml:"WinCCUa"`
-	WinCCOa    bool `yaml:"WinCCOa"`
+	MqttClient         bool `yaml:"MqttClient"`
+	WinCCUa            bool `yaml:"WinCCUa"`
+	WinCCOa            bool `yaml:"WinCCOa"`
+	DeviceImportExport bool `yaml:"DeviceImportExport"`
 }
 
 type Config struct {

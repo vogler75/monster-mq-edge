@@ -226,10 +226,40 @@ type DatabaseConnectionResult struct {
 	Connection *DatabaseConnectionInfo `json:"connection,omitempty"`
 }
 
+type Device struct {
+	Name      string         `json:"name"`
+	Namespace string         `json:"namespace"`
+	NodeID    string         `json:"nodeId"`
+	Config    map[string]any `json:"config,omitempty"`
+	Enabled   bool           `json:"enabled"`
+	Type      string         `json:"type"`
+	CreatedAt *string        `json:"createdAt,omitempty"`
+	UpdatedAt *string        `json:"updatedAt,omitempty"`
+}
+
+type DeviceInput struct {
+	Name      string         `json:"name"`
+	Namespace string         `json:"namespace"`
+	NodeID    string         `json:"nodeId"`
+	Config    map[string]any `json:"config,omitempty"`
+	Enabled   *bool          `json:"enabled,omitempty"`
+	Type      *string        `json:"type,omitempty"`
+	CreatedAt *string        `json:"createdAt,omitempty"`
+	UpdatedAt *string        `json:"updatedAt,omitempty"`
+}
+
 type ExceptionInfo struct {
 	Class      string  `json:"class"`
 	Message    *string `json:"message,omitempty"`
 	StackTrace string  `json:"stackTrace"`
+}
+
+type ImportDeviceConfigResult struct {
+	Success  bool     `json:"success"`
+	Imported int      `json:"imported"`
+	Failed   int      `json:"failed"`
+	Total    int      `json:"total"`
+	Errors   []string `json:"errors"`
 }
 
 type LoginResult struct {

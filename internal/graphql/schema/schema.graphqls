@@ -404,6 +404,40 @@ type LoginResult {
 }
 
 # -----------------------------------------------------------------------------
+# Generic device config export/import
+# -----------------------------------------------------------------------------
+
+type Device {
+    name: String!
+    namespace: String!
+    nodeId: String!
+    config: JSON
+    enabled: Boolean!
+    type: String!
+    createdAt: String
+    updatedAt: String
+}
+
+input DeviceInput {
+    name: String!
+    namespace: String!
+    nodeId: String!
+    config: JSON
+    enabled: Boolean
+    type: String
+    createdAt: String
+    updatedAt: String
+}
+
+type ImportDeviceConfigResult {
+    success: Boolean!
+    imported: Int!
+    failed: Int!
+    total: Int!
+    errors: [String!]!
+}
+
+# -----------------------------------------------------------------------------
 # MQTT bridge (devices)
 # -----------------------------------------------------------------------------
 
@@ -693,6 +727,7 @@ type Query {
     databaseConnections(type: DatabaseConnectionType): [DatabaseConnectionInfo!]!
     databaseConnectionNames(type: DatabaseConnectionType!): [String!]!
     databaseConnection(name: String!): DatabaseConnectionInfo
+    getDevices(names: [String!]): [Device!]!
     mqttClients(name: String, node: String): [MqttClient!]!
 }
 
@@ -701,6 +736,7 @@ type Mutation {
     publish(input: PublishInput!): PublishResult!
     publishBatch(inputs: [PublishInput!]!): [PublishResult!]!
     purgeQueuedMessages(clientId: String): PurgeResult!
+    importDevices(configs: [DeviceInput!]!): ImportDeviceConfigResult!
     user: UserManagementMutations!
     session: SessionMutations!
     archiveGroup: ArchiveGroupMutations!
