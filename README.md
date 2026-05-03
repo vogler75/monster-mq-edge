@@ -14,7 +14,9 @@ on devices like the Raspberry Pi 4/5.
 - **MQTT bridge** — forward local topics to a remote broker and vice versa.
 - **Users + ACL** with bcrypt password hashing.
 - **Periodic metrics** surfaced via `Broker.metrics`/`metricsHistory`; history can be persisted or kept in memory.
-- No clustering, no OPC UA / Kafka / WinCC / Sparkplug / GenAI / flows.
+- **WinCC Unified bridge** — GraphQL/WebSocket or Open Pipe transport into local MQTT topics.
+- **WinCC Open Architecture bridge** — GraphQL/WebSocket subscriptions from `dpQueryConnectSingle` into local MQTT topics.
+- No clustering, no OPC UA / Kafka / Sparkplug / GenAI / flows.
 
 ## Getting Started
 
@@ -89,6 +91,50 @@ MongoDB:  { Url: "mongodb://localhost:27017", Database: monstermq }
 By default the stores live on the chosen backend. High-churn runtime stores can
 also be moved to memory with `SessionStoreType`, `RetainedStoreType`,
 `QueueStoreType`, and `Metrics.StoreType`.
+
+`SessionStoreType: MEMORY` and `QueueStoreType: MEMORY` use in-memory SQLite
+databases internally. Persistent cross-backend overrides are intentionally not
+mixed: use `MEMORY` or the same backend as `DefaultStoreType`.
+
+## Feature flags
+
+Subsystems that should not always run are enabled under `Features`:
+
+```yaml
+Features:
+  MqttClient: true
+  WinCCUa: false
+  WinCCOa: false
+```
+
+- `MqttClient` enables the MQTT bridge manager for forwarding topics between
+  the local broker and remote MQTT brokers.
+- `WinCCUa` enables WinCC Unified clients. Each device config can use
+  `GRAPHQL` for GraphQL/WebSocket subscriptions or `OPENPIPE` for local Open
+  Pipe IPC.
+- `WinCCOa` enables WinCC Open Architecture clients. Each client subscribes to
+  WinCC OA GraphQL `dpQueryConnectSingle` updates and republishes datapoint
+  changes into MQTT.
+
+Enabled features are also reported through GraphQL as `enabledFeatures`, using
+the same names as the config flags.
+
+### WinCC bridge behavior
+
+WinCC client configurations are stored in the device config store, so they
+remain persistent even when runtime stores such as metrics, sessions, retained
+messages, and queues are configured as `MEMORY`.
+
+WinCC Unified publishes tag values and alarms under the configured namespace and
+address topic. WinCC OA publishes datapoint rows under:
+
+```text
+<namespace>/<address.topic>/<transformed datapoint name>
+```
+
+Both WinCC bridges expose live metrics through their GraphQL client `metrics`
+field. WinCC OA also writes metrics history when `Metrics.StoreType` is backed
+by a metrics store.
 
 ## Low-write edge devices
 
@@ -173,6 +219,8 @@ internal/
   stores/mongodb/        → MongoDB implementations
   archive/               → archive group orchestrator + retention
   bridge/mqttclient/     → MQTT-to-MQTT bridge (paho client)
+  bridge/winccua/        → WinCC Unified bridge (GraphQL/Open Pipe)
+  bridge/winccoa/        → WinCC Open Architecture bridge (GraphQL)
   auth/                  → user+ACL cache
   metrics/               → in-memory counters + periodic snapshot writer
   pubsub/                → in-process bus for GraphQL topicUpdates
@@ -186,8 +234,10 @@ make test
 ```
 
 Integration tests cover MQTT pub/sub, retained survives-restart, bcrypt auth +
-ACL, archive group fanout, GraphQL queries/mutations, metrics persistence, and
-end-to-end MQTT bridging between two brokers.
+ACL, archive group fanout, GraphQL queries/mutations, metrics persistence,
+memory-backed queue/session stores, and end-to-end MQTT bridging between two
+brokers. Package tests cover WinCC OA config parsing, topic transforms, and
+payload formatting.
 
 ## Status
 
