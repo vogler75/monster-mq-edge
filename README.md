@@ -13,7 +13,7 @@ on devices like the Raspberry Pi 4/5.
 - **GraphQL API** with subscriptions, schema-parity with the existing dashboard.
 - **MQTT bridge** — forward local topics to a remote broker and vice versa.
 - **Users + ACL** with bcrypt password hashing.
-- **Periodic metrics** persisted to the `metrics` table; surfaced via `Broker.metrics`/`metricsHistory`.
+- **Periodic metrics** surfaced via `Broker.metrics`/`metricsHistory`; history can be persisted or kept in memory.
 - No clustering, no OPC UA / Kafka / WinCC / Sparkplug / GenAI / flows.
 
 ## Getting Started
@@ -86,8 +86,49 @@ Postgres: { Url: "postgres://localhost:5432/monstermq", User: monstermq, Pass: m
 MongoDB:  { Url: "mongodb://localhost:27017", Database: monstermq }
 ```
 
-All seven stores (retained, sessions, subscriptions, queue, users, archive
-config, device config, metrics) live on the chosen backend.
+By default the stores live on the chosen backend. High-churn runtime stores can
+also be moved to memory with `SessionStoreType`, `RetainedStoreType`,
+`QueueStoreType`, and `Metrics.StoreType`.
+
+## Low-write edge devices
+
+For flash-backed devices where runtime database writes should be avoided as much
+as possible, keep the config/user/device stores on disk and move high-churn
+runtime state to memory:
+
+```yaml
+DefaultStoreType: SQLITE
+ConfigStoreType: SQLITE
+SessionStoreType: MEMORY
+RetainedStoreType: MEMORY
+QueueStoreType: MEMORY
+
+SQLite:
+  Path: ./data/monstermq.db
+
+Metrics:
+  Enabled: true
+  StoreType: MEMORY
+  CollectionIntervalSeconds: 1
+  MaxHistoryRows: 3600
+
+Logging:
+  RingBufferSize: 1000
+
+QueuedMessagesEnabled: true
+```
+
+With this profile, normal metrics, logs, sessions, subscriptions, retained
+messages, and queued messages do not write to the SQLite file. The broker still
+writes when you change persistent configuration: users/ACLs, MQTT/WinCC device
+configs, archive groups, database connections, and other config-store data.
+
+`QueueStoreType: MEMORY` keeps the broker's queued-message behavior for offline
+persistent sessions, but those queued messages are held in RAM and are lost on
+broker restart. RAM is the limiting factor: if many clients are offline or large
+payloads are queued, memory can grow quickly. For small devices, either size the
+workload conservatively or set `QueuedMessagesEnabled: false` to rely on
+mochi-mqtt's in-process inflight handling instead.
 
 ## User management
 
