@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	paho "github.com/eclipse/paho.mqtt.golang"
@@ -83,6 +84,17 @@ type Connector struct {
 
 	IncIn  func()
 	IncOut func()
+
+	inCount   atomic.Int64
+	outCount  atomic.Int64
+	metricsMu sync.RWMutex
+	latest    MetricsSnapshot
+}
+
+type MetricsSnapshot struct {
+	MessagesIn  float64   `json:"messagesIn"`
+	MessagesOut float64   `json:"messagesOut"`
+	Timestamp   time.Time `json:"timestamp"`
 }
 
 func NewConnector(name string, cfg Config, publisher LocalPublisher, subBus LocalSubscriber, logger *slog.Logger) *Connector {
@@ -93,6 +105,46 @@ func NewConnector(name string, cfg Config, publisher LocalPublisher, subBus Loca
 }
 
 func (c *Connector) Name() string { return c.name }
+
+func (c *Connector) recordIn() {
+	c.inCount.Add(1)
+	if c.IncIn != nil {
+		c.IncIn()
+	}
+}
+
+func (c *Connector) recordOut() {
+	c.outCount.Add(1)
+	if c.IncOut != nil {
+		c.IncOut()
+	}
+}
+
+func (c *Connector) SampleMetrics(now time.Time, interval time.Duration) MetricsSnapshot {
+	seconds := interval.Seconds()
+	if seconds <= 0 {
+		seconds = 1
+	}
+	snap := MetricsSnapshot{
+		MessagesIn:  float64(c.inCount.Swap(0)) / seconds,
+		MessagesOut: float64(c.outCount.Swap(0)) / seconds,
+		Timestamp:   now.UTC(),
+	}
+	c.metricsMu.Lock()
+	c.latest = snap
+	c.metricsMu.Unlock()
+	return snap
+}
+
+func (c *Connector) LatestMetrics() MetricsSnapshot {
+	c.metricsMu.RLock()
+	snap := c.latest
+	c.metricsMu.RUnlock()
+	if snap.Timestamp.IsZero() {
+		snap.Timestamp = time.Now().UTC()
+	}
+	return snap
+}
 
 // Start dials the remote broker and registers inbound/outbound forwarders.
 func (c *Connector) Start(ctx context.Context) error {
@@ -290,9 +342,7 @@ func (c *Connector) subscribeInbound(client paho.Client) {
 		addr := a // capture
 		tok := client.Subscribe(addr.RemoteTopic, byte(addr.QoS), func(_ paho.Client, m paho.Message) {
 			localTopic := mapInboundTopic(addr, m.Topic())
-			if c.IncIn != nil {
-				c.IncIn()
-			}
+			c.recordIn()
 			if err := c.publisher(localTopic, m.Payload(), addr.Retain, byte(addr.QoS)); err != nil {
 				c.logger.Warn("bridge inbound publish failed", "name", c.name, "topic", localTopic, "err", err)
 			}
@@ -543,9 +593,7 @@ func (c *Connector) publishLocalMessage(addr Address, msg stores.BrokerMessage, 
 		}
 		return false
 	}
-	if c.IncOut != nil {
-		c.IncOut()
-	}
+	c.recordOut()
 	if c.logger != nil {
 		c.logger.Debug("bridge outbound published",
 			"name", c.name,

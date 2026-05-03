@@ -2,12 +2,14 @@ package archive
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/url"
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"monstermq.io/edge/internal/config"
 	"monstermq.io/edge/internal/stores"
@@ -31,6 +33,33 @@ type Manager struct {
 	mu          sync.RWMutex
 	groups      map[string]*Group
 	deployError map[string]string // last deploy error per group name (for the dashboard)
+}
+
+func (m *Manager) StartMetrics(ctx context.Context, store stores.MetricsStore, interval time.Duration) {
+	if interval <= 0 {
+		interval = time.Second
+	}
+	go func() {
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case now := <-t.C:
+				for _, g := range m.Snapshot() {
+					snap := g.SampleMetrics(now, interval)
+					if store == nil {
+						continue
+					}
+					payload, _ := json.Marshal(snap)
+					if err := store.StoreMetrics(ctx, stores.MetricArchive, now.UTC(), g.Name(), string(payload)); err != nil {
+						m.logger.Warn("archive metrics persist failed", "group", g.Name(), "err", err)
+					}
+				}
+			}
+		}
+	}()
 }
 
 func NewManager(cfg *config.Config, storage *stores.Storage,
@@ -444,4 +473,10 @@ func (m *Manager) Snapshot() []*Group {
 		out = append(out, g)
 	}
 	return out
+}
+
+func (m *Manager) Get(name string) *Group {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.groups[name]
 }

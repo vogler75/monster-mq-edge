@@ -31,13 +31,13 @@ type Collector struct {
 }
 
 type BrokerSnapshot struct {
-	MessagesIn       float64 `json:"messagesIn"`
-	MessagesOut      float64 `json:"messagesOut"`
-	MqttClientIn     float64 `json:"mqttClientIn"`
-	MqttClientOut    float64 `json:"mqttClientOut"`
-	NodeSessionCount int     `json:"nodeSessionCount"`
-	SubscriptionCount int    `json:"subscriptionCount"`
-	QueuedMessages   int64   `json:"queuedMessagesCount"`
+	MessagesIn        float64 `json:"messagesIn"`
+	MessagesOut       float64 `json:"messagesOut"`
+	MqttClientIn      float64 `json:"mqttClientIn"`
+	MqttClientOut     float64 `json:"mqttClientOut"`
+	NodeSessionCount  int     `json:"nodeSessionCount"`
+	SubscriptionCount int     `json:"subscriptionCount"`
+	QueuedMessages    int64   `json:"queuedMessagesCount"`
 }
 
 func New(store stores.MetricsStore, nodeID string, interval time.Duration, logger *slog.Logger) *Collector {
@@ -59,6 +59,10 @@ func (c *Collector) Latest() BrokerSnapshot {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.latest
+}
+
+func (c *Collector) Interval() time.Duration {
+	return c.interval
 }
 
 // Start begins the periodic snapshot loop. counts is called every tick to

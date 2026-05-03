@@ -177,6 +177,7 @@ const (
 	MetricBroker     MetricKind = "broker"
 	MetricSession    MetricKind = "session"
 	MetricMqttClient MetricKind = "mqttclient"
+	MetricArchive    MetricKind = "archivegroup"
 )
 
 type MetricsStore interface {

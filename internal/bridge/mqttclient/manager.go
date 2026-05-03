@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"sync"
+	"time"
 
 	"monstermq.io/edge/internal/stores"
 )
@@ -27,6 +28,55 @@ type Manager struct {
 	mu         sync.Mutex
 	connectors map[string]*Connector
 	lastConfig map[string]string // device name → raw JSON last deployed
+
+	incIn  func(int)
+	incOut func(int)
+}
+
+func (m *Manager) SetCounters(incIn, incOut func(int)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.incIn = incIn
+	m.incOut = incOut
+	for _, c := range m.connectors {
+		m.attachCounters(c)
+	}
+}
+
+func (m *Manager) attachCounters(c *Connector) {
+	if m.incIn != nil {
+		c.IncIn = func() { m.incIn(1) }
+	}
+	if m.incOut != nil {
+		c.IncOut = func() { m.incOut(1) }
+	}
+}
+
+func (m *Manager) StartMetrics(ctx context.Context, store stores.MetricsStore, interval time.Duration) {
+	if interval <= 0 {
+		interval = time.Second
+	}
+	go func() {
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case now := <-t.C:
+				for _, c := range m.Snapshot() {
+					snap := c.SampleMetrics(now, interval)
+					if store == nil {
+						continue
+					}
+					payload, _ := json.Marshal(snap)
+					if err := store.StoreMetrics(ctx, stores.MetricMqttClient, now.UTC(), c.Name(), string(payload)); err != nil {
+						m.logger.Warn("mqtt bridge metrics persist failed", "name", c.Name(), "err", err)
+					}
+				}
+			}
+		}
+	}()
 }
 
 func NewManager(store stores.DeviceConfigStore, publisher LocalPublisher, subBus LocalSubscriber, nodeID string, logger *slog.Logger) *Manager {
@@ -57,6 +107,9 @@ func (m *Manager) Start(ctx context.Context) error {
 			cfg.ClientID = "edge-" + m.nodeID + "-" + d.Name
 		}
 		c := NewConnector(d.Name, cfg, m.publisher, m.subBus, m.logger)
+		m.mu.Lock()
+		m.attachCounters(c)
+		m.mu.Unlock()
 		if err := c.Start(m.srvCtx); err != nil {
 			m.logger.Warn("bridge start failed", "name", d.Name, "err", err)
 			continue
@@ -129,6 +182,9 @@ func (m *Manager) Reload(ctx context.Context) error {
 			continue
 		}
 		c := NewConnector(name, cfg, m.publisher, m.subBus, m.logger)
+		m.mu.Lock()
+		m.attachCounters(c)
+		m.mu.Unlock()
 		if err := c.Start(m.srvCtx); err != nil {
 			m.logger.Warn("bridge start failed", "name", name, "err", err)
 			continue
@@ -149,4 +205,20 @@ func (m *Manager) Active() []string {
 		out = append(out, name)
 	}
 	return out
+}
+
+func (m *Manager) Snapshot() []*Connector {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]*Connector, 0, len(m.connectors))
+	for _, c := range m.connectors {
+		out = append(out, c)
+	}
+	return out
+}
+
+func (m *Manager) Get(name string) *Connector {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.connectors[name]
 }

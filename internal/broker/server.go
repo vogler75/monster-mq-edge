@@ -190,6 +190,9 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 	var bridges *mqttclient.Manager
 	if cfg.Features.MqttClient {
 		bridges = mqttclient.NewManager(storage.DeviceConfig, publishFn, &mqttclient.BusAdapter{Bus: bus}, cfg.NodeID, logger)
+		if collector != nil {
+			bridges.SetCounters(collector.IncBridgeIn, collector.IncBridgeOut)
+		}
 	}
 
 	// 7b. WinCC Unified bridge manager (deploys one connector per device,
@@ -240,6 +243,12 @@ func (s *Server) Serve() error {
 			queued, _ = s.storage.Queue.CountAll(ctx)
 			return
 		})
+		if s.archives != nil {
+			s.archives.StartMetrics(s.metricsCtx, s.storage.Metrics, s.collector.Interval())
+		}
+		if s.bridges != nil {
+			s.bridges.StartMetrics(s.metricsCtx, s.storage.Metrics, s.collector.Interval())
+		}
 	}
 	if s.archives != nil {
 		s.archives.RunRetention(context.Background())

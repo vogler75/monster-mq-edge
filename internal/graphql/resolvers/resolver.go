@@ -1320,12 +1320,56 @@ func (r *userInfoResolver) ACLRules(ctx context.Context, obj *generated.UserInfo
 	return out, nil
 }
 
-func (r *archiveGroupInfoResolver) Metrics(ctx context.Context, _ *generated.ArchiveGroupInfo) ([]*generated.ArchiveGroupMetrics, error) {
-	return []*generated.ArchiveGroupMetrics{{Timestamp: nowISO()}}, nil
+func (r *archiveGroupInfoResolver) Metrics(ctx context.Context, obj *generated.ArchiveGroupInfo) ([]*generated.ArchiveGroupMetrics, error) {
+	if r.Archives == nil {
+		return []*generated.ArchiveGroupMetrics{{Timestamp: nowISO()}}, nil
+	}
+	g := r.Archives.Get(obj.Name)
+	if g == nil {
+		return []*generated.ArchiveGroupMetrics{{Timestamp: nowISO()}}, nil
+	}
+	return []*generated.ArchiveGroupMetrics{archiveSnapshotToMetrics(g.LatestMetrics())}, nil
 }
 
-func (r *archiveGroupInfoResolver) MetricsHistory(ctx context.Context, _ *generated.ArchiveGroupInfo, from, to *string, lastMinutes *int) ([]*generated.ArchiveGroupMetrics, error) {
-	return []*generated.ArchiveGroupMetrics{}, nil
+func (r *archiveGroupInfoResolver) MetricsHistory(ctx context.Context, obj *generated.ArchiveGroupInfo, from, to *string, lastMinutes *int) ([]*generated.ArchiveGroupMetrics, error) {
+	now := time.Now()
+	end := now
+	start := now.Add(-24 * time.Hour)
+	if lastMinutes != nil && *lastMinutes > 0 {
+		start = now.Add(-time.Duration(*lastMinutes) * time.Minute)
+	} else {
+		if t, err := parseTimeArg(from); err == nil && t != nil {
+			start = *t
+		}
+		if t, err := parseTimeArg(to); err == nil && t != nil {
+			end = *t
+		}
+	}
+	rows, err := r.Storage.Metrics.GetHistory(ctx, stores.MetricArchive, obj.Name, start, end, 1000)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*generated.ArchiveGroupMetrics, 0, len(rows))
+	for _, row := range rows {
+		var snap archive.MetricsSnapshot
+		_ = json.Unmarshal([]byte(row.Payload), &snap)
+		am := archiveSnapshotToMetrics(snap)
+		am.Timestamp = formatTime(row.Timestamp)
+		out = append(out, am)
+	}
+	return out, nil
+}
+
+func archiveSnapshotToMetrics(s archive.MetricsSnapshot) *generated.ArchiveGroupMetrics {
+	ts := s.Timestamp
+	if ts.IsZero() {
+		ts = time.Now().UTC()
+	}
+	return &generated.ArchiveGroupMetrics{
+		MessagesOut: s.MessagesOut,
+		BufferSize:  s.BufferSize,
+		Timestamp:   formatTime(ts),
+	}
 }
 
 func (r *archiveGroupInfoResolver) ConnectionStatus(ctx context.Context, obj *generated.ArchiveGroupInfo) ([]*generated.NodeConnectionStatus, error) {
@@ -1361,11 +1405,56 @@ func (r *archiveGroupInfoResolver) ConnectionStatus(ctx context.Context, obj *ge
 	return []*generated.NodeConnectionStatus{status}, nil
 }
 
-func (r *mqttClientResolver) Metrics(ctx context.Context, _ *generated.MqttClient) ([]*generated.MqttClientMetrics, error) {
-	return []*generated.MqttClientMetrics{{Timestamp: nowISO()}}, nil
+func (r *mqttClientResolver) Metrics(ctx context.Context, obj *generated.MqttClient) ([]*generated.MqttClientMetrics, error) {
+	if r.Bridges == nil {
+		return []*generated.MqttClientMetrics{{Timestamp: nowISO()}}, nil
+	}
+	c := r.Bridges.Get(obj.Name)
+	if c == nil {
+		return []*generated.MqttClientMetrics{{Timestamp: nowISO()}}, nil
+	}
+	return []*generated.MqttClientMetrics{mqttClientSnapshotToMetrics(c.LatestMetrics())}, nil
 }
-func (r *mqttClientResolver) MetricsHistory(ctx context.Context, _ *generated.MqttClient, from, to *string, lastMinutes *int) ([]*generated.MqttClientMetrics, error) {
-	return []*generated.MqttClientMetrics{}, nil
+
+func (r *mqttClientResolver) MetricsHistory(ctx context.Context, obj *generated.MqttClient, from, to *string, lastMinutes *int) ([]*generated.MqttClientMetrics, error) {
+	now := time.Now()
+	end := now
+	start := now.Add(-24 * time.Hour)
+	if lastMinutes != nil && *lastMinutes > 0 {
+		start = now.Add(-time.Duration(*lastMinutes) * time.Minute)
+	} else {
+		if t, err := parseTimeArg(from); err == nil && t != nil {
+			start = *t
+		}
+		if t, err := parseTimeArg(to); err == nil && t != nil {
+			end = *t
+		}
+	}
+	rows, err := r.Storage.Metrics.GetHistory(ctx, stores.MetricMqttClient, obj.Name, start, end, 1000)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*generated.MqttClientMetrics, 0, len(rows))
+	for _, row := range rows {
+		var snap mqttclient.MetricsSnapshot
+		_ = json.Unmarshal([]byte(row.Payload), &snap)
+		m := mqttClientSnapshotToMetrics(snap)
+		m.Timestamp = formatTime(row.Timestamp)
+		out = append(out, m)
+	}
+	return out, nil
+}
+
+func mqttClientSnapshotToMetrics(s mqttclient.MetricsSnapshot) *generated.MqttClientMetrics {
+	ts := s.Timestamp
+	if ts.IsZero() {
+		ts = time.Now().UTC()
+	}
+	return &generated.MqttClientMetrics{
+		MessagesIn:  s.MessagesIn,
+		MessagesOut: s.MessagesOut,
+		Timestamp:   formatTime(ts),
+	}
 }
 
 // Grouped mutation resolvers -----------------------------------------------

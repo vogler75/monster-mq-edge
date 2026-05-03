@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"monstermq.io/edge/internal/stores"
@@ -26,6 +27,16 @@ type Group struct {
 	stopOnce sync.Once
 	flushDur time.Duration
 	closers  []func() error
+
+	outCount  atomic.Int64
+	metricsMu sync.RWMutex
+	latest    MetricsSnapshot
+}
+
+type MetricsSnapshot struct {
+	MessagesOut float64   `json:"messagesOut"`
+	BufferSize  int       `json:"bufferSize"`
+	Timestamp   time.Time `json:"timestamp"`
 }
 
 func NewGroup(cfg stores.ArchiveGroupConfig, lastVal stores.MessageStore, archive stores.MessageArchive, logger *slog.Logger, closers ...func() error) *Group {
@@ -84,6 +95,7 @@ func (g *Group) Matches(topic string, retain bool) bool {
 }
 
 func (g *Group) Submit(msg stores.BrokerMessage) {
+	g.outCount.Add(1)
 	g.mu.Lock()
 	g.pending = append(g.pending, msg)
 	pendingLen := len(g.pending)
@@ -94,6 +106,39 @@ func (g *Group) Submit(msg stores.BrokerMessage) {
 		default:
 		}
 	}
+}
+
+func (g *Group) BufferSize() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return len(g.pending)
+}
+
+func (g *Group) SampleMetrics(now time.Time, interval time.Duration) MetricsSnapshot {
+	seconds := interval.Seconds()
+	if seconds <= 0 {
+		seconds = 1
+	}
+	snap := MetricsSnapshot{
+		MessagesOut: float64(g.outCount.Swap(0)) / seconds,
+		BufferSize:  g.BufferSize(),
+		Timestamp:   now.UTC(),
+	}
+	g.metricsMu.Lock()
+	g.latest = snap
+	g.metricsMu.Unlock()
+	return snap
+}
+
+func (g *Group) LatestMetrics() MetricsSnapshot {
+	g.metricsMu.RLock()
+	snap := g.latest
+	g.metricsMu.RUnlock()
+	snap.BufferSize = g.BufferSize()
+	if snap.Timestamp.IsZero() {
+		snap.Timestamp = time.Now().UTC()
+	}
+	return snap
 }
 
 func (g *Group) run() {
