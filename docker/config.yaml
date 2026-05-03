@@ -15,7 +15,7 @@ SQLite:
   Path: /cfg-data/monstermq.db
 
 UserManagement:
-  Enabled: false
+  Enabled: true
   PasswordAlgorithm: BCRYPT
   AnonymousEnabled: true
   AclCacheEnabled: true
