@@ -10,8 +10,9 @@ the JVM/Kotlin MQTT broker. The mission is a **single-binary, single-node**
 broker for edge devices (Raspberry Pi 4/5 class) that talks to the central
 MonsterMQ over MQTT.
 
-The full design rationale is in `dev/plans/PLAN-broker-go.md` (gitignored;
-read it if you have access). The short version:
+The original design rationale is archived in `dev/done/PLAN-broker-go.md`.
+Active plans live under `dev/plans/`; completed plans move to `dev/done/`.
+The short version:
 
 - Native MQTT broker via [`mochi-mqtt/server`](https://github.com/mochi-mqtt/server).
 - GraphQL API via [`99designs/gqlgen`](https://github.com/99designs/gqlgen).
@@ -99,8 +100,8 @@ internal/
 test/integration/          # black-box tests (Go; drive the full broker)
 config.yaml.example        # sample config — Features, no Bridges/Dashboard
 yaml-json-schema.json      # draft-07 schema for config.yaml (root of repo)
-dev/plans/                 # gitignored design docs (PLAN-broker-go.md,
-                           # PLAN-inline-mochi.md)
+dev/plans/                 # active design/implementation plans
+dev/done/                  # completed or archived plans
 ```
 
 ## Conventions and rules
