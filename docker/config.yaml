@@ -7,9 +7,11 @@ WSS:  { Enabled: false, Port: 8884, Address: "0.0.0.0" }
 MaxMessageSize: 1048576
 
 DefaultStoreType: SQLITE
+
+ConfigStoreType: SQLITE
 SessionStoreType: SQLITE
 RetainedStoreType: MEMORY
-ConfigStoreType: SQLITE
+QueueStoreType: MEMORY
 
 SQLite:
   Path: /cfg-data/monstermq.db
@@ -22,6 +24,7 @@ UserManagement:
 
 Metrics:
   Enabled: true
+  StoreType: MEMORY
   CollectionIntervalSeconds: 1
   RetentionHours: 168
 
@@ -35,7 +38,9 @@ GraphQL:
   Port: 4000
 
 Features:
+  DeviceImportExport: true
   MqttClient: true
   WinCCUa: true
+  WinCCOa: true
 
-QueuedMessagesEnabled: true
+QueuedMessagesEnabled: false
