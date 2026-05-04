@@ -1,0 +1,23 @@
+version: '2.4'
+services:
+  monstermq:
+    restart: unless-stopped
+    image: 'rocworks/monstermq-edge:latest'
+    hostname: monstermq
+    volumes:
+      - '/tmp/siemens/automation:/tmp/automation'
+    ports:
+      - '4000:4000'
+      - '1883:1883'
+      - '8883:8883'
+      - '9000:9000'
+      - '9001:9001'
+    expose:
+      - '4000'
+      - '1883'
+      - '8883'
+      - '9000'
+      - '9001'
+    mem_limit: 256mb
+    cpu_count: 2
+
