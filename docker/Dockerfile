@@ -4,6 +4,7 @@ FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS build
 ARG TARGETOS
 ARG TARGETARCH
 ARG TARGETVARIANT
+ARG VERSION=dev
 
 WORKDIR /src
 RUN apk add --no-cache ca-certificates
@@ -15,7 +16,9 @@ RUN mkdir -p /out && \
       armv7) export GOARM=7 ;; \
     esac && \
     CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" \
-      go build -trimpath -ldflags="-s -w" -o /out/monstermq-edge ./cmd/monstermq-edge
+      go build -trimpath \
+        -ldflags="-s -w -X monstermq.io/edge/internal/version.Version=${VERSION}" \
+        -o /out/monstermq-edge ./cmd/monstermq-edge
 
 FROM alpine:3
 
