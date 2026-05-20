@@ -5,6 +5,7 @@ ARG TARGETARCH
 
 WORKDIR /src
 COPY go.mod go.sum ./
+COPY mochi-mqtt-server/go.mod mochi-mqtt-server/go.sum ./mochi-mqtt-server/
 RUN go mod download
 COPY . .
 

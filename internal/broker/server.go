@@ -87,7 +87,7 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 	}
 
 	// 2. Auth cache
-	authCache := mauth.NewCache(storage.Users, cfg.UserManagement.AnonymousEnabled || !cfg.UserManagement.Enabled)
+	authCache := mauth.NewCache(storage.Users, cfg.UserManagement.AnonymousEnabled || !cfg.UserManagement.Enabled, cfg.UserManagement.AclCheckOnSub())
 	if err := authCache.Refresh(ctx); err != nil {
 		logger.Warn("user cache refresh failed", "err", err)
 	}

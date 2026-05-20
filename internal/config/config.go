@@ -76,10 +76,19 @@ type MongoDBConfig struct {
 }
 
 type UserManagementConfig struct {
-	Enabled           bool   `yaml:"Enabled"`
-	PasswordAlgorithm string `yaml:"PasswordAlgorithm"`
-	AnonymousEnabled  bool   `yaml:"AnonymousEnabled"`
-	AclCacheEnabled   bool   `yaml:"AclCacheEnabled"`
+	Enabled                bool   `yaml:"Enabled"`
+	PasswordAlgorithm      string `yaml:"PasswordAlgorithm"`
+	AnonymousEnabled       bool   `yaml:"AnonymousEnabled"`
+	AclCacheEnabled        bool   `yaml:"AclCacheEnabled"`
+	AclCheckOnSubscription *bool  `yaml:"AclCheckOnSubscription,omitempty"`
+}
+
+// AclCheckOnSub returns the effective value: default true (subscribe-time check).
+func (u *UserManagementConfig) AclCheckOnSub() bool {
+	if u.AclCheckOnSubscription == nil {
+		return true
+	}
+	return *u.AclCheckOnSubscription
 }
 
 type MetricsConfig struct {

@@ -60,7 +60,8 @@
         "Enabled":           { "type": "boolean", "description": "When false, all clients are accepted (anonymous)." },
         "PasswordAlgorithm": { "type": "string", "enum": ["BCRYPT", "PLAIN"], "default": "BCRYPT" },
         "AnonymousEnabled":  { "type": "boolean", "description": "When true, missing credentials are allowed even with UserManagement.Enabled=true." },
-        "AclCacheEnabled":   { "type": "boolean" }
+        "AclCacheEnabled":   { "type": "boolean" },
+        "AclCheckOnSubscription": { "type": "boolean", "description": "When false, wildcard subscriptions (e.g. #) are allowed and ACL is enforced at message delivery time instead. Default true." }
       }
     },
     "Metrics": {
