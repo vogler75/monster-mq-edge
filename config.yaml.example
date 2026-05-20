@@ -29,6 +29,7 @@ UserManagement:
   PasswordAlgorithm: BCRYPT
   AnonymousEnabled: true
   AclCacheEnabled: true
+  # AclCheckOnSubscription: false  # When false, wildcard subscriptions are allowed; ACL enforced at delivery time.
 
 Metrics:
   Enabled: true

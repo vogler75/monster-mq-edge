@@ -12,19 +12,21 @@ import (
 
 // Cache holds users and ACL rules in memory and refreshes from the UserStore.
 type Cache struct {
-	store        stores.UserStore
-	mu           sync.RWMutex
-	users        map[string]stores.User
-	rulesByUser  map[string][]stores.AclRule
-	anonymousAllow bool
+	store              stores.UserStore
+	mu                 sync.RWMutex
+	users              map[string]stores.User
+	rulesByUser        map[string][]stores.AclRule
+	anonymousAllow     bool
+	aclCheckOnSubscribe bool
 }
 
-func NewCache(store stores.UserStore, anonymousAllow bool) *Cache {
+func NewCache(store stores.UserStore, anonymousAllow bool, aclCheckOnSubscribe bool) *Cache {
 	return &Cache{
-		store:          store,
-		users:          map[string]stores.User{},
-		rulesByUser:    map[string][]stores.AclRule{},
-		anonymousAllow: anonymousAllow,
+		store:              store,
+		users:              map[string]stores.User{},
+		rulesByUser:        map[string][]stores.AclRule{},
+		anonymousAllow:     anonymousAllow,
+		aclCheckOnSubscribe: aclCheckOnSubscribe,
 	}
 }
 
@@ -91,6 +93,11 @@ func (c *Cache) lookup(username string) (stores.User, bool) {
 
 // Allow returns true if the user is permitted to publish (write=true) or subscribe
 // (write=false) to topic.
+//
+// When aclCheckOnSubscribe is false, subscribe-time checks (write=false with a
+// wildcard topic) always pass. Delivery-time checks (write=false with a concrete
+// topic) are still evaluated against ACL rules — mochi calls OnACLCheck in
+// publishToClient with the actual topic before delivering each message.
 func (c *Cache) Allow(username, topic string, write bool) bool {
 	if username == "" {
 		return c.anonymousAllow
@@ -108,6 +115,12 @@ func (c *Cache) Allow(username, topic string, write bool) bool {
 	if !write && !u.CanSubscribe {
 		return false
 	}
+	// When AclCheckOnSubscription is false and this is a read/subscribe check
+	// with a wildcard filter, skip ACL enforcement here. Delivery-time checks
+	// (concrete topics) will still be enforced below.
+	if !write && !c.aclCheckOnSubscribe && containsWildcard(topic) {
+		return true
+	}
 	c.mu.RLock()
 	rules := c.rulesByUser[username]
 	c.mu.RUnlock()
@@ -123,6 +136,10 @@ func (c *Cache) Allow(username, topic string, write bool) bool {
 		}
 	}
 	return false
+}
+
+func containsWildcard(topic string) bool {
+	return strings.Contains(topic, "#") || strings.Contains(topic, "+")
 }
 
 func topicMatches(pattern, topic string) bool {
