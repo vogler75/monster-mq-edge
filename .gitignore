@@ -7,3 +7,6 @@ data/
 .vscode/
 /config.yaml
 .DS_Store
+zenoh-c/
+zenoh-c-install/
+*.swp

@@ -28,6 +28,7 @@ import (
 	storepg "monstermq.io/edge/internal/stores/postgres"
 	storesqlite "monstermq.io/edge/internal/stores/sqlite"
 	"monstermq.io/edge/internal/topic"
+	"monstermq.io/edge/internal/federation/zenoh"
 )
 
 // Server is the top-level lifecycle holder for the edge broker.
@@ -46,6 +47,7 @@ type Server struct {
 	winCCOa     *winccoa.Manager
 	gqlSrv      *gql.Server
 	hostMonitor *hostinfo.Collector
+	zenoh       *zenoh.Engine
 	metricsCtx  context.Context
 	metricsStop context.CancelFunc
 }
@@ -151,6 +153,15 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 		return nil, fmt.Errorf("add storage hook: %w", err)
 	}
 
+	var zenohSrv *zenoh.Engine
+	if cfg.Features.Zenoh && cfg.Zenoh.Enabled {
+		zenohSrv = zenoh.NewEngine(cfg, cfg.NodeID, server, storage, archives, logger)
+		zenohHook := NewZenohHook(zenohSrv, cfg.NodeID, logger)
+		if err := server.AddHook(zenohHook, nil); err != nil {
+			return nil, fmt.Errorf("add zenoh hook: %w", err)
+		}
+	}
+
 	if cfg.QueuedMessagesEnabled {
 		logger.Info("queued messages: enabled", "store", cfg.QueueStore(), "max", cfg.GetMaxQueueMessages())
 		if err := server.AddHook(NewQueueHook(storage, subs, server, logger, cfg.GetMaxQueueMessages()), nil); err != nil {
@@ -250,7 +261,7 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 		cfg: cfg, logger: logger, mochi: server,
 		storage: storage, bus: bus, subs: subs, archives: archives, authCache: authCache,
 		collector: collector, bridges: bridges, winCCUa: winCCUa, winCCOa: winCCOa, gqlSrv: gqlSrv,
-		hostMonitor: hostMonitor,
+		hostMonitor: hostMonitor, zenoh: zenohSrv,
 	}, nil
 }
 
@@ -380,6 +391,12 @@ func (s *Server) Serve() error {
 			}
 		}()
 	}
+	if s.zenoh != nil {
+		if err := s.zenoh.Start(context.Background()); err != nil {
+			s.logger.Error("unable to start Zenoh federation", "err", err)
+			return err
+		}
+	}
 	return s.mochi.Serve()
 }
 
@@ -409,6 +426,9 @@ func (s *Server) Close() error {
 	}
 	if s.archives != nil {
 		s.archives.Stop()
+	}
+	if s.zenoh != nil {
+		_ = s.zenoh.Stop()
 	}
 	if err := s.mochi.Close(); err != nil {
 		return err

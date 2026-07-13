@@ -19,8 +19,10 @@ require (
 )
 
 require (
+	github.com/BooleanCat/option v0.1.0 // indirect
 	github.com/agnivade/levenshtein v1.2.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/eclipse-zenoh/zenoh-go v1.9.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/goccy/go-yaml v1.19.2 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect

@@ -128,6 +128,23 @@ type FeaturesConfig struct {
 	WinCCUa            bool `yaml:"WinCCUa"`
 	WinCCOa            bool `yaml:"WinCCOa"`
 	DeviceImportExport bool `yaml:"DeviceImportExport"`
+	Zenoh              bool `yaml:"Zenoh"`
+}
+
+type DeduplicationConfig struct {
+	CacheSize  int   `yaml:"CacheSize"`
+	TtlSeconds int64 `yaml:"TtlSeconds"`
+}
+
+type ZenohConfig struct {
+	Enabled       bool                `yaml:"Enabled"`
+	Mode          string              `yaml:"Mode"` // peer or client
+	Connect       []string            `yaml:"Connect"`
+	RemotePrefix  string              `yaml:"RemotePrefix"`
+	LocalPrefix   string              `yaml:"LocalPrefix"`
+	Allow         []string            `yaml:"Allow"`
+	Deny          []string            `yaml:"Deny"`
+	Deduplication DeduplicationConfig `yaml:"Deduplication"`
 }
 
 type Config struct {
@@ -153,6 +170,7 @@ type Config struct {
 	Logging        LoggingConfig        `yaml:"Logging"`
 	GraphQL        GraphQLConfig        `yaml:"GraphQL"`
 	Features       FeaturesConfig       `yaml:"Features"`
+	Zenoh          ZenohConfig          `yaml:"Zenoh"`
 	HostMonitoring HostMonitoringConfig `yaml:"HostMonitoring"`
 
 	// QueuedMessagesEnabled selects how messages for offline persistent (clean=false)
@@ -186,7 +204,19 @@ func Default() *Config {
 		Metrics:               MetricsConfig{Enabled: true, CollectionIntervalSeconds: 1, RetentionHours: 168, MaxHistoryRows: 3600},
 		Logging:               LoggingConfig{Level: "INFO", MqttSyslogEnabled: false, RingBufferSize: 1000},
 		GraphQL:               GraphQLConfig{Enabled: true, Port: 8080},
-		Features:              FeaturesConfig{MqttClient: false, WinCCUa: false, WinCCOa: false, DeviceImportExport: false}, // Note: actually features default to false, we don't have to change features list but keep default format clean
+		Features: FeaturesConfig{MqttClient: false, WinCCUa: false, WinCCOa: false, DeviceImportExport: false, Zenoh: false},
+		Zenoh: ZenohConfig{
+			Enabled:      false,
+			Mode:         "peer",
+			RemotePrefix: "monstermq/mqtt",
+			LocalPrefix:  "",
+			Allow:        []string{"#"},
+			Deny:         []string{"$SYS/#"},
+			Deduplication: DeduplicationConfig{
+				CacheSize:  100000,
+				TtlSeconds: 300,
+			},
+		},
 		HostMonitoring: HostMonitoringConfig{
 			Enabled:         false,
 			BaseTopic:       "nodes/{NodeId}/host",
@@ -281,6 +311,20 @@ func (c *Config) Validate() error {
 		case StoreNone, StoreMemory, StoreSQLite, StorePostgres, StoreMongoDB:
 		default:
 			return fmt.Errorf("invalid Metrics.StoreType %q (must be one of NONE, MEMORY, SQLITE, POSTGRES, MONGODB)", c.Metrics.StoreType)
+		}
+	}
+	if c.Features.Zenoh && c.Zenoh.Enabled {
+		if c.Zenoh.Mode != "peer" && c.Zenoh.Mode != "client" {
+			return fmt.Errorf("Zenoh.Mode must be 'peer' or 'client'")
+		}
+		if c.Zenoh.Mode == "client" && len(c.Zenoh.Connect) == 0 {
+			return fmt.Errorf("Zenoh.Connect requires at least one locator in client mode")
+		}
+		if c.Zenoh.Deduplication.CacheSize <= 0 {
+			return fmt.Errorf("Zenoh.Deduplication.CacheSize must be greater than zero")
+		}
+		if c.Zenoh.Deduplication.TtlSeconds <= 0 {
+			return fmt.Errorf("Zenoh.Deduplication.TtlSeconds must be greater than zero")
 		}
 	}
 	if c.HostMonitoring.Enabled {

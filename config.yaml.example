@@ -54,6 +54,23 @@ Features:
   WinCCUa: false
   WinCCOa: false
   DeviceImportExport: true
+  Zenoh: false
+
+Zenoh:
+  Enabled: false
+  # Mode can be "peer" (multicast auto-discovery on LAN) or "client" (requires Connect router list)
+  Mode: peer
+  RemotePrefix: monstermq/mqtt
+  LocalPrefix: ""
+  Allow:
+    - "#"
+  Deny:
+    - "$SYS/#"
+  Deduplication:
+    CacheSize: 100000
+    TtlSeconds: 300
+  # Connect:
+  #   - tcp/zenoh-router.example:7447
 
 HostMonitoring:
   Enabled: false

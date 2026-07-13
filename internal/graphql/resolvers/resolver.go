@@ -92,6 +92,9 @@ func (r *Resolver) enabledFeatures() []string {
 	if r.Cfg.Features.DeviceImportExport {
 		out = append(out, "DeviceImportExport")
 	}
+	if r.Cfg.Features.Zenoh {
+		out = append(out, "Zenoh")
+	}
 	return out
 }
 
