@@ -174,13 +174,13 @@ export COPYFILE_DISABLE=1
 # Generate control.tar.gz
 (
     cd "$CONTROL_DIR"
-    tar --format=ustar --no-xattrs --no-acls --uname root --gname root -czf "../control.tar.gz" .
+    tar --format=ustar --no-xattrs --no-acls --owner=root --group=root -czf "../control.tar.gz" .
 )
 
 # Generate data.tar.gz
 (
     cd "$DATA_DIR"
-    tar --format=ustar --no-xattrs --no-acls --uname root --gname root -czf "../data.tar.gz" .
+    tar --format=ustar --no-xattrs --no-acls --owner=root --group=root -czf "../data.tar.gz" .
 )
 
 # Create debian-binary specification file
