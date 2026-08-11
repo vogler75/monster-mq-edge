@@ -43,6 +43,11 @@ type ArchiveGroupInfo struct {
 	LastValRetention       *string                 `json:"lastValRetention,omitempty"`
 	ArchiveRetention       *string                 `json:"archiveRetention,omitempty"`
 	PurgeInterval          *string                 `json:"purgeInterval,omitempty"`
+	QueueType              *string                 `json:"queueType,omitempty"`
+	QueueSize              *int                    `json:"queueSize,omitempty"`
+	BulkSize               *int                    `json:"bulkSize,omitempty"`
+	BulkTimeoutMs          *int64                  `json:"bulkTimeoutMs,omitempty"`
+	QueueDiskPath          *string                 `json:"queueDiskPath,omitempty"`
 	CreatedAt              *string                 `json:"createdAt,omitempty"`
 	UpdatedAt              *string                 `json:"updatedAt,omitempty"`
 	ConnectionStatus       []*NodeConnectionStatus `json:"connectionStatus"`
@@ -187,6 +192,11 @@ type CreateArchiveGroupInput struct {
 	LastValRetention       *string            `json:"lastValRetention,omitempty"`
 	ArchiveRetention       *string            `json:"archiveRetention,omitempty"`
 	PurgeInterval          *string            `json:"purgeInterval,omitempty"`
+	QueueType              *string            `json:"queueType,omitempty"`
+	QueueSize              *int               `json:"queueSize,omitempty"`
+	BulkSize               *int               `json:"bulkSize,omitempty"`
+	BulkTimeoutMs          *int64             `json:"bulkTimeoutMs,omitempty"`
+	QueueDiskPath          *string            `json:"queueDiskPath,omitempty"`
 }
 
 type CreateDatabaseConnectionInput struct {
@@ -582,6 +592,11 @@ type UpdateArchiveGroupInput struct {
 	LastValRetention       *string             `json:"lastValRetention,omitempty"`
 	ArchiveRetention       *string             `json:"archiveRetention,omitempty"`
 	PurgeInterval          *string             `json:"purgeInterval,omitempty"`
+	QueueType              *string             `json:"queueType,omitempty"`
+	QueueSize              *int                `json:"queueSize,omitempty"`
+	BulkSize               *int                `json:"bulkSize,omitempty"`
+	BulkTimeoutMs          *int64              `json:"bulkTimeoutMs,omitempty"`
+	QueueDiskPath          *string             `json:"queueDiskPath,omitempty"`
 }
 
 type UpdateDatabaseConnectionInput struct {

@@ -8,16 +8,20 @@ import (
 	"sync/atomic"
 	"time"
 
+	"monstermq.io/edge/internal/queue"
 	"monstermq.io/edge/internal/stores"
 )
 
 // Group is one archive group: it owns a last-value MessageStore and a
 // MessageArchive. Incoming messages that match any of the group's topic filters
-// are buffered and flushed on a tick to amortize disk I/O.
+// are buffered and flushed on a tick to amortize disk I/O. If configured with a
+// QueueType ("MEMORY" or "DISK"), store-and-forward is used so messages are not lost
+// if the target archive store is temporarily unavailable.
 type Group struct {
 	cfg      stores.ArchiveGroupConfig
 	lastVal  stores.MessageStore
 	archive  stores.MessageArchive
+	queue    queue.MessageQueue
 	logger   *slog.Logger
 	mu       sync.Mutex
 	pending  []stores.BrokerMessage
@@ -40,7 +44,7 @@ type MetricsSnapshot struct {
 }
 
 func NewGroup(cfg stores.ArchiveGroupConfig, lastVal stores.MessageStore, archive stores.MessageArchive, logger *slog.Logger, closers ...func() error) *Group {
-	return &Group{
+	g := &Group{
 		cfg:      cfg,
 		lastVal:  lastVal,
 		archive:  archive,
@@ -51,6 +55,45 @@ func NewGroup(cfg stores.ArchiveGroupConfig, lastVal stores.MessageStore, archiv
 		flushDur: 250 * time.Millisecond,
 		closers:  closers,
 	}
+
+	qType := strings.ToUpper(strings.TrimSpace(cfg.QueueType))
+	if qType == "" || qType == "NONE" {
+		g.queue = nil
+	} else if qType == "MEMORY" || qType == "DISK" {
+		size := cfg.QueueSize
+		if size <= 0 {
+			size = 100000
+		}
+		blockSize := cfg.BulkSize
+		if blockSize <= 0 {
+			blockSize = 4000
+		}
+		pollTimeout := 250 * time.Millisecond
+		if cfg.BulkTimeoutMs > 0 {
+			pollTimeout = time.Duration(cfg.BulkTimeoutMs) * time.Millisecond
+		}
+		diskPath := strings.TrimSpace(cfg.QueueDiskPath)
+		if diskPath == "" {
+			diskPath = "data/queue"
+		}
+		if qType == "DISK" {
+			q, err := queue.NewDiskQueue("archive", cfg.Name, logger, size, blockSize, pollTimeout, diskPath)
+			if err != nil {
+				if logger != nil {
+					logger.Warn("failed to initialize disk queue for archive group; falling back to unbuffered", "group", cfg.Name, "err", err)
+				}
+			} else {
+				g.queue = q
+			}
+		} else {
+			g.queue = queue.NewMemoryQueue(logger, size, blockSize, pollTimeout)
+		}
+		if g.queue != nil && logger != nil {
+			logger.Info("archive group store-and-forward queue initialized", "group", cfg.Name, "type", qType, "capacity", size)
+		}
+	}
+
+	return g
 }
 
 func (g *Group) Name() string                      { return g.cfg.Name }
@@ -67,12 +110,19 @@ func (g *Group) Stop() {
 	g.stopOnce.Do(func() {
 		close(g.stopCh)
 		<-g.doneCh
+		if g.queue != nil {
+			if err := g.queue.Close(); err != nil && g.logger != nil {
+				g.logger.Warn("archive group queue close failed", "group", g.cfg.Name, "err", err)
+			}
+		}
 		for _, closeFn := range g.closers {
 			if closeFn == nil {
 				continue
 			}
 			if err := closeFn(); err != nil {
-				g.logger.Warn("archive group close failed", "group", g.cfg.Name, "err", err)
+				if g.logger != nil {
+					g.logger.Warn("archive group close failed", "group", g.cfg.Name, "err", err)
+				}
 			}
 		}
 	})
@@ -96,6 +146,20 @@ func (g *Group) Matches(topic string, retain bool) bool {
 
 func (g *Group) Submit(msg stores.BrokerMessage) {
 	g.outCount.Add(1)
+	if g.lastVal != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		if err := g.lastVal.AddAll(ctx, []stores.BrokerMessage{msg}); err != nil && g.logger != nil {
+			g.logger.Warn("archive lastval write failed", "group", g.cfg.Name, "err", err)
+		}
+		cancel()
+	}
+	if g.archive == nil {
+		return
+	}
+	if g.queue != nil {
+		g.queue.Add(msg)
+		return
+	}
 	g.mu.Lock()
 	g.pending = append(g.pending, msg)
 	pendingLen := len(g.pending)
@@ -109,6 +173,9 @@ func (g *Group) Submit(msg stores.BrokerMessage) {
 }
 
 func (g *Group) BufferSize() int {
+	if g.queue != nil {
+		return g.queue.Size()
+	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return len(g.pending)
@@ -159,6 +226,10 @@ func (g *Group) run() {
 }
 
 func (g *Group) flush() {
+	if g.queue != nil {
+		g.flushQueue()
+		return
+	}
 	g.mu.Lock()
 	if len(g.pending) == 0 {
 		g.mu.Unlock()
@@ -171,16 +242,34 @@ func (g *Group) flush() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if g.lastVal != nil {
-		if err := g.lastVal.AddAll(ctx, batch); err != nil {
-			g.logger.Warn("archive lastval write failed", "group", g.cfg.Name, "n", len(batch), "err", err)
-		}
-	}
 	if g.archive != nil {
-		if err := g.archive.AddHistory(ctx, batch); err != nil {
+		if err := g.archive.AddHistory(ctx, batch); err != nil && g.logger != nil {
 			g.logger.Warn("archive history write failed", "group", g.cfg.Name, "n", len(batch), "err", err)
 		}
 	}
+}
+
+func (g *Group) flushQueue() {
+	var batch []stores.BrokerMessage
+	count := g.queue.PollBlock(func(msg stores.BrokerMessage) {
+		batch = append(batch, msg)
+	})
+	if count == 0 {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if g.archive != nil {
+		if err := g.archive.AddHistory(ctx, batch); err != nil {
+			if g.logger != nil {
+				g.logger.Warn("archive history write failed; will retry via store-and-forward", "group", g.cfg.Name, "n", len(batch), "err", err)
+			}
+			return
+		}
+	}
+	g.queue.PollCommit()
 }
 
 func matchTopic(pattern, topic string) bool {

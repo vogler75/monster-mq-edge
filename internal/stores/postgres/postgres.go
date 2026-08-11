@@ -1102,11 +1102,31 @@ func (a *ArchiveConfigStore) EnsureTable(ctx context.Context) error {
         purge_interval TEXT,
         created_at TIMESTAMPTZ DEFAULT NOW(),
         updated_at TIMESTAMPTZ DEFAULT NOW(),
-        payload_format TEXT DEFAULT 'DEFAULT'
+        payload_format TEXT DEFAULT 'DEFAULT',
+        queue_type TEXT DEFAULT 'NONE',
+        queue_size INTEGER DEFAULT 100000,
+        bulk_size INTEGER DEFAULT 4000,
+        bulk_timeout_ms INTEGER DEFAULT 250,
+        queue_disk_path TEXT DEFAULT 'data/queue'
     )`); err != nil {
 		return err
 	}
 	if _, err := a.db.pool.Exec(ctx, `ALTER TABLE archiveconfigs ADD COLUMN IF NOT EXISTS database_connection_name TEXT`); err != nil {
+		return err
+	}
+	if _, err := a.db.pool.Exec(ctx, `ALTER TABLE archiveconfigs ADD COLUMN IF NOT EXISTS queue_type TEXT DEFAULT 'NONE'`); err != nil {
+		return err
+	}
+	if _, err := a.db.pool.Exec(ctx, `ALTER TABLE archiveconfigs ADD COLUMN IF NOT EXISTS queue_size INTEGER DEFAULT 100000`); err != nil {
+		return err
+	}
+	if _, err := a.db.pool.Exec(ctx, `ALTER TABLE archiveconfigs ADD COLUMN IF NOT EXISTS bulk_size INTEGER DEFAULT 4000`); err != nil {
+		return err
+	}
+	if _, err := a.db.pool.Exec(ctx, `ALTER TABLE archiveconfigs ADD COLUMN IF NOT EXISTS bulk_timeout_ms INTEGER DEFAULT 250`); err != nil {
+		return err
+	}
+	if _, err := a.db.pool.Exec(ctx, `ALTER TABLE archiveconfigs ADD COLUMN IF NOT EXISTS queue_disk_path TEXT DEFAULT 'data/queue'`); err != nil {
 		return err
 	}
 	_, err := a.db.pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS databaseconnections (
@@ -1125,7 +1145,7 @@ func (a *ArchiveConfigStore) EnsureTable(ctx context.Context) error {
 }
 func (a *ArchiveConfigStore) GetAll(ctx context.Context) ([]stores.ArchiveGroupConfig, error) {
 	rows, err := a.db.pool.Query(ctx,
-		`SELECT name, enabled, topic_filter, retained_only, last_val_type, archive_type, database_connection_name, last_val_retention, archive_retention, purge_interval, payload_format FROM archiveconfigs ORDER BY name`)
+		`SELECT name, enabled, topic_filter, retained_only, last_val_type, archive_type, database_connection_name, last_val_retention, archive_retention, purge_interval, payload_format, queue_type, queue_size, bulk_size, bulk_timeout_ms, queue_disk_path FROM archiveconfigs ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -1144,7 +1164,7 @@ func (a *ArchiveConfigStore) GetAll(ctx context.Context) ([]stores.ArchiveGroupC
 }
 func (a *ArchiveConfigStore) Get(ctx context.Context, name string) (*stores.ArchiveGroupConfig, error) {
 	row := a.db.pool.QueryRow(ctx,
-		`SELECT name, enabled, topic_filter, retained_only, last_val_type, archive_type, database_connection_name, last_val_retention, archive_retention, purge_interval, payload_format FROM archiveconfigs WHERE name=$1`, name)
+		`SELECT name, enabled, topic_filter, retained_only, last_val_type, archive_type, database_connection_name, last_val_retention, archive_retention, purge_interval, payload_format, queue_type, queue_size, bulk_size, bulk_timeout_ms, queue_disk_path FROM archiveconfigs WHERE name=$1`, name)
 	return scanArchiveCfg(row)
 }
 func scanArchiveCfg(scanner pgx.Row) (*stores.ArchiveGroupConfig, error) {
@@ -1154,8 +1174,13 @@ func scanArchiveCfg(scanner pgx.Row) (*stores.ArchiveGroupConfig, error) {
 		topicFilter, lvType, arType    string
 		dbConn, lvRet, arRet, purgeInt *string
 		payloadFormat                  *string
+		qType                          *string
+		qSize                          *int
+		bSize                          *int
+		bTimeout                       *int64
+		qDiskPath                      *string
 	)
-	if err := scanner.Scan(&cfg.Name, &enabled, &topicFilter, &retainedOnly, &lvType, &arType, &dbConn, &lvRet, &arRet, &purgeInt, &payloadFormat); err != nil {
+	if err := scanner.Scan(&cfg.Name, &enabled, &topicFilter, &retainedOnly, &lvType, &arType, &dbConn, &lvRet, &arRet, &purgeInt, &payloadFormat, &qType, &qSize, &bSize, &bTimeout, &qDiskPath); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
@@ -1182,6 +1207,25 @@ func scanArchiveCfg(scanner pgx.Row) (*stores.ArchiveGroupConfig, error) {
 	if payloadFormat != nil {
 		cfg.PayloadFormat = stores.PayloadFormat(*payloadFormat)
 	}
+	if qType != nil && *qType != "" {
+		cfg.QueueType = *qType
+	} else {
+		cfg.QueueType = "NONE"
+	}
+	if qSize != nil {
+		cfg.QueueSize = *qSize
+	}
+	if bSize != nil {
+		cfg.BulkSize = *bSize
+	}
+	if bTimeout != nil && *bTimeout > 0 {
+		cfg.BulkTimeoutMs = *bTimeout
+	} else {
+		cfg.BulkTimeoutMs = 250
+	}
+	if qDiskPath != nil {
+		cfg.QueueDiskPath = *qDiskPath
+	}
 	return &cfg, nil
 }
 func (a *ArchiveConfigStore) Save(ctx context.Context, cfg stores.ArchiveGroupConfig) error {
@@ -1193,19 +1237,22 @@ func (a *ArchiveConfigStore) Save(ctx context.Context, cfg stores.ArchiveGroupCo
 	if cfg.RetainedOnly {
 		retainedOnly = 1
 	}
-	_, err := a.db.pool.Exec(ctx, `INSERT INTO archiveconfigs (name, enabled, topic_filter, retained_only, last_val_type, archive_type, database_connection_name, last_val_retention, archive_retention, purge_interval, payload_format)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+	_, err := a.db.pool.Exec(ctx, `INSERT INTO archiveconfigs (name, enabled, topic_filter, retained_only, last_val_type, archive_type, database_connection_name, last_val_retention, archive_retention, purge_interval, payload_format, queue_type, queue_size, bulk_size, bulk_timeout_ms, queue_disk_path)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
         ON CONFLICT (name) DO UPDATE SET
             enabled=EXCLUDED.enabled, topic_filter=EXCLUDED.topic_filter, retained_only=EXCLUDED.retained_only,
             last_val_type=EXCLUDED.last_val_type, archive_type=EXCLUDED.archive_type,
             database_connection_name=EXCLUDED.database_connection_name,
             last_val_retention=EXCLUDED.last_val_retention, archive_retention=EXCLUDED.archive_retention,
             purge_interval=EXCLUDED.purge_interval, payload_format=EXCLUDED.payload_format,
+            queue_type=EXCLUDED.queue_type, queue_size=EXCLUDED.queue_size,
+            bulk_size=EXCLUDED.bulk_size, bulk_timeout_ms=EXCLUDED.bulk_timeout_ms,
+            queue_disk_path=EXCLUDED.queue_disk_path,
             updated_at=NOW()`,
 		cfg.Name, enabled, strings.Join(cfg.TopicFilters, ","), retainedOnly,
 		string(cfg.LastValType), string(cfg.ArchiveType),
 		nullStr(cfg.DatabaseConnectionName), nullStr(cfg.LastValRetention), nullStr(cfg.ArchiveRetention), nullStr(cfg.PurgeInterval),
-		string(cfg.PayloadFormat))
+		string(cfg.PayloadFormat), nullStr(cfg.QueueType), cfg.QueueSize, cfg.BulkSize, cfg.BulkTimeoutMs, nullStr(cfg.QueueDiskPath))
 	return err
 }
 func nullStr(s string) any {

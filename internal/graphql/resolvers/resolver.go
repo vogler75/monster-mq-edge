@@ -198,6 +198,18 @@ func derefStr(s *string) string {
 	}
 	return *s
 }
+func ptrIfNonZero(i int) *int {
+	if i <= 0 {
+		return nil
+	}
+	return &i
+}
+func ptrIfNonZero64(i int64) *int64 {
+	if i <= 0 {
+		return nil
+	}
+	return &i
+}
 
 // encodePayload returns the payload string and the format it was encoded in,
 // matching the JVM broker's contract:
@@ -1160,6 +1172,11 @@ func (r *Resolver) archiveGroupInfoTo(c stores.ArchiveGroupConfig) *generated.Ar
 		LastValRetention:       ptrIfNotEmpty(c.LastValRetention),
 		ArchiveRetention:       ptrIfNotEmpty(c.ArchiveRetention),
 		PurgeInterval:          ptrIfNotEmpty(c.PurgeInterval),
+		QueueType:              ptrIfNotEmpty(c.QueueType),
+		QueueSize:              ptrIfNonZero(c.QueueSize),
+		BulkSize:               ptrIfNonZero(c.BulkSize),
+		BulkTimeoutMs:          ptrIfNonZero64(c.BulkTimeoutMs),
+		QueueDiskPath:          ptrIfNotEmpty(c.QueueDiskPath),
 		// createdAt/updatedAt aren't tracked in ArchiveGroupConfig today;
 		// surface as nil so the dashboard renders "—".
 	}
@@ -1778,6 +1795,11 @@ func (r *archiveGroupMutationsResolver) Create(ctx context.Context, _ *generated
 		LastValRetention: derefStr(input.LastValRetention),
 		ArchiveRetention: derefStr(input.ArchiveRetention),
 		PurgeInterval:    derefStr(input.PurgeInterval),
+		QueueType:        derefStr(input.QueueType),
+		QueueSize:        intPtr(input.QueueSize, 100000),
+		BulkSize:         intPtr(input.BulkSize, 4000),
+		BulkTimeoutMs:    int64Ptr(input.BulkTimeoutMs, 1000),
+		QueueDiskPath:    derefStr(input.QueueDiskPath),
 	}
 	if input.PayloadFormat != nil {
 		cfg.PayloadFormat = stores.PayloadFormat(*input.PayloadFormat)
@@ -1847,6 +1869,21 @@ func (r *archiveGroupMutationsResolver) Update(ctx context.Context, _ *generated
 	}
 	if input.PurgeInterval != nil {
 		existing.PurgeInterval = *input.PurgeInterval
+	}
+	if input.QueueType != nil {
+		existing.QueueType = *input.QueueType
+	}
+	if input.QueueSize != nil {
+		existing.QueueSize = *input.QueueSize
+	}
+	if input.BulkSize != nil {
+		existing.BulkSize = *input.BulkSize
+	}
+	if input.BulkTimeoutMs != nil {
+		existing.BulkTimeoutMs = *input.BulkTimeoutMs
+	}
+	if input.QueueDiskPath != nil {
+		existing.QueueDiskPath = *input.QueueDiskPath
 	}
 	if err := r.Storage.ArchiveConfig.Save(ctx, *existing); err != nil {
 		return &generated.ArchiveGroupResult{Success: false, Message: ptr(err.Error())}, nil

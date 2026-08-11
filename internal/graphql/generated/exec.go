@@ -575,6 +575,11 @@ type ArchiveGroupInfo {
     lastValRetention: String
     archiveRetention: String
     purgeInterval: String
+    queueType: String
+    queueSize: Int
+    bulkSize: Int
+    bulkTimeoutMs: Long
+    queueDiskPath: String
     createdAt: String
     updatedAt: String
     connectionStatus: [NodeConnectionStatus!]!
@@ -593,6 +598,11 @@ input CreateArchiveGroupInput {
     lastValRetention: String
     archiveRetention: String
     purgeInterval: String
+    queueType: String = "MEMORY"
+    queueSize: Int = 100000
+    bulkSize: Int = 4000
+    bulkTimeoutMs: Long = 1000
+    queueDiskPath: String = "data/queue"
 }
 
 input UpdateArchiveGroupInput {
@@ -606,6 +616,11 @@ input UpdateArchiveGroupInput {
     lastValRetention: String
     archiveRetention: String
     purgeInterval: String
+    queueType: String
+    queueSize: Int
+    bulkSize: Int
+    bulkTimeoutMs: Long
+    queueDiskPath: String
 }
 
 type ArchiveGroupResult {
@@ -3602,6 +3617,151 @@ func (ec *executionContext) fieldContext_ArchiveGroupInfo_purgeInterval(_ contex
 	return fc, nil
 }
 
+func (ec *executionContext) _ArchiveGroupInfo_queueType(ctx context.Context, field graphql.CollectedField, obj *ArchiveGroupInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ArchiveGroupInfo_queueType,
+		func(ctx context.Context) (any, error) {
+			return obj.QueueType, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_ArchiveGroupInfo_queueType(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ArchiveGroupInfo",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ArchiveGroupInfo_queueSize(ctx context.Context, field graphql.CollectedField, obj *ArchiveGroupInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ArchiveGroupInfo_queueSize,
+		func(ctx context.Context) (any, error) {
+			return obj.QueueSize, nil
+		},
+		nil,
+		ec.marshalOInt2ᚖint,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_ArchiveGroupInfo_queueSize(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ArchiveGroupInfo",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Int does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ArchiveGroupInfo_bulkSize(ctx context.Context, field graphql.CollectedField, obj *ArchiveGroupInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ArchiveGroupInfo_bulkSize,
+		func(ctx context.Context) (any, error) {
+			return obj.BulkSize, nil
+		},
+		nil,
+		ec.marshalOInt2ᚖint,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_ArchiveGroupInfo_bulkSize(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ArchiveGroupInfo",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Int does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ArchiveGroupInfo_bulkTimeoutMs(ctx context.Context, field graphql.CollectedField, obj *ArchiveGroupInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ArchiveGroupInfo_bulkTimeoutMs,
+		func(ctx context.Context) (any, error) {
+			return obj.BulkTimeoutMs, nil
+		},
+		nil,
+		ec.marshalOLong2ᚖint64,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_ArchiveGroupInfo_bulkTimeoutMs(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ArchiveGroupInfo",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Long does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ArchiveGroupInfo_queueDiskPath(ctx context.Context, field graphql.CollectedField, obj *ArchiveGroupInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ArchiveGroupInfo_queueDiskPath,
+		func(ctx context.Context) (any, error) {
+			return obj.QueueDiskPath, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_ArchiveGroupInfo_queueDiskPath(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ArchiveGroupInfo",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _ArchiveGroupInfo_createdAt(ctx context.Context, field graphql.CollectedField, obj *ArchiveGroupInfo) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -4374,6 +4534,16 @@ func (ec *executionContext) fieldContext_ArchiveGroupResult_archiveGroup(_ conte
 				return ec.fieldContext_ArchiveGroupInfo_archiveRetention(ctx, field)
 			case "purgeInterval":
 				return ec.fieldContext_ArchiveGroupInfo_purgeInterval(ctx, field)
+			case "queueType":
+				return ec.fieldContext_ArchiveGroupInfo_queueType(ctx, field)
+			case "queueSize":
+				return ec.fieldContext_ArchiveGroupInfo_queueSize(ctx, field)
+			case "bulkSize":
+				return ec.fieldContext_ArchiveGroupInfo_bulkSize(ctx, field)
+			case "bulkTimeoutMs":
+				return ec.fieldContext_ArchiveGroupInfo_bulkTimeoutMs(ctx, field)
+			case "queueDiskPath":
+				return ec.fieldContext_ArchiveGroupInfo_queueDiskPath(ctx, field)
 			case "createdAt":
 				return ec.fieldContext_ArchiveGroupInfo_createdAt(ctx, field)
 			case "updatedAt":
@@ -12041,6 +12211,16 @@ func (ec *executionContext) fieldContext_Query_archiveGroups(ctx context.Context
 				return ec.fieldContext_ArchiveGroupInfo_archiveRetention(ctx, field)
 			case "purgeInterval":
 				return ec.fieldContext_ArchiveGroupInfo_purgeInterval(ctx, field)
+			case "queueType":
+				return ec.fieldContext_ArchiveGroupInfo_queueType(ctx, field)
+			case "queueSize":
+				return ec.fieldContext_ArchiveGroupInfo_queueSize(ctx, field)
+			case "bulkSize":
+				return ec.fieldContext_ArchiveGroupInfo_bulkSize(ctx, field)
+			case "bulkTimeoutMs":
+				return ec.fieldContext_ArchiveGroupInfo_bulkTimeoutMs(ctx, field)
+			case "queueDiskPath":
+				return ec.fieldContext_ArchiveGroupInfo_queueDiskPath(ctx, field)
 			case "createdAt":
 				return ec.fieldContext_ArchiveGroupInfo_createdAt(ctx, field)
 			case "updatedAt":
@@ -12120,6 +12300,16 @@ func (ec *executionContext) fieldContext_Query_archiveGroup(ctx context.Context,
 				return ec.fieldContext_ArchiveGroupInfo_archiveRetention(ctx, field)
 			case "purgeInterval":
 				return ec.fieldContext_ArchiveGroupInfo_purgeInterval(ctx, field)
+			case "queueType":
+				return ec.fieldContext_ArchiveGroupInfo_queueType(ctx, field)
+			case "queueSize":
+				return ec.fieldContext_ArchiveGroupInfo_queueSize(ctx, field)
+			case "bulkSize":
+				return ec.fieldContext_ArchiveGroupInfo_bulkSize(ctx, field)
+			case "bulkTimeoutMs":
+				return ec.fieldContext_ArchiveGroupInfo_bulkTimeoutMs(ctx, field)
+			case "queueDiskPath":
+				return ec.fieldContext_ArchiveGroupInfo_queueDiskPath(ctx, field)
 			case "createdAt":
 				return ec.fieldContext_ArchiveGroupInfo_createdAt(ctx, field)
 			case "updatedAt":
@@ -20811,8 +21001,23 @@ func (ec *executionContext) unmarshalInputCreateArchiveGroupInput(ctx context.Co
 	if _, present := asMap["payloadFormat"]; !present {
 		asMap["payloadFormat"] = "DEFAULT"
 	}
+	if _, present := asMap["queueType"]; !present {
+		asMap["queueType"] = "MEMORY"
+	}
+	if _, present := asMap["queueSize"]; !present {
+		asMap["queueSize"] = 100000
+	}
+	if _, present := asMap["bulkSize"]; !present {
+		asMap["bulkSize"] = 4000
+	}
+	if _, present := asMap["bulkTimeoutMs"]; !present {
+		asMap["bulkTimeoutMs"] = 1000
+	}
+	if _, present := asMap["queueDiskPath"]; !present {
+		asMap["queueDiskPath"] = "data/queue"
+	}
 
-	fieldsInOrder := [...]string{"name", "topicFilter", "retainedOnly", "lastValType", "archiveType", "databaseConnectionName", "payloadFormat", "lastValRetention", "archiveRetention", "purgeInterval"}
+	fieldsInOrder := [...]string{"name", "topicFilter", "retainedOnly", "lastValType", "archiveType", "databaseConnectionName", "payloadFormat", "lastValRetention", "archiveRetention", "purgeInterval", "queueType", "queueSize", "bulkSize", "bulkTimeoutMs", "queueDiskPath"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -20889,6 +21094,41 @@ func (ec *executionContext) unmarshalInputCreateArchiveGroupInput(ctx context.Co
 				return it, err
 			}
 			it.PurgeInterval = data
+		case "queueType":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("queueType"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.QueueType = data
+		case "queueSize":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("queueSize"))
+			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.QueueSize = data
+		case "bulkSize":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("bulkSize"))
+			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.BulkSize = data
+		case "bulkTimeoutMs":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("bulkTimeoutMs"))
+			data, err := ec.unmarshalOLong2ᚖint64(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.BulkTimeoutMs = data
+		case "queueDiskPath":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("queueDiskPath"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.QueueDiskPath = data
 		}
 	}
 	return it, nil
@@ -21690,7 +21930,7 @@ func (ec *executionContext) unmarshalInputUpdateArchiveGroupInput(ctx context.Co
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"name", "topicFilter", "retainedOnly", "lastValType", "archiveType", "databaseConnectionName", "payloadFormat", "lastValRetention", "archiveRetention", "purgeInterval"}
+	fieldsInOrder := [...]string{"name", "topicFilter", "retainedOnly", "lastValType", "archiveType", "databaseConnectionName", "payloadFormat", "lastValRetention", "archiveRetention", "purgeInterval", "queueType", "queueSize", "bulkSize", "bulkTimeoutMs", "queueDiskPath"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -21767,6 +22007,41 @@ func (ec *executionContext) unmarshalInputUpdateArchiveGroupInput(ctx context.Co
 				return it, err
 			}
 			it.PurgeInterval = data
+		case "queueType":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("queueType"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.QueueType = data
+		case "queueSize":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("queueSize"))
+			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.QueueSize = data
+		case "bulkSize":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("bulkSize"))
+			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.BulkSize = data
+		case "bulkTimeoutMs":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("bulkTimeoutMs"))
+			data, err := ec.unmarshalOLong2ᚖint64(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.BulkTimeoutMs = data
+		case "queueDiskPath":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("queueDiskPath"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.QueueDiskPath = data
 		}
 	}
 	return it, nil
@@ -22763,6 +23038,16 @@ func (ec *executionContext) _ArchiveGroupInfo(ctx context.Context, sel ast.Selec
 			out.Values[i] = ec._ArchiveGroupInfo_archiveRetention(ctx, field, obj)
 		case "purgeInterval":
 			out.Values[i] = ec._ArchiveGroupInfo_purgeInterval(ctx, field, obj)
+		case "queueType":
+			out.Values[i] = ec._ArchiveGroupInfo_queueType(ctx, field, obj)
+		case "queueSize":
+			out.Values[i] = ec._ArchiveGroupInfo_queueSize(ctx, field, obj)
+		case "bulkSize":
+			out.Values[i] = ec._ArchiveGroupInfo_bulkSize(ctx, field, obj)
+		case "bulkTimeoutMs":
+			out.Values[i] = ec._ArchiveGroupInfo_bulkTimeoutMs(ctx, field, obj)
+		case "queueDiskPath":
+			out.Values[i] = ec._ArchiveGroupInfo_queueDiskPath(ctx, field, obj)
 		case "createdAt":
 			out.Values[i] = ec._ArchiveGroupInfo_createdAt(ctx, field, obj)
 		case "updatedAt":

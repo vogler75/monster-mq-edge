@@ -153,6 +153,11 @@ type ArchiveGroupConfig struct {
 	ArchiveRetention       string
 	PurgeInterval          string
 	PayloadFormat          PayloadFormat
+	QueueType              string
+	QueueSize              int
+	BulkSize               int
+	BulkTimeoutMs          int64
+	QueueDiskPath          string
 }
 
 type ArchiveConfigStore interface {
