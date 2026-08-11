@@ -1,0 +1,11 @@
+Release v0.1.8
+Built from commit: 1d8d105
+Date: 2026-08-11 19:32:44
+
+Changes since v0.1.7:
+---
+1d8d105 fix(archive): optimize postgres AddHistory using pgx.Batch and auto-strip jdbc: URL prefix
+8932ffd feat(archive): add Store-and-Forward configuration with unbuffered default
+c1fddeb docs(industrial-edge): add Siemens Industrial Edge Publisher export and README
+b540dd6 fix(build): use --owner and --group for tar compatibility across GNU and BSD tar
+ac3a97f Create build.bat
