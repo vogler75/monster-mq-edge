@@ -239,7 +239,7 @@ func (g *Group) flush() {
 	g.pending = nil
 	g.mu.Unlock()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	if g.archive != nil {
@@ -258,7 +258,7 @@ func (g *Group) flushQueue() {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	if g.archive != nil {

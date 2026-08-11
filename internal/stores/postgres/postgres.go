@@ -26,6 +26,7 @@ type DB struct {
 }
 
 func Open(ctx context.Context, dsn string) (*DB, error) {
+	dsn = strings.TrimPrefix(dsn, "jdbc:")
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("parse pg dsn: %w", err)
@@ -305,17 +306,18 @@ func (a *MessageArchive) AddHistory(ctx context.Context, msgs []stores.BrokerMes
 	t := a.tableName()
 	q := fmt.Sprintf(`INSERT INTO %s (topic, time, payload_blob, qos, retained, client_id, message_uuid)
         VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (topic, time) DO NOTHING`, t)
-	tx, err := a.db.pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
+	b := &pgx.Batch{}
 	for _, m := range msgs {
-		if _, err := tx.Exec(ctx, q, m.TopicName, m.Time.UTC(), m.Payload, int(m.QoS), m.IsRetain, m.ClientID, m.MessageUUID); err != nil {
-			_ = tx.Rollback(ctx)
+		b.Queue(q, m.TopicName, m.Time.UTC(), m.Payload, int(m.QoS), m.IsRetain, m.ClientID, m.MessageUUID)
+	}
+	br := a.db.pool.SendBatch(ctx, b)
+	defer br.Close()
+	for i := 0; i < len(msgs); i++ {
+		if _, err := br.Exec(); err != nil {
 			return err
 		}
 	}
-	return tx.Commit(ctx)
+	return nil
 }
 
 func (a *MessageArchive) GetHistory(ctx context.Context, topic string, from, to *time.Time, limit int) ([]stores.ArchivedMessage, error) {

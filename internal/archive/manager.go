@@ -287,6 +287,7 @@ func (m *Manager) openGroupDatabaseHandles(ctx context.Context, c stores.Archive
 }
 
 func postgresDSN(raw, username, password string) string {
+	raw = strings.TrimPrefix(raw, "jdbc:")
 	if username == "" && password == "" {
 		return raw
 	}
