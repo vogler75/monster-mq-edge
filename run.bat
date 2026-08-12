@@ -6,7 +6,6 @@ REM Script options (before --):
 REM   -b,  -build       Build the binary (CGO_ENABLED=0) before starting
 REM   -c,  -compile     Type-check / compile all packages (no binary output)
 REM   -n,  -norun       Don't start the broker (combine with -b/-c for build-only)
-REM   -d,  -dashboard   Build the dashboard and serve it from dashboard/dist
 REM   -nk, -nokill      Don't kill any already-running monstermq-edge first
 REM   -h,  -help        Show this help
 REM
@@ -19,7 +18,6 @@ REM   run.bat                       Start with config.yaml (or config.yaml.examp
 REM   run.bat -b                    Build, then start
 REM   run.bat -b -n                 Build only
 REM   run.bat -b -- -config foo.yaml
-REM   run.bat -d                    Serve the dashboard from filesystem
 
 setlocal enabledelayedexpansion
 
@@ -29,7 +27,6 @@ set "BIN=bin\monstermq-edge.exe"
 set "BUILD=false"
 set "COMPILE=false"
 set "NORUN=false"
-set "DASHBOARD_DEV=false"
 set "NOKILL=false"
 set "SAW_SEP=false"
 set "BROKER_ARGS="
@@ -42,16 +39,14 @@ if "!SAW_SEP!"=="true" (
     shift
     goto :parse_args
 )
-if "%~1"=="-b"         (set "BUILD=true"         & shift & goto :parse_args)
-if "%~1"=="-build"     (set "BUILD=true"         & shift & goto :parse_args)
-if "%~1"=="-c"         (set "COMPILE=true"       & shift & goto :parse_args)
-if "%~1"=="-compile"   (set "COMPILE=true"       & shift & goto :parse_args)
-if "%~1"=="-n"         (set "NORUN=true"         & shift & goto :parse_args)
-if "%~1"=="-norun"     (set "NORUN=true"         & shift & goto :parse_args)
-if "%~1"=="-d"         (set "DASHBOARD_DEV=true" & shift & goto :parse_args)
-if "%~1"=="-dashboard" (set "DASHBOARD_DEV=true" & shift & goto :parse_args)
-if "%~1"=="-nk"        (set "NOKILL=true"        & shift & goto :parse_args)
-if "%~1"=="-nokill"    (set "NOKILL=true"        & shift & goto :parse_args)
+if "%~1"=="-b"         (set "BUILD=true"   & shift & goto :parse_args)
+if "%~1"=="-build"     (set "BUILD=true"   & shift & goto :parse_args)
+if "%~1"=="-c"         (set "COMPILE=true" & shift & goto :parse_args)
+if "%~1"=="-compile"   (set "COMPILE=true" & shift & goto :parse_args)
+if "%~1"=="-n"         (set "NORUN=true"   & shift & goto :parse_args)
+if "%~1"=="-norun"     (set "NORUN=true"   & shift & goto :parse_args)
+if "%~1"=="-nk"        (set "NOKILL=true"  & shift & goto :parse_args)
+if "%~1"=="-nokill"    (set "NOKILL=true"  & shift & goto :parse_args)
 if "%~1"=="-h"         goto :show_help
 if "%~1"=="-help"      goto :show_help
 if "%~1"=="--help"     goto :show_help
@@ -80,27 +75,6 @@ if "!COMPILE!"=="true" if "!BUILD!"=="false" (
     if !errorlevel! neq 0 (
         echo Compilation failed
         exit /b 1
-    )
-)
-
-if "!DASHBOARD_DEV!"=="true" (
-    set "DASH="
-    if exist "..\dashboard\package.json" set "DASH=..\dashboard"
-    if defined DASH (
-        echo Building dashboard at !DASH!...
-        pushd "!DASH!"
-        call npm install --silent
-        if !errorlevel! neq 0 (popd & echo Dashboard npm install failed & exit /b 1)
-        call npm run build
-        if !errorlevel! neq 0 (popd & echo Dashboard build failed & exit /b 1)
-        popd
-        if exist "!DASH!\dist" (
-            set "MONSTERMQ_DASHBOARD_PATH=!DASH!\dist"
-            echo Dashboard dist available at: !DASH!\dist
-            echo ^(set Dashboard.Path in config.yaml to: !DASH!\dist^)
-        )
-    ) else (
-        echo Dashboard sibling project not found, skipping.
     )
 )
 
@@ -142,7 +116,6 @@ echo Script options ^(before --^):
 echo   -b,  -build       Build the binary ^(CGO_ENABLED=0^) before starting
 echo   -c,  -compile     Type-check / compile all packages ^(no binary output^)
 echo   -n,  -norun       Don't start the broker ^(combine with -b/-c for build-only^)
-echo   -d,  -dashboard   Build the dashboard and serve it from dashboard/dist
 echo   -nk, -nokill      Don't kill any already-running monstermq-edge first
 echo   -h,  -help        Show this help
 echo.
@@ -155,5 +128,5 @@ echo   run.bat                       Start with config.yaml ^(or config.yaml.exa
 echo   run.bat -b                    Build, then start
 echo   run.bat -b -n                 Build only
 echo   run.bat -b -- -config foo.yaml
-echo   run.bat -d                    Serve the dashboard from filesystem
 exit /b 0
+

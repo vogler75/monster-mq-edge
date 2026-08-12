@@ -6,7 +6,7 @@ VERSION := $(shell cat version.txt 2>/dev/null | tr -d '\n' | tr -d '\r')
 LDFLAGS := -s -w -X monstermq.io/edge/internal/version.Version=$(VERSION)
 GOFLAGS := -trimpath
 
-.PHONY: build build-arm64 build-armv7 test test-race lint clean gen run deb-arm64 deb-armv7 deb-amd64 deb-all
+.PHONY: build build-arm64 build-armv7 test test-race lint clean gen run deb-arm64 deb-armv7 deb-amd64 deb-all release publish
 
 build:
 	@mkdir -p bin
@@ -37,6 +37,11 @@ deb-amd64:
 
 deb-all: deb-arm64 deb-armv7 deb-amd64
 
+release:
+	./release.sh
+
+publish:
+	./publish.sh
 
 test:
 	go test ./... -count=1 -timeout 60s
@@ -48,10 +53,11 @@ lint:
 	go vet ./...
 
 clean:
-	rm -rf bin
+	rm -rf bin dist
 
 gen:
 	go run github.com/99designs/gqlgen generate
 
 run: build
 	$(BIN) -config config.yaml.example
+

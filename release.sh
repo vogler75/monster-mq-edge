@@ -1,19 +1,12 @@
 #!/bin/bash
 
-# release.sh - Automated release script for MonsterMQ Edge
-# This script:
-# 1. Reads version from version.txt
-# 2. Increments the patch version
-# 3. Checks for uncommitted changes in the repository
-# 4. Updates version.txt to the new clean version
-# 5. Writes release notes
-# 6. Commits changes
-# 7. Creates git tag on the repository
-# 8. Prints pushing instructions
+# release.sh - Automated release tag script for MonsterMQ Edge
+# Usage:
+#   ./release.sh           # Auto-increments patch version (e.g. 0.1.7 -> 0.1.8)
+#   ./release.sh 0.2.0     # Sets explicit version 0.2.0
 
-set -e  # Exit on error
+set -e
 
-# Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -21,40 +14,33 @@ NC='\033[0m' # No Color
 
 echo -e "${GREEN}=== MonsterMQ Edge Release Script ===${NC}"
 
-# Check if version.txt exists
 if [ ! -f "version.txt" ]; then
     echo -e "${RED}Error: version.txt not found${NC}"
     exit 1
 fi
 
-# Read current version from version.txt
 CURRENT_VERSION=$(head -n 1 version.txt | tr -d '\n' | tr -d '\r')
-
-# Extract base version (without git SHA if present)
 BASE_VERSION=$(echo "$CURRENT_VERSION" | cut -d'+' -f1)
 
-# Parse version components
-IFS='.' read -r MAJOR MINOR PATCH <<< "$BASE_VERSION"
-
-# Validate version components
-if [ -z "$MAJOR" ] || [ -z "$MINOR" ] || [ -z "$PATCH" ]; then
-    echo -e "${RED}Error: Invalid version format in version.txt. Expected format: X.Y.Z${NC}"
-    echo -e "${RED}Current content: '$CURRENT_VERSION'${NC}"
-    exit 1
+if [ -n "$1" ]; then
+    NEW_VERSION="$1"
+else
+    IFS='.' read -r MAJOR MINOR PATCH <<< "$BASE_VERSION"
+    if [ -z "$MAJOR" ] || [ -z "$MINOR" ] || [ -z "$PATCH" ]; then
+        echo -e "${RED}Error: Invalid version format in version.txt. Expected format: X.Y.Z${NC}"
+        echo -e "${RED}Current content: '$CURRENT_VERSION'${NC}"
+        exit 1
+    fi
+    NEW_PATCH=$((PATCH + 1))
+    NEW_VERSION="${MAJOR}.${MINOR}.${NEW_PATCH}"
 fi
 
-# Increment patch version
-NEW_PATCH=$((PATCH + 1))
-NEW_VERSION="${MAJOR}.${MINOR}.${NEW_PATCH}"
-
-# Get current git SHA
 GIT_SHA=$(git rev-parse --short HEAD)
 
-echo -e "${YELLOW}Current version: ${BASE_VERSION}${NC}"
-echo -e "${GREEN}New version: ${NEW_VERSION}${NC}"
-echo -e "${GREEN}Git SHA: ${GIT_SHA}${NC}"
+echo -e "${YELLOW}Current version : ${BASE_VERSION}${NC}"
+echo -e "${GREEN}New version     : ${NEW_VERSION}${NC}"
+echo -e "${GREEN}Git SHA         : ${GIT_SHA}${NC}"
 
-# Check for uncommitted changes in repository
 if ! git diff-index --quiet HEAD --; then
     echo -e "${YELLOW}Warning: You have uncommitted changes${NC}"
     read -p "Do you want to continue? (y/n) " -n 1 -r
@@ -65,18 +51,14 @@ if ! git diff-index --quiet HEAD --; then
     fi
 fi
 
-# Check if tag already exists
 if git rev-parse "v${NEW_VERSION}" >/dev/null 2>&1; then
     echo -e "${RED}Error: Tag v${NEW_VERSION} already exists${NC}"
-    echo -e "${YELLOW}Please manually update version.txt if you need a different version${NC}"
     exit 1
 fi
 
-# Update version.txt with the new clean version (no SHA suffix for standard semver)
 echo "$NEW_VERSION" > version.txt
 echo -e "${GREEN}✓ Updated version.txt to ${NEW_VERSION}${NC}"
 
-# Create release notes file
 RELEASE_NOTES_FILE="releases/v${NEW_VERSION}.txt"
 mkdir -p releases
 echo "Release v${NEW_VERSION}" > "$RELEASE_NOTES_FILE"
@@ -86,7 +68,6 @@ echo "" >> "$RELEASE_NOTES_FILE"
 echo "Changes since v${BASE_VERSION}:" >> "$RELEASE_NOTES_FILE"
 echo "---" >> "$RELEASE_NOTES_FILE"
 
-# Get commit messages since last tag
 LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
 if [ -n "$LAST_TAG" ]; then
     git log "${LAST_TAG}..HEAD" --oneline >> "$RELEASE_NOTES_FILE"
@@ -96,24 +77,23 @@ fi
 
 echo -e "${GREEN}✓ Created release notes: ${RELEASE_NOTES_FILE}${NC}"
 
-# Add version.txt and release notes to git and commit the version bump
 git add version.txt "$RELEASE_NOTES_FILE"
 git commit -m "Bump version to ${NEW_VERSION}" || {
     echo -e "${YELLOW}No changes to commit${NC}"
 }
 
-# Create git tag on repository
 echo -e "${YELLOW}Creating tag v${NEW_VERSION}...${NC}"
 git tag -a "v${NEW_VERSION}" -m "Release version ${NEW_VERSION}"
 echo -e "${GREEN}✓ Created tag v${NEW_VERSION}${NC}"
 
 echo ""
-echo -e "${GREEN}=== Release Complete ===${NC}"
-echo -e "${GREEN}Version ${NEW_VERSION} has been tagged.${NC}"
+echo -e "${GREEN}=== Release Tag Complete ===${NC}"
+echo -e "${GREEN}Version ${NEW_VERSION} tagged successfully.${NC}"
 echo ""
-echo -e "${YELLOW}Next steps to push commits and tags to remote:${NC}"
-echo "  1. Push commits and tag:"
+echo -e "${YELLOW}Next steps:${NC}"
+echo "  1. Build artifacts locally : ./build.sh"
+echo "  2. Publish release assets  : ./publish.sh"
+echo "  3. Or build & publish      : ./build.sh --publish"
 PARENT_BRANCH=$(git branch --show-current)
-echo "     git push origin ${PARENT_BRANCH}"
-echo "     git push origin v${NEW_VERSION}"
-echo ""
+echo "  4. Push commits & tag      : git push origin ${PARENT_BRANCH} && git push origin v${NEW_VERSION}"
+

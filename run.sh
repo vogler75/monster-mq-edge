@@ -6,7 +6,6 @@
 #   -b,  -build       Build the binary (CGO_ENABLED=0) before starting
 #   -c,  -compile     Type-check / compile all packages (no binary output)
 #   -n,  -norun       Don't start the broker (combine with -b/-c for build-only)
-#   -d,  -dashboard   Build the dashboard and serve it from dashboard/dist
 #   -nk, -nokill      Don't kill any already-running monstermq-edge first
 #   -h,  -help        Show this help
 #
@@ -19,7 +18,6 @@
 #   ./run.sh -b                    Build, then start
 #   ./run.sh -b -n                 Build only
 #   ./run.sh -b -- -config foo.yaml
-#   ./run.sh -d                    Serve the dashboard from filesystem
 
 set -e
 
@@ -30,7 +28,6 @@ BIN="bin/monstermq-edge"
 BUILD=false
 COMPILE=false
 NORUN=false
-DASHBOARD_DEV=false
 NOKILL=false
 REMAINING=()
 SAW_SEP=false
@@ -44,9 +41,8 @@ for arg in "$@"; do
         -b|-build)        BUILD=true ;;
         -c|-compile)      COMPILE=true ;;
         -n|-norun)        NORUN=true ;;
-        -d|-dashboard)    DASHBOARD_DEV=true ;;
         -nk|-nokill)      NOKILL=true ;;
-        -h|-help|--help)  sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|-help|--help)  sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         --)               SAW_SEP=true ;;
         *)                REMAINING+=("$arg") ;;
     esac
@@ -65,20 +61,6 @@ if [ "$COMPILE" = true ] && [ "$BUILD" = false ]; then
     go build ./...
 fi
 
-if [ "$DASHBOARD_DEV" = true ]; then
-    DASH="$(cd "$SCRIPT_DIR/../dashboard" 2>/dev/null && pwd || true)"
-    if [ -n "$DASH" ] && [ -f "$DASH/package.json" ]; then
-        echo "Building dashboard at $DASH..."
-        (cd "$DASH" && npm install --silent && npm run build)
-        if [ -d "$DASH/dist" ]; then
-            export MONSTERMQ_DASHBOARD_PATH="$DASH/dist"
-            echo "Dashboard dist available at: $DASH/dist"
-            echo "(set Dashboard.Path in config.yaml to: $DASH/dist)"
-        fi
-    else
-        echo "Dashboard sibling project not found, skipping."
-    fi
-fi
 
 [ "$NORUN" = true ] && exit 0
 
