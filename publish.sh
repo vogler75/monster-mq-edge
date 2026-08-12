@@ -3,10 +3,10 @@
 # publish.sh - Upload release assets to GitHub Release and push multi-arch Docker images to Docker Hub for MonsterMQ Edge
 #
 # Usage:
-#   ./publish.sh               Publish GitHub Release assets and Docker Hub images
-#   ./publish.sh --github-only Upload Debian packages to GitHub Release only
-#   ./publish.sh --docker-only Build and push Docker images to Docker Hub only
-#   ./publish.sh -y            Auto-confirm publishing (non-interactive)
+#   ./publish.sh --all     Publish Debian packages to GitHub Release and Docker Hub images
+#   ./publish.sh --github  Upload Debian packages to GitHub Release only
+#   ./publish.sh --docker  Build and push Docker images to Docker Hub only
+#   ./publish.sh -y        Auto-confirm publishing (non-interactive)
 
 set -e
 
@@ -34,14 +34,18 @@ usage() {
     echo "Usage: $0 [options]"
     echo ""
     echo "Options:"
-    echo "  --all            Publish both GitHub Release and Docker Hub (default)"
-    echo "  --github-only    Publish Debian packages to GitHub Release only"
-    echo "  --docker-only    Build multi-arch Docker image and push to Docker Hub only"
-    echo "  -y, --yes        Auto-confirm publishing without asking"
-    echo "  -h, --help       Show this help message"
+    echo "  --all        Publish both GitHub Release and Docker Hub"
+    echo "  --github     Publish Debian packages to GitHub Release only"
+    echo "  --docker     Build multi-arch Docker image and push to Docker Hub only"
+    echo "  -y, --yes    Auto-confirm publishing without asking"
+    echo "  -h, --help   Show this help message"
     echo ""
     exit 0
 }
+
+if [ $# -eq 0 ]; then
+    usage
+fi
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -50,11 +54,11 @@ while [[ $# -gt 0 ]]; do
             PUBLISH_DOCKER=true
             shift
             ;;
-        --github-only)
+        --github)
             PUBLISH_GITHUB=true
             shift
             ;;
-        --docker-only)
+        --docker)
             PUBLISH_DOCKER=true
             shift
             ;;

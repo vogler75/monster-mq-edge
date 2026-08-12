@@ -3,11 +3,10 @@
 # build.sh - Master build script for MonsterMQ Edge
 #
 # Usage:
-#   ./build.sh            Build all artifacts locally (binary, debian packages, docker image)
+#   ./build.sh --all      Build all artifacts locally (binary, debian packages, docker image)
 #   ./build.sh --binary   Build native Go binary for host
 #   ./build.sh --deb      Build Debian packages for all target architectures (arm64, armhf, amd64)
-#   ./build.sh --docker   Build local Docker image (native platform)
-#   ./build.sh --publish  Build everything and trigger release publishing
+#   ./build.sh --docker   Build local Docker image only
 
 set -e
 
@@ -29,7 +28,6 @@ VERSION=$(head -n 1 version.txt | tr -d '\n' | tr -d '\r')
 BUILD_BINARY=false
 BUILD_DEB=false
 BUILD_DOCKER=false
-PUBLISH=false
 CLEAN=false
 EXPLICIT_TARGET=false
 
@@ -37,16 +35,19 @@ usage() {
     echo "Usage: $0 [options]"
     echo ""
     echo "Options:"
-    echo "  --all            Build all artifacts (default)"
+    echo "  --all            Build all artifacts"
     echo "  --binary         Build native Go binary for current machine"
     echo "  --deb            Build Debian packages (arm64, armhf, amd64)"
     echo "  --docker         Build local Docker image (native platform)"
-    echo "  -p, --publish    Trigger ./publish.sh after building"
     echo "  --clean          Clean build output directories"
     echo "  -h, --help       Show this help message"
     echo ""
     exit 0
 }
+
+if [ $# -eq 0 ]; then
+    usage
+fi
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -70,10 +71,6 @@ while [[ $# -gt 0 ]]; do
         --docker)
             BUILD_DOCKER=true
             EXPLICIT_TARGET=true
-            shift
-            ;;
-        -p|--publish)
-            PUBLISH=true
             shift
             ;;
         --clean)
@@ -132,9 +129,4 @@ if [ "$BUILD_DOCKER" = true ]; then
 fi
 
 echo -e "${GREEN}=== Build Complete ===${NC}"
-
-if [ "$PUBLISH" = true ]; then
-    echo -e "${YELLOW}Triggering release publication...${NC}"
-    ./publish.sh
-fi
 
