@@ -148,8 +148,14 @@ func (g *Group) Submit(msg stores.BrokerMessage) {
 	g.outCount.Add(1)
 	if g.lastVal != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		if err := g.lastVal.AddAll(ctx, []stores.BrokerMessage{msg}); err != nil && g.logger != nil {
-			g.logger.Warn("archive lastval write failed", "group", g.cfg.Name, "err", err)
+		if len(msg.Payload) == 0 {
+			if err := g.lastVal.DelAll(ctx, []string{msg.TopicName}); err != nil && g.logger != nil {
+				g.logger.Warn("archive lastval delete failed", "group", g.cfg.Name, "err", err)
+			}
+		} else {
+			if err := g.lastVal.AddAll(ctx, []stores.BrokerMessage{msg}); err != nil && g.logger != nil {
+				g.logger.Warn("archive lastval write failed", "group", g.cfg.Name, "err", err)
+			}
 		}
 		cancel()
 	}

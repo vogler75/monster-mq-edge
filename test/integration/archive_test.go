@@ -60,3 +60,56 @@ func TestDefaultArchiveGroupUsesMemoryLastValue(t *testing.T) {
 		t.Fatalf("Default last-value message = %#v", msg)
 	}
 }
+
+func TestDefaultArchiveGroupEmptyMessageDeletesLastValue(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "archive.db")
+	port := 22004
+	srv := startWithDB(t, port, dbPath, nil)
+	defer srv.Close()
+
+	client := mqtt.NewClient(mqttOpts(port, "ar-empty-pub"))
+	if tok := client.Connect(); tok.WaitTimeout(2 * time.Second) && tok.Error() != nil {
+		t.Fatal(tok.Error())
+	}
+
+	// 1. Publish a normal message
+	if tok := client.Publish("sensor/humidity", 0, false, "65%"); tok.WaitTimeout(2 * time.Second) && tok.Error() != nil {
+		t.Fatal(tok.Error())
+	}
+	time.Sleep(200 * time.Millisecond)
+
+	var def stores.MessageStore
+	for _, group := range srv.Archives().Snapshot() {
+		if group.Name() == "Default" {
+			def = group.LastValue()
+			break
+		}
+	}
+	if def == nil {
+		t.Fatal("Default last-value store missing")
+	}
+
+	msg, err := def.Get(context.Background(), "sensor/humidity")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg == nil || string(msg.Payload) != "65%" {
+		t.Fatalf("Expected LastValue '65%%', got %#v", msg)
+	}
+
+	// 2. Publish an empty message (tombstone)
+	if tok := client.Publish("sensor/humidity", 0, false, ""); tok.WaitTimeout(2 * time.Second) && tok.Error() != nil {
+		t.Fatal(tok.Error())
+	}
+	time.Sleep(200 * time.Millisecond)
+	client.Disconnect(100)
+
+	msgDeleted, err := def.Get(context.Background(), "sensor/humidity")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msgDeleted != nil {
+		t.Fatalf("Expected LastValue entry for 'sensor/humidity' to be deleted, got %#v", msgDeleted)
+	}
+}
+
