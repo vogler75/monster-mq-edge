@@ -20,6 +20,7 @@ import (
 	"monstermq.io/edge/internal/graphql/resolvers"
 	"monstermq.io/edge/internal/hostinfo"
 	mlog "monstermq.io/edge/internal/log"
+	"monstermq.io/edge/internal/mcp"
 	"monstermq.io/edge/internal/metrics"
 	"monstermq.io/edge/internal/pubsub"
 	"monstermq.io/edge/internal/stores"
@@ -45,6 +46,7 @@ type Server struct {
 	winCCUa     *winccua.Manager
 	winCCOa     *winccoa.Manager
 	gqlSrv      *gql.Server
+	mcpSrv      *mcp.Server
 	hostMonitor *hostinfo.Collector
 	metricsCtx  context.Context
 	metricsStop context.CancelFunc
@@ -246,11 +248,17 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 		gqlSrv = gql.NewServer(cfg, resolver, logger)
 	}
 
+	// 9. MCP server (Streamable HTTP / SSE)
+	var mcpSrv *mcp.Server
+	if cfg.MCP.Enabled {
+		mcpSrv = mcp.NewServer(cfg, storage, archives, authCache, publishFn, logger)
+	}
+
 	return &Server{
 		cfg: cfg, logger: logger, mochi: server,
 		storage: storage, bus: bus, subs: subs, archives: archives, authCache: authCache,
 		collector: collector, bridges: bridges, winCCUa: winCCUa, winCCOa: winCCOa, gqlSrv: gqlSrv,
-		hostMonitor: hostMonitor,
+		mcpSrv: mcpSrv, hostMonitor: hostMonitor,
 	}, nil
 }
 
@@ -380,6 +388,13 @@ func (s *Server) Serve() error {
 			}
 		}()
 	}
+	if s.mcpSrv != nil {
+		go func() {
+			if err := s.mcpSrv.Start(); err != nil {
+				s.logger.Error("mcp server error", "err", err)
+			}
+		}()
+	}
 	return s.mochi.Serve()
 }
 
@@ -406,6 +421,11 @@ func (s *Server) Close() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = s.gqlSrv.Stop(ctx)
+	}
+	if s.mcpSrv != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = s.mcpSrv.Stop(ctx)
 	}
 	if s.archives != nil {
 		s.archives.Stop()

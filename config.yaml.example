@@ -49,11 +49,16 @@ GraphQL:
   Enabled: true
   Port: 4000
 
+MCP:
+  Enabled: false
+  Port: 3000
+
 Features:
   MqttClient: true
   WinCCUa: false
   WinCCOa: false
   DeviceImportExport: true
+  Mcp: false
 
 HostMonitoring:
   Enabled: false
