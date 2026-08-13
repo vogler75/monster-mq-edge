@@ -936,6 +936,49 @@ func setDeviceEnabled(ctx context.Context, client *Client, args []string, enable
 	return nil
 }
 
+func runListFeatures(ctx context.Context, client *Client, args []string) error {
+	query := `
+		query {
+			broker {
+				enabledFeatures
+			}
+		}
+	`
+	var res struct {
+		Data struct {
+			Broker struct {
+				EnabledFeatures []string `json:"enabledFeatures"`
+			} `json:"broker"`
+		} `json:"data"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+
+	if err := client.DoQuery(ctx, query, nil, &res); err != nil {
+		return err
+	}
+	if len(res.Errors) > 0 {
+		return fmt.Errorf("GraphQL error: %s", res.Errors[0].Message)
+	}
+
+	if client.cfg.JSONMode {
+		return printJSON(res.Data.Broker.EnabledFeatures)
+	}
+
+	if len(res.Data.Broker.EnabledFeatures) == 0 {
+		fmt.Println("No features enabled")
+		return nil
+	}
+
+	fmt.Println("ENABLED FEATURES")
+	fmt.Println(strings.Repeat("-", 20))
+	for _, f := range res.Data.Broker.EnabledFeatures {
+		fmt.Println(f)
+	}
+	return nil
+}
+
 func printJSON(v any) error {
 	bytes, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {

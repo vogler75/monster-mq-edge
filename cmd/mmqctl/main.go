@@ -29,6 +29,7 @@ Commands:
   archive-stats <group>                       Get stats for an archive group (--start, --end, --last-seconds)
   query-history <topic>                       Query historical messages for a topic
   query-aggregated <topics...>                Query aggregated time-series data
+  features                                    List enabled broker features
   device list                                 List all configured devices/subsystems
   device download [name] [file]               Download device configuration JSON
   device upload <file>                        Upload device configuration JSON file
@@ -39,6 +40,7 @@ Examples:
   mmqctl --url http://localhost:4000/graphql get-value sensors/temp/room1
   mmqctl set-value sensors/temp/room1 '{"temp": 22.5}' --retain
   mmqctl query-history sensors/temp/room1 --last-seconds 3600
+  mmqctl features
   mmqctl device list
   mmqctl device download MyDevice device.json
   mmqctl device upload device.json
@@ -113,6 +115,8 @@ func main() {
 		err = runQueryHistory(ctx, client, subargs)
 	case "query-aggregated", "aggregated":
 		err = runQueryAggregated(ctx, client, subargs)
+	case "features", "enabled-features", "list-features":
+		err = runListFeatures(ctx, client, subargs)
 	case "device", "devices":
 		if len(subargs) == 0 {
 			err = runDeviceList(ctx, client, nil)

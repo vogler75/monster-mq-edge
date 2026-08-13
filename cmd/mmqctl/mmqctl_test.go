@@ -1,9 +1,13 @@
 package main
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestLoadDotEnv(t *testing.T) {
@@ -50,5 +54,37 @@ func TestResolveClientConfig(t *testing.T) {
 	}
 	if !cfg.JSONMode {
 		t.Errorf("expected JSONMode to be true")
+	}
+}
+
+func TestRunListFeatures(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"broker":{"enabledFeatures":["MqttClient","WinccUaBridge"]}}}`))
+	}))
+	defer server.Close()
+
+	cfg := &ClientConfig{
+		URL:     server.URL,
+		Timeout: 5 * time.Second,
+	}
+	client := NewClient(cfg)
+
+	err := runListFeatures(context.Background(), client, nil)
+	if err != nil {
+		t.Fatalf("runListFeatures failed: %v", err)
+	}
+
+	cfgJSON := &ClientConfig{
+		URL:      server.URL,
+		Timeout:  5 * time.Second,
+		JSONMode: true,
+	}
+	clientJSON := NewClient(cfgJSON)
+
+	err = runListFeatures(context.Background(), clientJSON, nil)
+	if err != nil {
+		t.Fatalf("runListFeatures json mode failed: %v", err)
 	}
 }

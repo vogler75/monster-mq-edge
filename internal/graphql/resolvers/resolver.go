@@ -375,7 +375,7 @@ func deviceInputToStore(in generated.DeviceInput) (stores.DeviceConfig, error) {
 	if err != nil {
 		return stores.DeviceConfig{}, fmt.Errorf("config must be a JSON object: %w", err)
 	}
-	deviceType := "OPCUA-Client"
+	var deviceType string
 	if in.Type != nil && strings.TrimSpace(*in.Type) != "" {
 		deviceType = strings.TrimSpace(*in.Type)
 	}
