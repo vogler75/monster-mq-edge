@@ -101,6 +101,14 @@
         "MountPath": { "type": "string", "default": "/hmi" }
       }
     },
+    "MCP": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "Enabled": { "type": "boolean", "description": "Enable the Model Context Protocol (MCP) server." },
+        "Port":    { "type": "integer", "minimum": 1, "maximum": 65535, "default": 3000 }
+      }
+    },
     "Features": {
       "type": "object",
       "additionalProperties": false,
@@ -109,7 +117,8 @@
         "MqttClient":         { "type": "boolean", "description": "Enable the outbound MQTT bridge client manager." },
         "WinCCUa":            { "type": "boolean", "description": "Enable the WinCC Unified bridge (GraphQL or Open Pipe transports)." },
         "WinCCOa":            { "type": "boolean", "description": "Enable the WinCC Open Architecture bridge (GraphQL/WebSocket transport)." },
-        "DeviceImportExport": { "type": "boolean", "description": "Enable generic device configuration export/import GraphQL operations." }
+        "DeviceImportExport": { "type": "boolean", "description": "Enable generic device configuration export/import GraphQL operations." },
+        "Mcp":                { "type": "boolean", "description": "Enable the MCP server feature toggle." }
       }
     },
     "HostMonitoring": {

@@ -96,6 +96,9 @@ func (r *Resolver) enabledFeatures() []string {
 	if r.Cfg.Features.DeviceImportExport {
 		out = append(out, "DeviceImportExport")
 	}
+	if r.Cfg.Features.Mcp || r.Cfg.MCP.Enabled {
+		out = append(out, "Mcp")
+	}
 	return out
 }
 

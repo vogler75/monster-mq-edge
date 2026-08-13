@@ -113,6 +113,11 @@ type GraphQLConfig struct {
 	Port    int  `yaml:"Port"`
 }
 
+type MCPConfig struct {
+	Enabled bool `yaml:"Enabled"`
+	Port    int  `yaml:"Port"`
+}
+
 type HostMonitoringConfig struct {
 	Enabled         bool   `yaml:"Enabled"`
 	BaseTopic       string `yaml:"BaseTopic"`
@@ -134,6 +139,7 @@ type FeaturesConfig struct {
 	WinCCUa            bool `yaml:"WinCCUa"`
 	WinCCOa            bool `yaml:"WinCCOa"`
 	DeviceImportExport bool `yaml:"DeviceImportExport"`
+	Mcp                bool `yaml:"Mcp"`
 }
 
 type Config struct {
@@ -158,6 +164,7 @@ type Config struct {
 	Metrics        MetricsConfig        `yaml:"Metrics"`
 	Logging        LoggingConfig        `yaml:"Logging"`
 	GraphQL        GraphQLConfig        `yaml:"GraphQL"`
+	MCP            MCPConfig            `yaml:"MCP"`
 	Features       FeaturesConfig       `yaml:"Features"`
 	HostMonitoring HostMonitoringConfig `yaml:"HostMonitoring"`
 	HMI            HMIConfig            `yaml:"HMI"`
@@ -193,7 +200,8 @@ func Default() *Config {
 		Metrics:               MetricsConfig{Enabled: true, CollectionIntervalSeconds: 1, RetentionHours: 168, MaxHistoryRows: 3600},
 		Logging:               LoggingConfig{Level: "INFO", MqttSyslogEnabled: false, RingBufferSize: 1000},
 		GraphQL:               GraphQLConfig{Enabled: true, Port: 8080},
-		Features:              FeaturesConfig{MqttClient: false, WinCCUa: false, WinCCOa: false, DeviceImportExport: false}, // Note: actually features default to false, we don't have to change features list but keep default format clean
+		MCP:                   MCPConfig{Enabled: false, Port: 3000},
+		Features:              FeaturesConfig{MqttClient: false, WinCCUa: false, WinCCOa: false, DeviceImportExport: false, Mcp: false},
 		HostMonitoring: HostMonitoringConfig{
 			Enabled:         false,
 			BaseTopic:       "nodes/{NodeId}/host",
