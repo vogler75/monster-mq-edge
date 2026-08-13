@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -1005,14 +1006,49 @@ func (r *queryResolver) SearchTopics(ctx context.Context, pattern string, limit 
 		return []string{}, nil
 	}
 	max := intPtr(limit, 100)
+	matcher := compileSearchMatcher(pattern)
 	out := []string{}
 	err := store.FindMatchingTopics(ctx, "#", func(topic string) bool {
-		if pattern == "" || strings.Contains(topic, pattern) {
+		if matcher(topic) {
 			out = append(out, topic)
 		}
 		return len(out) < max
 	})
 	return out, err
+}
+
+func compileSearchMatcher(pattern string) func(string) bool {
+	if pattern == "" {
+		return func(string) bool { return true }
+	}
+	hasWildcard := strings.ContainsAny(pattern, "*%?_+#")
+	if hasWildcard {
+		var sb strings.Builder
+		sb.WriteString("(?i)^")
+		for _, r := range pattern {
+			switch r {
+			case '*', '%', '#':
+				sb.WriteString(".*")
+			case '?', '_':
+				sb.WriteString(".")
+			case '+':
+				sb.WriteString("[^/]+")
+			default:
+				sb.WriteString(regexp.QuoteMeta(string(r)))
+			}
+		}
+		sb.WriteString("$")
+		re, err := regexp.Compile(sb.String())
+		if err == nil {
+			return func(topic string) bool {
+				return re.MatchString(topic)
+			}
+		}
+	}
+	lowerPattern := strings.ToLower(pattern)
+	return func(topic string) bool {
+		return strings.Contains(strings.ToLower(topic), lowerPattern)
+	}
 }
 
 // BrowseTopics returns the distinct topic prefixes truncated at the level of
