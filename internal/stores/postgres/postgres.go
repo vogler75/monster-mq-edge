@@ -1573,10 +1573,10 @@ func (d *DeviceConfigStore) GetAll(ctx context.Context) ([]stores.DeviceConfig, 
 	return d.query(ctx, `SELECT name, namespace, node_id, config, enabled, type, created_at, updated_at FROM deviceconfigs ORDER BY name`)
 }
 func (d *DeviceConfigStore) GetByNode(ctx context.Context, nodeID string) ([]stores.DeviceConfig, error) {
-	return d.query(ctx, `SELECT name, namespace, node_id, config, enabled, type, created_at, updated_at FROM deviceconfigs WHERE node_id=$1 ORDER BY name`, nodeID)
+	return d.query(ctx, `SELECT name, namespace, node_id, config, enabled, type, created_at, updated_at FROM deviceconfigs WHERE node_id=$1 OR node_id='local' OR node_id='*' ORDER BY name`, nodeID)
 }
 func (d *DeviceConfigStore) GetEnabledByNode(ctx context.Context, nodeID string) ([]stores.DeviceConfig, error) {
-	return d.query(ctx, `SELECT name, namespace, node_id, config, enabled, type, created_at, updated_at FROM deviceconfigs WHERE node_id=$1 AND enabled=1 ORDER BY name`, nodeID)
+	return d.query(ctx, `SELECT name, namespace, node_id, config, enabled, type, created_at, updated_at FROM deviceconfigs WHERE (node_id=$1 OR node_id='local' OR node_id='*') AND enabled=1 ORDER BY name`, nodeID)
 }
 func (d *DeviceConfigStore) query(ctx context.Context, q string, args ...any) ([]stores.DeviceConfig, error) {
 	rows, err := d.db.pool.Query(ctx, q, args...)

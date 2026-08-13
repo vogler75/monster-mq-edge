@@ -1427,10 +1427,23 @@ func (d *DeviceConfigStore) GetAll(ctx context.Context) ([]stores.DeviceConfig, 
 	return d.query(ctx, bson.M{})
 }
 func (d *DeviceConfigStore) GetByNode(ctx context.Context, nodeID string) ([]stores.DeviceConfig, error) {
-	return d.query(ctx, bson.M{"node_id": nodeID})
+	return d.query(ctx, bson.M{
+		"$or": []bson.M{
+			{"node_id": nodeID},
+			{"node_id": "local"},
+			{"node_id": "*"},
+		},
+	})
 }
 func (d *DeviceConfigStore) GetEnabledByNode(ctx context.Context, nodeID string) ([]stores.DeviceConfig, error) {
-	return d.query(ctx, bson.M{"node_id": nodeID, "enabled": true})
+	return d.query(ctx, bson.M{
+		"$or": []bson.M{
+			{"node_id": nodeID},
+			{"node_id": "local"},
+			{"node_id": "*"},
+		},
+		"enabled": true,
+	})
 }
 func (d *DeviceConfigStore) query(ctx context.Context, filter bson.M) ([]stores.DeviceConfig, error) {
 	cur, err := d.coll().Find(ctx, filter, options.Find().SetSort(bson.D{{Key: "name", Value: 1}}))
