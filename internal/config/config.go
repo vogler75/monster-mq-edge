@@ -134,6 +134,7 @@ type FeaturesConfig struct {
 	WinCCOa            bool `yaml:"WinCCOa"`
 	DeviceImportExport bool `yaml:"DeviceImportExport"`
 	Mcp                bool `yaml:"Mcp"`
+	Hmi                bool `yaml:"Hmi"`
 }
 
 type Config struct {
@@ -194,7 +195,7 @@ func Default() *Config {
 		Logging:               LoggingConfig{Level: "INFO", MqttSyslogEnabled: false, RingBufferSize: 1000},
 		GraphQL:               GraphQLConfig{Enabled: true, Port: 8080},
 		MCP:                   MCPConfig{Enabled: false, Port: 3000},
-		Features:              FeaturesConfig{MqttClient: false, WinCCUa: false, WinCCOa: false, DeviceImportExport: false, Mcp: false},
+		Features:              FeaturesConfig{MqttClient: false, WinCCUa: false, WinCCOa: false, DeviceImportExport: false, Mcp: false, Hmi: false},
 		HostMonitoring: HostMonitoringConfig{
 			Enabled:         false,
 			BaseTopic:       "nodes/{NodeId}/host",

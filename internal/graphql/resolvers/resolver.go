@@ -95,6 +95,9 @@ func (r *Resolver) enabledFeatures() []string {
 	if r.Cfg.Features.Mcp || r.Cfg.MCP.Enabled {
 		out = append(out, "Mcp")
 	}
+	if r.Cfg.Features.Hmi {
+		out = append(out, "Hmi")
+	}
 	return out
 }
 

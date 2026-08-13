@@ -59,6 +59,7 @@ Features:
   WinCCOa: false
   DeviceImportExport: true
   Mcp: false
+  Hmi: false
 
 HostMonitoring:
   Enabled: false
