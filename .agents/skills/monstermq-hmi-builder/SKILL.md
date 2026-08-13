@@ -279,17 +279,3 @@ When creating a new HMI screen, generate a self-contained single-file HTML like 
 </body>
 </html>
 ```
-
----
-
-## 5. MCP Server Tool Reference for AI Agents
-
-AI assistants can interact with MonsterMQ Edge via the embedded MCP Server (`http://<broker>:3000/sse`) using these tools:
-
-1. `list_dashboards()`: Returns all installed HMI apps and indicates which one is `isMain`.
-2. `create_dashboard(name: string, set_as_main: bool)`: Creates a new dashboard folder under `./data/hmi/<name>/`.
-3. `delete_dashboard(name: string)`: Removes a dashboard app.
-4. `set_main_dashboard(name: string)`: Sets the specified dashboard as the primary one served at `/hmi/`.
-5. `list_hmi_files(dashboard: string)`: Lists all files in a dashboard directory.
-6. `read_hmi_file(dashboard: string, path: string)`: Reads an HTML/JS/CSS file.
-7. `write_hmi_file(dashboard: string, path: string, content: string)`: Writes/deploys an HTML/JS/CSS file directly to the edge broker.

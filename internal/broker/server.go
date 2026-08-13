@@ -21,7 +21,6 @@ import (
 	"monstermq.io/edge/internal/hostinfo"
 	"monstermq.io/edge/internal/hmi"
 	mlog "monstermq.io/edge/internal/log"
-	"monstermq.io/edge/internal/mcp"
 	"monstermq.io/edge/internal/metrics"
 	"monstermq.io/edge/internal/pubsub"
 	"monstermq.io/edge/internal/stores"
@@ -47,7 +46,6 @@ type Server struct {
 	winCCUa     *winccua.Manager
 	winCCOa     *winccoa.Manager
 	gqlSrv      *gql.Server
-	mcpSrv      *mcp.Server
 	hostMonitor *hostinfo.Collector
 	metricsCtx  context.Context
 	metricsStop context.CancelFunc
@@ -255,17 +253,11 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 		gqlSrv = gql.NewServer(cfg, resolver, hmiMgr, logger)
 	}
 
-	// 9. MCP Server
-	var mcpSrv *mcp.Server
-	if cfg.MCP.Enabled {
-		mcpSrv = mcp.NewServer(cfg, hmiMgr, logger)
-	}
-
 	return &Server{
 		cfg: cfg, logger: logger, mochi: server,
 		storage: storage, bus: bus, subs: subs, archives: archives, authCache: authCache,
 		collector: collector, bridges: bridges, winCCUa: winCCUa, winCCOa: winCCOa, gqlSrv: gqlSrv,
-		mcpSrv: mcpSrv, hostMonitor: hostMonitor,
+		hostMonitor: hostMonitor,
 	}, nil
 }
 
@@ -392,13 +384,6 @@ func (s *Server) Serve() error {
 		go func() {
 			if err := s.gqlSrv.Start(); err != nil {
 				s.logger.Error("graphql server error", "err", err)
-			}
-		}()
-	}
-	if s.mcpSrv != nil {
-		go func() {
-			if err := s.mcpSrv.Start(); err != nil {
-				s.logger.Error("mcp server error", "err", err)
 			}
 		}()
 	}
