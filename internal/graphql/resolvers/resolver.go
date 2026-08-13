@@ -46,7 +46,7 @@ type Resolver struct {
 	NodeID    string
 	Version   string
 	Mochi     *mqtt.Server
-	Hmi       *hmi.Manager
+	HmiMgr    *hmi.Manager
 
 	// Publish injects a message into the local broker (used by the publish mutation).
 	Publish func(topic string, payload []byte, retain bool, qos byte) error
@@ -75,7 +75,7 @@ func New(cfg *config.Config, storage *stores.Storage, bus *pubsub.Bus, archives 
 		Version:   formatEdgeVersion(version.Version),
 		Mochi:     mochi,
 		Publish:   publish,
-		Hmi:       hmiMgr,
+		HmiMgr:    hmiMgr,
 	}
 }
 
@@ -98,6 +98,9 @@ func (r *Resolver) enabledFeatures() []string {
 	}
 	if r.Cfg.Features.Mcp || r.Cfg.MCP.Enabled {
 		out = append(out, "Mcp")
+	}
+	if r.Cfg.Features.Hmi || r.Cfg.HMI.Enabled {
+		out = append(out, "Hmi")
 	}
 	return out
 }
@@ -125,6 +128,9 @@ func (r *Resolver) SessionMutations() generated.SessionMutationsResolver {
 func (r *Resolver) MqttClient() generated.MqttClientResolver { return &mqttClientResolver{r} }
 func (r *Resolver) MqttClientMutations() generated.MqttClientMutationsResolver {
 	return &mqttClientMutationsResolver{r}
+}
+func (r *Resolver) HmiMutations() generated.HmiMutationsResolver {
+	return &hmiMutationsResolver{r}
 }
 func (r *Resolver) WinCCUaClient() generated.WinCCUaClientResolver {
 	return &winCCUaClientResolver{r}
@@ -616,7 +622,7 @@ func (r *queryResolver) BrokerConfig(ctx context.Context) (*generated.BrokerConf
 		McpEnabled: false, McpPort: 0, PrometheusEnabled: false, PrometheusPort: 0,
 		I3xEnabled: false, I3xPort: 0,
 		GraphqlEnabled: c.GraphQL.Enabled, GraphqlPort: c.GraphQL.Port,
-		MetricsEnabled: c.Metrics.Enabled,
+		MetricsEnabled: c.Metrics.Enabled, HmiEnabled: c.Features.Hmi || c.HMI.Enabled,
 		GenAiEnabled:   false, GenAiProvider: "", GenAiModel: "",
 		PostgresURL: c.Postgres.URL, PostgresUser: c.Postgres.User,
 		CrateDbURL: "", CrateDbUser: "",
@@ -2680,52 +2686,78 @@ func asInt64(v any, def int64) int64 {
 	return def
 }
 
-func mapDashboardApp(d *hmi.DashboardApp) *generated.DashboardApp {
+func mapHmiDevice(d *hmi.HmiDevice) *generated.Hmi {
 	if d == nil {
 		return nil
 	}
-	updatedAt := d.UpdatedAt.Format(time.RFC3339)
-	return &generated.DashboardApp{
-		Name:      d.Name,
-		IsMain:    d.IsMain,
-		Path:      d.Path,
-		FileCount: d.FileCount,
-		SizeBytes: d.SizeBytes,
-		UpdatedAt: &updatedAt,
+	fileCount := d.FileCount
+	sizeBytes := d.SizeBytes
+	return &generated.Hmi{
+		Name:    d.Name,
+		NodeID:  d.NodeID,
+		Enabled: d.Enabled,
+		Config: &generated.HmiConfig{
+			URLPath:     d.Config.UrlPath,
+			IsMain:      d.Config.IsMain,
+			Title:       &d.Config.Title,
+			Description: &d.Config.Description,
+			EntryPoint:  &d.Config.EntryPoint,
+		},
+		CreatedAt:       d.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:       d.UpdatedAt.Format(time.RFC3339),
+		IsOnCurrentNode: d.IsOnCurrentNode,
+		FileCount:       &fileCount,
+		SizeBytes:       &sizeBytes,
 	}
 }
 
-func (r *queryResolver) Dashboards(ctx context.Context) ([]*generated.DashboardApp, error) {
-	if r.Hmi == nil {
-		return []*generated.DashboardApp{}, nil
+type hmiMutationsResolver struct{ *Resolver }
+
+func (r *mutationResolver) Hmi(ctx context.Context) (*generated.HmiMutations, error) {
+	return &generated.HmiMutations{}, nil
+}
+
+func (r *queryResolver) Hmis(ctx context.Context, name *string, nodeId *string) ([]*generated.Hmi, error) {
+	if r.HmiMgr == nil {
+		return []*generated.Hmi{}, nil
 	}
-	list, err := r.Hmi.ListDashboards()
+	list, err := r.HmiMgr.ListHmis()
 	if err != nil {
 		return nil, err
 	}
-	var out []*generated.DashboardApp
+	var out []*generated.Hmi
 	for _, d := range list {
-		out = append(out, mapDashboardApp(d))
+		if name != nil && d.Name != *name {
+			continue
+		}
+		if nodeId != nil && *nodeId != "" {
+			target := *nodeId
+			matches := d.NodeID == target || d.NodeID == "local" || d.NodeID == "*" || (target == "local" && (d.NodeID == r.NodeID || d.NodeID == "local" || d.NodeID == "*"))
+			if !matches {
+				continue
+			}
+		}
+		out = append(out, mapHmiDevice(d))
 	}
 	return out, nil
 }
 
-func (r *queryResolver) Dashboard(ctx context.Context, name string) (*generated.DashboardApp, error) {
-	if r.Hmi == nil {
+func (r *queryResolver) Hmi(ctx context.Context, name string) (*generated.Hmi, error) {
+	if r.HmiMgr == nil {
 		return nil, nil
 	}
-	d, err := r.Hmi.GetDashboard(name)
+	d, err := r.HmiMgr.GetHmi(name)
 	if err != nil {
 		return nil, nil
 	}
-	return mapDashboardApp(d), nil
+	return mapHmiDevice(d), nil
 }
 
-func (r *queryResolver) DashboardFiles(ctx context.Context, name string) ([]*generated.DashboardFile, error) {
-	if r.Hmi == nil {
+func (r *queryResolver) HmiFiles(ctx context.Context, name string) ([]*generated.DashboardFile, error) {
+	if r.HmiMgr == nil {
 		return []*generated.DashboardFile{}, nil
 	}
-	files, err := r.Hmi.ListDashboardFiles(name)
+	files, err := r.HmiMgr.ListDashboardFiles(name)
 	if err != nil {
 		return nil, err
 	}
@@ -2739,70 +2771,111 @@ func (r *queryResolver) DashboardFiles(ctx context.Context, name string) ([]*gen
 	return out, nil
 }
 
-func (r *queryResolver) ExportDashboard(ctx context.Context, name string) (string, error) {
-	if r.Hmi == nil {
+func (r *queryResolver) ExportHmiZip(ctx context.Context, name string) (string, error) {
+	if r.HmiMgr == nil {
 		return "", fmt.Errorf("HMI is not enabled")
 	}
-	return r.Hmi.ExportDashboardZip(name)
+	return r.HmiMgr.ExportDashboardZip(name)
 }
 
-func (r *mutationResolver) CreateDashboard(ctx context.Context, name string, setAsMain *bool) (*generated.DashboardAppResult, error) {
-	if r.Hmi == nil {
+func (r *hmiMutationsResolver) Create(ctx context.Context, _ *generated.HmiMutations, input generated.HmiInput) (*generated.HmiResult, error) {
+	if r.HmiMgr == nil {
 		msg := "HMI is not enabled"
-		return &generated.DashboardAppResult{Success: false, Message: &msg}, nil
+		return &generated.HmiResult{Success: false, Message: &msg}, nil
+	}
+	nodeID := "local"
+	if input.NodeID != nil && *input.NodeID != "" {
+		nodeID = *input.NodeID
+	}
+	cfg := hmi.HmiConfig{}
+	if input.Config.URLPath != nil {
+		cfg.UrlPath = *input.Config.URLPath
+	}
+	if input.Config.IsMain != nil {
+		cfg.IsMain = *input.Config.IsMain
+	}
+	if input.Config.Title != nil {
+		cfg.Title = *input.Config.Title
+	}
+	if input.Config.Description != nil {
+		cfg.Description = *input.Config.Description
+	}
+	if input.Config.EntryPoint != nil {
+		cfg.EntryPoint = *input.Config.EntryPoint
+	}
+
+	d, err := r.HmiMgr.SaveHmiDevice(input.Name, nodeID, input.Enabled, cfg)
+	if err != nil {
+		msg := err.Error()
+		return &generated.HmiResult{Success: false, Message: &msg}, nil
+	}
+	return &generated.HmiResult{Success: true, Hmi: mapHmiDevice(d)}, nil
+}
+
+func (r *hmiMutationsResolver) Update(ctx context.Context, _ *generated.HmiMutations, name string, input generated.HmiInput) (*generated.HmiResult, error) {
+	return r.Create(ctx, nil, input)
+}
+
+func (r *hmiMutationsResolver) Delete(ctx context.Context, _ *generated.HmiMutations, name string) (*generated.HmiResult, error) {
+	if r.HmiMgr == nil {
+		msg := "HMI is not enabled"
+		return &generated.HmiResult{Success: false, Message: &msg}, nil
+	}
+	err := r.HmiMgr.DeleteHmiDevice(name)
+	if err != nil {
+		msg := err.Error()
+		return &generated.HmiResult{Success: false, Message: &msg}, nil
+	}
+	return &generated.HmiResult{Success: true}, nil
+}
+
+func (r *hmiMutationsResolver) Start(ctx context.Context, _ *generated.HmiMutations, name string) (*generated.HmiResult, error) {
+	return r.Toggle(ctx, nil, name, true)
+}
+
+func (r *hmiMutationsResolver) Stop(ctx context.Context, _ *generated.HmiMutations, name string) (*generated.HmiResult, error) {
+	return r.Toggle(ctx, nil, name, false)
+}
+
+func (r *hmiMutationsResolver) Toggle(ctx context.Context, _ *generated.HmiMutations, name string, enabled bool) (*generated.HmiResult, error) {
+	if r.HmiMgr == nil {
+		msg := "HMI is not enabled"
+		return &generated.HmiResult{Success: false, Message: &msg}, nil
+	}
+	d, err := r.HmiMgr.ToggleHmiDevice(name, enabled)
+	if err != nil {
+		msg := err.Error()
+		return &generated.HmiResult{Success: false, Message: &msg}, nil
+	}
+	return &generated.HmiResult{Success: true, Hmi: mapHmiDevice(d)}, nil
+}
+
+func (r *hmiMutationsResolver) Reassign(ctx context.Context, _ *generated.HmiMutations, name string, nodeId string) (*generated.HmiResult, error) {
+	if r.HmiMgr == nil {
+		msg := "HMI is not enabled"
+		return &generated.HmiResult{Success: false, Message: &msg}, nil
+	}
+	d, err := r.HmiMgr.ReassignHmiDevice(name, nodeId)
+	if err != nil {
+		msg := err.Error()
+		return &generated.HmiResult{Success: false, Message: &msg}, nil
+	}
+	return &generated.HmiResult{Success: true, Hmi: mapHmiDevice(d)}, nil
+}
+
+func (r *hmiMutationsResolver) UploadZip(ctx context.Context, _ *generated.HmiMutations, name string, zipBase64 string, setAsMain *bool) (*generated.HmiResult, error) {
+	if r.HmiMgr == nil {
+		msg := "HMI is not enabled"
+		return &generated.HmiResult{Success: false, Message: &msg}, nil
 	}
 	isMain := false
 	if setAsMain != nil {
 		isMain = *setAsMain
 	}
-	d, err := r.Hmi.CreateDashboard(name, isMain)
+	d, err := r.HmiMgr.UploadDashboardZip(name, zipBase64, isMain)
 	if err != nil {
 		msg := err.Error()
-		return &generated.DashboardAppResult{Success: false, Message: &msg}, nil
+		return &generated.HmiResult{Success: false, Message: &msg}, nil
 	}
-	return &generated.DashboardAppResult{Success: true, Dashboard: mapDashboardApp(d)}, nil
-}
-
-func (r *mutationResolver) DeleteDashboard(ctx context.Context, name string) (*generated.DashboardAppResult, error) {
-	if r.Hmi == nil {
-		msg := "HMI is not enabled"
-		return &generated.DashboardAppResult{Success: false, Message: &msg}, nil
-	}
-	err := r.Hmi.DeleteDashboard(name)
-	if err != nil {
-		msg := err.Error()
-		return &generated.DashboardAppResult{Success: false, Message: &msg}, nil
-	}
-	return &generated.DashboardAppResult{Success: true}, nil
-}
-
-func (r *mutationResolver) SetMainDashboard(ctx context.Context, name string) (*generated.DashboardAppResult, error) {
-	if r.Hmi == nil {
-		msg := "HMI is not enabled"
-		return &generated.DashboardAppResult{Success: false, Message: &msg}, nil
-	}
-	err := r.Hmi.SetMainDashboard(name)
-	if err != nil {
-		msg := err.Error()
-		return &generated.DashboardAppResult{Success: false, Message: &msg}, nil
-	}
-	d, _ := r.Hmi.GetDashboard(name)
-	return &generated.DashboardAppResult{Success: true, Dashboard: mapDashboardApp(d)}, nil
-}
-
-func (r *mutationResolver) UploadDashboard(ctx context.Context, name string, zipBase64 string, setAsMain *bool) (*generated.DashboardAppResult, error) {
-	if r.Hmi == nil {
-		msg := "HMI is not enabled"
-		return &generated.DashboardAppResult{Success: false, Message: &msg}, nil
-	}
-	isMain := false
-	if setAsMain != nil {
-		isMain = *setAsMain
-	}
-	d, err := r.Hmi.UploadDashboardZip(name, zipBase64, isMain)
-	if err != nil {
-		msg := err.Error()
-		return &generated.DashboardAppResult{Success: false, Message: &msg}, nil
-	}
-	return &generated.DashboardAppResult{Success: true, Dashboard: mapDashboardApp(d)}, nil
+	return &generated.HmiResult{Success: true, Hmi: mapHmiDevice(d)}, nil
 }

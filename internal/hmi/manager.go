@@ -3,6 +3,7 @@ package hmi
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -14,15 +15,27 @@ import (
 	"time"
 
 	"monstermq.io/edge/internal/config"
+	"monstermq.io/edge/internal/stores"
 )
 
-type DashboardApp struct {
-	Name      string    `json:"name"`
-	IsMain    bool      `json:"isMain"`
-	Path      string    `json:"path"`
-	FileCount int       `json:"fileCount"`
-	SizeBytes int64     `json:"sizeBytes"`
-	UpdatedAt time.Time `json:"updatedAt"`
+type HmiConfig struct {
+	UrlPath     string `json:"urlPath"`
+	IsMain      bool   `json:"isMain"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+	EntryPoint  string `json:"entryPoint,omitempty"`
+}
+
+type HmiDevice struct {
+	Name            string    `json:"name"`
+	NodeID          string    `json:"nodeId"`
+	Enabled         bool      `json:"enabled"`
+	Config          HmiConfig `json:"config"`
+	CreatedAt       time.Time `json:"createdAt"`
+	UpdatedAt       time.Time `json:"updatedAt"`
+	IsOnCurrentNode bool      `json:"isOnCurrentNode"`
+	FileCount       int       `json:"fileCount"`
+	SizeBytes       int64     `json:"sizeBytes"`
 }
 
 type DashboardFile struct {
@@ -35,17 +48,21 @@ type Metadata struct {
 }
 
 type Manager struct {
-	mu      sync.RWMutex
-	baseDir string
+	mu          sync.RWMutex
+	baseDir     string
+	nodeID      string
+	deviceStore stores.DeviceConfigStore
 }
 
-func NewManager(cfg *config.Config) *Manager {
+func NewManager(cfg *config.Config, deviceStore stores.DeviceConfigStore) *Manager {
 	dir := cfg.HMI.Path
 	if dir == "" {
 		dir = "./data/hmi"
 	}
 	m := &Manager{
-		baseDir: dir,
+		baseDir:     dir,
+		nodeID:      cfg.NodeID,
+		deviceStore: deviceStore,
 	}
 	_ = m.EnsureInit()
 	return m
@@ -75,20 +92,23 @@ func (m *Manager) EnsureInit() error {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Main Dashboard - MonsterMQ</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MonsterMQ HMI Dashboard</title>
     <style>
-        body { font-family: sans-serif; padding: 2rem; background: #0f172a; color: #f8fafc; }
-        .card { background: #1e293b; padding: 1.5rem; border-radius: 8px; max-width: 600px; margin: 0 auto; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
-        h1 { margin-top: 0; color: #38bdf8; }
-        pre { background: #090d16; padding: 1rem; border-radius: 4px; overflow-x: auto; color: #a7f3d0; }
-        button { background: #0284c7; color: white; border: none; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer; font-size: 1rem; }
+        * { box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; padding: 2rem; background: #0f172a; color: #f8fafc; margin: 0; }
+        .card { background: #1e293b; padding: 1.5rem; border-radius: 8px; max-width: 640px; margin: 0 auto; box-shadow: 0 4px 6px rgba(0,0,0,0.3); border: 1px solid #334155; }
+        h1 { margin-top: 0; color: #38bdf8; font-size: 1.5rem; }
+        p { color: #94a3b8; font-size: 0.95rem; line-height: 1.5; }
+        pre { background: #090d16; padding: 1rem; border-radius: 6px; overflow-x: auto; color: #a7f3d0; border: 1px solid #1e293b; font-size: 0.875rem; }
+        button { background: #0284c7; color: white; border: none; padding: 0.6rem 1.2rem; border-radius: 6px; cursor: pointer; font-size: 0.95rem; font-weight: 5rem; transition: background 0.2s; }
         button:hover { background: #0369a1; }
     </style>
 </head>
 <body>
     <div class="card">
-        <h1>MonsterMQ Edge Main Dashboard</h1>
-        <p>This is the default HMI application hosted by the broker.</p>
+        <h1>MonsterMQ HMI Dashboard</h1>
+        <p>This is the default HMI application served directly by MonsterMQ.</p>
         <button onclick="checkStatus()">Check Broker Status</button>
         <pre id="output">Click button to test GraphQL connection...</pre>
     </div>
@@ -98,7 +118,7 @@ func (m *Manager) EnsureInit() error {
                 const res = await fetch('/graphql', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ query: '{ brokerConfig { nodeId version } }' })
+                    body: JSON.stringify({ query: '{ broker { nodeId version userManagementEnabled isLeader isCurrent enabledFeatures } }' })
                 });
                 const data = await res.json();
                 document.getElementById('output').textContent = JSON.stringify(data, null, 2);
@@ -110,6 +130,37 @@ func (m *Manager) EnsureInit() error {
 </body>
 </html>`
 			_ = os.WriteFile(indexPath, []byte(defaultHTML), 0644)
+		}
+	}
+
+	// Ensure DB entry for 'main' device if deviceStore is available
+	if m.deviceStore != nil {
+		ctx := context.Background()
+		dc, _ := m.deviceStore.Get(ctx, "main")
+		if dc == nil {
+			cfgJSON, _ := json.Marshal(HmiConfig{
+				UrlPath:    "",
+				IsMain:     true,
+				Title:      "Main Dashboard",
+				EntryPoint: "index.html",
+			})
+			_ = m.deviceStore.Save(ctx, stores.DeviceConfig{
+				Name:      "main",
+				Namespace: "main",
+				NodeID:    "local",
+				Type:      "HMI",
+				Enabled:   true,
+				Config:    string(cfgJSON),
+				CreatedAt: time.Now(),
+				UpdatedAt: time.Now(),
+			})
+		} else if dc.Type == "HMI" && (dc.NodeID != "local" || dc.Namespace == "") {
+			dc.NodeID = "local"
+			if dc.Namespace == "" {
+				dc.Namespace = dc.Name
+			}
+			dc.UpdatedAt = time.Now()
+			_ = m.deviceStore.Save(ctx, *dc)
 		}
 	}
 
@@ -144,115 +195,183 @@ func (m *Manager) GetMainDashboardName() string {
 	return m.getMetadataLocked().MainDashboard
 }
 
-func (m *Manager) SetMainDashboard(name string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+func (m *Manager) IsHmiEnabled(name string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 
+	if m.deviceStore != nil {
+		ctx := context.Background()
+		dc, err := m.deviceStore.Get(ctx, name)
+		if err == nil && dc != nil && dc.Type == "HMI" {
+			return dc.Enabled
+		}
+	}
+	// Default to enabled if directory exists
 	dashDir := filepath.Join(m.baseDir, name)
 	info, err := os.Stat(dashDir)
-	if err != nil || !info.IsDir() {
-		return fmt.Errorf("dashboard %q does not exist", name)
-	}
-
-	meta := m.getMetadataLocked()
-	meta.MainDashboard = name
-	return m.saveMetadataLocked(meta)
+	return err == nil && info.IsDir()
 }
 
-func (m *Manager) ListDashboards() ([]*DashboardApp, error) {
+func (m *Manager) ListHmis() ([]*HmiDevice, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	meta := m.getMetadataLocked()
+
+	// Fetch from deviceStore if available
+	var dbConfigs map[string]stores.DeviceConfig
+	if m.deviceStore != nil {
+		ctx := context.Background()
+		all, err := m.deviceStore.GetAll(ctx)
+		if err == nil {
+			dbConfigs = make(map[string]stores.DeviceConfig)
+			for _, dc := range all {
+				if dc.Type == "HMI" {
+					dbConfigs[dc.Name] = dc
+				}
+			}
+		}
+	}
 
 	entries, err := os.ReadDir(m.baseDir)
 	if err != nil {
 		return nil, err
 	}
 
-	var dashboards []*DashboardApp
+	var hmis []*HmiDevice
+	seen := make(map[string]bool)
+
 	for _, entry := range entries {
 		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
 
 		name := entry.Name()
-		dash, err := m.getDashboardStatsLocked(name, meta.MainDashboard)
+		seen[name] = true
+		hmi, err := m.getHmiStatsLocked(name, meta.MainDashboard, dbConfigs[name])
 		if err == nil {
-			dashboards = append(dashboards, dash)
+			hmis = append(hmis, hmi)
 		}
 	}
 
-	return dashboards, nil
+	// Also list deviceStore entries that may not have directory created yet
+	for name, dc := range dbConfigs {
+		if !seen[name] {
+			hmi, err := m.getHmiStatsLocked(name, meta.MainDashboard, dc)
+			if err == nil {
+				hmis = append(hmis, hmi)
+			}
+		}
+	}
+
+	return hmis, nil
 }
 
-func (m *Manager) GetDashboard(name string) (*DashboardApp, error) {
+func (m *Manager) GetHmi(name string) (*HmiDevice, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	meta := m.getMetadataLocked()
-	return m.getDashboardStatsLocked(name, meta.MainDashboard)
-}
 
-func (m *Manager) getDashboardStatsLocked(name, mainDashName string) (*DashboardApp, error) {
-	dashDir := filepath.Join(m.baseDir, name)
-	info, err := os.Stat(dashDir)
-	if err != nil || !info.IsDir() {
-		return nil, fmt.Errorf("dashboard %q not found", name)
+	var dc stores.DeviceConfig
+	if m.deviceStore != nil {
+		ctx := context.Background()
+		if found, err := m.deviceStore.Get(ctx, name); err == nil && found != nil {
+			dc = *found
+		}
 	}
 
+	return m.getHmiStatsLocked(name, meta.MainDashboard, dc)
+}
+
+func (m *Manager) getHmiStatsLocked(name, mainDashName string, dc stores.DeviceConfig) (*HmiDevice, error) {
+	dashDir := filepath.Join(m.baseDir, name)
+	info, err := os.Stat(dashDir)
 	var fileCount int
 	var totalSize int64
-	var latestMod time.Time = info.ModTime()
+	var latestMod time.Time
 
-	_ = filepath.Walk(dashDir, func(path string, f os.FileInfo, err error) error {
-		if err != nil {
-			return nil
-		}
-		if !f.IsDir() {
-			fileCount++
-			totalSize += f.Size()
-			if f.ModTime().After(latestMod) {
-				latestMod = f.ModTime()
+	if err == nil && info.IsDir() {
+		latestMod = info.ModTime()
+		_ = filepath.Walk(dashDir, func(path string, f os.FileInfo, err error) error {
+			if err != nil {
+				return nil
 			}
-		}
-		return nil
-	})
+			if !f.IsDir() {
+				fileCount++
+				totalSize += f.Size()
+				if f.ModTime().After(latestMod) {
+					latestMod = f.ModTime()
+				}
+			}
+			return nil
+		})
+	}
 
-	return &DashboardApp{
-		Name:      name,
-		IsMain:    name == mainDashName,
-		Path:      "/hmi/" + name,
-		FileCount: fileCount,
-		SizeBytes: totalSize,
-		UpdatedAt: latestMod,
+	isMain := name == mainDashName
+	urlPath := name
+	if isMain {
+		urlPath = ""
+	}
+
+	cfg := HmiConfig{
+		UrlPath: urlPath,
+		IsMain:  isMain,
+	}
+
+	nodeID := m.nodeID
+	enabled := true
+	createdAt := latestMod
+	updatedAt := latestMod
+
+	if dc.Name != "" {
+		nodeID = dc.NodeID
+		enabled = dc.Enabled
+		if !dc.CreatedAt.IsZero() {
+			createdAt = dc.CreatedAt
+		}
+		if !dc.UpdatedAt.IsZero() {
+			updatedAt = dc.UpdatedAt
+		}
+		if dc.Config != "" {
+			_ = json.Unmarshal([]byte(dc.Config), &cfg)
+		}
+	}
+
+	return &HmiDevice{
+		Name:            name,
+		NodeID:          nodeID,
+		Enabled:         enabled,
+		Config:          cfg,
+		CreatedAt:       createdAt,
+		UpdatedAt:       updatedAt,
+		IsOnCurrentNode: nodeID == m.nodeID || nodeID == "local" || nodeID == "*",
+		FileCount:       fileCount,
+		SizeBytes:       totalSize,
 	}, nil
 }
 
-func (m *Manager) CreateDashboard(name string, setAsMain bool) (*DashboardApp, error) {
+func (m *Manager) SaveHmiDevice(name string, nodeID string, enabled *bool, cfg HmiConfig) (*HmiDevice, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	name = strings.TrimSpace(name)
 	if name == "" || strings.Contains(name, "/") || strings.Contains(name, "\\") || strings.HasPrefix(name, ".") {
-		return nil, fmt.Errorf("invalid dashboard name %q", name)
+		return nil, fmt.Errorf("invalid HMI name %q", name)
 	}
 
 	dashDir := filepath.Join(m.baseDir, name)
-	if _, err := os.Stat(dashDir); err == nil {
-		return nil, fmt.Errorf("dashboard %q already exists", name)
-	}
-
 	if err := os.MkdirAll(dashDir, 0755); err != nil {
 		return nil, err
 	}
 
 	indexPath := filepath.Join(dashDir, "index.html")
-	defaultHTML := fmt.Sprintf(`<!DOCTYPE html>
+	if _, err := os.Stat(indexPath); os.IsNotExist(err) {
+		defaultHTML := fmt.Sprintf(`<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>%s Dashboard</title>
+    <title>%s</title>
     <style>body { font-family: sans-serif; padding: 2rem; background: #0f172a; color: #f8fafc; }</style>
 </head>
 <body>
@@ -260,18 +379,47 @@ func (m *Manager) CreateDashboard(name string, setAsMain bool) (*DashboardApp, e
     <p>Created on %s</p>
 </body>
 </html>`, name, name, time.Now().Format(time.RFC3339))
-	_ = os.WriteFile(indexPath, []byte(defaultHTML), 0644)
+		_ = os.WriteFile(indexPath, []byte(defaultHTML), 0644)
+	}
+
+	if nodeID == "" {
+		nodeID = m.nodeID
+	}
+
+	isEnabled := true
+	if enabled != nil {
+		isEnabled = *enabled
+	}
 
 	meta := m.getMetadataLocked()
-	if setAsMain {
+	if cfg.IsMain {
 		meta.MainDashboard = name
 		_ = m.saveMetadataLocked(meta)
 	}
 
-	return m.getDashboardStatsLocked(name, meta.MainDashboard)
+	if m.deviceStore != nil {
+		ctx := context.Background()
+		cfgJSON, _ := json.Marshal(cfg)
+		if nodeID == "" {
+			nodeID = "local"
+		}
+		dc := stores.DeviceConfig{
+			Name:      name,
+			Namespace: name,
+			NodeID:    nodeID,
+			Type:      "HMI",
+			Enabled:   isEnabled,
+			Config:    string(cfgJSON),
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}
+		_ = m.deviceStore.Save(ctx, dc)
+	}
+
+	return m.getHmiStatsLocked(name, meta.MainDashboard, stores.DeviceConfig{})
 }
 
-func (m *Manager) DeleteDashboard(name string) error {
+func (m *Manager) DeleteHmiDevice(name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -285,8 +433,47 @@ func (m *Manager) DeleteDashboard(name string) error {
 		_ = m.saveMetadataLocked(meta)
 	}
 
+	if m.deviceStore != nil {
+		ctx := context.Background()
+		_ = m.deviceStore.Delete(ctx, name)
+	}
+
 	dashDir := filepath.Join(m.baseDir, name)
 	return os.RemoveAll(dashDir)
+}
+
+func (m *Manager) ToggleHmiDevice(name string, enabled bool) (*HmiDevice, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	meta := m.getMetadataLocked()
+
+	if m.deviceStore != nil {
+		ctx := context.Background()
+		dc, err := m.deviceStore.Toggle(ctx, name, enabled)
+		if err == nil && dc != nil {
+			return m.getHmiStatsLocked(name, meta.MainDashboard, *dc)
+		}
+	}
+
+	return m.getHmiStatsLocked(name, meta.MainDashboard, stores.DeviceConfig{Name: name, Enabled: enabled})
+}
+
+func (m *Manager) ReassignHmiDevice(name string, nodeID string) (*HmiDevice, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	meta := m.getMetadataLocked()
+
+	if m.deviceStore != nil {
+		ctx := context.Background()
+		dc, err := m.deviceStore.Reassign(ctx, name, nodeID)
+		if err == nil && dc != nil {
+			return m.getHmiStatsLocked(name, meta.MainDashboard, *dc)
+		}
+	}
+
+	return m.getHmiStatsLocked(name, meta.MainDashboard, stores.DeviceConfig{Name: name, NodeID: nodeID})
 }
 
 func (m *Manager) resolveDashboardPathLocked(dashName, relPath string) (string, error) {
@@ -373,7 +560,7 @@ func (m *Manager) DeleteDashboardFile(dashName, relPath string) error {
 	return os.Remove(targetPath)
 }
 
-func (m *Manager) UploadDashboardZip(name string, zipBase64 string, setAsMain bool) (*DashboardApp, error) {
+func (m *Manager) UploadDashboardZip(name string, zipBase64 string, setAsMain bool) (*HmiDevice, error) {
 	zipData, err := base64.StdEncoding.DecodeString(zipBase64)
 	if err != nil {
 		return nil, fmt.Errorf("invalid base64 encoding: %w", err)
@@ -435,7 +622,7 @@ func (m *Manager) UploadDashboardZip(name string, zipBase64 string, setAsMain bo
 		_ = m.saveMetadataLocked(meta)
 	}
 
-	return m.getDashboardStatsLocked(name, meta.MainDashboard)
+	return m.getHmiStatsLocked(name, meta.MainDashboard, stores.DeviceConfig{})
 }
 
 func (m *Manager) ExportDashboardZip(name string) (string, error) {

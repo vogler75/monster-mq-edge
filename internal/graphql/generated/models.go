@@ -123,6 +123,7 @@ type BrokerConfig struct {
 	GraphqlEnabled        bool   `json:"graphqlEnabled"`
 	GraphqlPort           int    `json:"graphqlPort"`
 	MetricsEnabled        bool   `json:"metricsEnabled"`
+	HmiEnabled            bool   `json:"hmiEnabled"`
 	GenAiEnabled          bool   `json:"genAiEnabled"`
 	GenAiProvider         string `json:"genAiProvider"`
 	GenAiModel            string `json:"genAiModel"`
@@ -218,21 +219,6 @@ type DailyCount struct {
 	Count int64  `json:"count"`
 }
 
-type DashboardApp struct {
-	Name      string  `json:"name"`
-	IsMain    bool    `json:"isMain"`
-	Path      string  `json:"path"`
-	FileCount int     `json:"fileCount"`
-	SizeBytes int64   `json:"sizeBytes"`
-	UpdatedAt *string `json:"updatedAt,omitempty"`
-}
-
-type DashboardAppResult struct {
-	Success   bool          `json:"success"`
-	Message   *string       `json:"message,omitempty"`
-	Dashboard *DashboardApp `json:"dashboard,omitempty"`
-}
-
 type DashboardFile struct {
 	Path      string `json:"path"`
 	SizeBytes int64  `json:"sizeBytes"`
@@ -282,6 +268,58 @@ type ExceptionInfo struct {
 	Class      string  `json:"class"`
 	Message    *string `json:"message,omitempty"`
 	StackTrace string  `json:"stackTrace"`
+}
+
+type Hmi struct {
+	Name            string     `json:"name"`
+	NodeID          string     `json:"nodeId"`
+	Enabled         bool       `json:"enabled"`
+	Config          *HmiConfig `json:"config"`
+	CreatedAt       string     `json:"createdAt"`
+	UpdatedAt       string     `json:"updatedAt"`
+	IsOnCurrentNode bool       `json:"isOnCurrentNode"`
+	FileCount       *int       `json:"fileCount,omitempty"`
+	SizeBytes       *int64     `json:"sizeBytes,omitempty"`
+}
+
+type HmiConfig struct {
+	URLPath     string  `json:"urlPath"`
+	IsMain      bool    `json:"isMain"`
+	Title       *string `json:"title,omitempty"`
+	Description *string `json:"description,omitempty"`
+	EntryPoint  *string `json:"entryPoint,omitempty"`
+}
+
+type HmiConfigInput struct {
+	URLPath     *string `json:"urlPath,omitempty"`
+	IsMain      *bool   `json:"isMain,omitempty"`
+	Title       *string `json:"title,omitempty"`
+	Description *string `json:"description,omitempty"`
+	EntryPoint  *string `json:"entryPoint,omitempty"`
+}
+
+type HmiInput struct {
+	Name    string          `json:"name"`
+	NodeID  *string         `json:"nodeId,omitempty"`
+	Enabled *bool           `json:"enabled,omitempty"`
+	Config  *HmiConfigInput `json:"config"`
+}
+
+type HmiMutations struct {
+	Create    *HmiResult `json:"create"`
+	Update    *HmiResult `json:"update"`
+	Delete    *HmiResult `json:"delete"`
+	Start     *HmiResult `json:"start"`
+	Stop      *HmiResult `json:"stop"`
+	Toggle    *HmiResult `json:"toggle"`
+	Reassign  *HmiResult `json:"reassign"`
+	UploadZip *HmiResult `json:"uploadZip"`
+}
+
+type HmiResult struct {
+	Hmi     *Hmi    `json:"hmi,omitempty"`
+	Success bool    `json:"success"`
+	Message *string `json:"message,omitempty"`
 }
 
 type ImportDeviceConfigResult struct {

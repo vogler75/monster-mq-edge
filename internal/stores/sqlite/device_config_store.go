@@ -26,7 +26,7 @@ func (d *DeviceConfigStore) EnsureTable(ctx context.Context) error {
             node_id TEXT NOT NULL,
             config TEXT NOT NULL,
             enabled INTEGER DEFAULT 1,
-            type TEXT DEFAULT 'MQTT_CLIENT',
+            type TEXT,
             created_at TEXT DEFAULT (datetime('now')),
             updated_at TEXT DEFAULT (datetime('now'))
         )`,

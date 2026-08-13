@@ -1,19 +1,20 @@
-# Plan: MonsterMQ Edge HMI & Dashboard Hosting
+# Plan: MonsterMQ HMI & Dashboard Hosting
 
-This document outlines the architecture, design rationale, API contracts, and implementation for hosting custom HTML/JS Human-Machine Interfaces (HMIs) and multi-dashboard applications directly within the MonsterMQ Edge broker.
+This document defines the architecture, design rationale, GraphQL API contracts, storage integration, and implementation for hosting custom HTML/JS Human-Machine Interfaces (HMIs) and multi-dashboard applications directly within MonsterMQ and MonsterMQ Edge.
 
 ---
 
-## 1. Overview & Goals
+## 1. Overview & Core Objectives
 
-Edge devices (e.g. Siemens WinCC Unified Comfort Panels, Raspberry Pi 4/5) running MonsterMQ Edge host HTML5-based industrial HMIs and SCADA dashboards without requiring an external web server like Nginx or Apache.
+MonsterMQ and MonsterMQ Edge allow edge devices (e.g. Siemens WinCC Unified Comfort Panels, Raspberry Pi 4/5) and central brokers to host HTML5-based industrial HMIs and SCADA dashboards directly without requiring an external web server like Nginx or Apache.
 
 ### Core Objectives
-1. **Zero-Dependency Static Hosting**: Embed an HTTP static file server into the broker's HTTP listener (port 4000) under `/hmi/`.
-2. **Multi-Dashboard Support**: Allow managing multiple independent dashboard applications (e.g. `/hmi/`, `/hmi/solar-plant/`, `/hmi/boiler-room/`).
-3. **GraphQL Data Access**: HMIs use the broker's standard GraphQL API (`/graphql`) over HTTP (queries/mutations) and WebSockets (`topicUpdates` subscriptions) for live data, topic history, and controls.
-4. **Dashboard App Lifecycle & Packaging**: Provide GraphQL queries and mutations (`uploadDashboard`, `exportDashboard`) to import and export entire dashboard applications as base64-encoded `.zip` archives.
-5. **AI Skill Integration**: Provide an AI skill (`monstermq-hmi-builder`) to assist AI assistants in creating and updating HMI screens for MonsterMQ Edge.
+1. **Zero-Dependency Static Hosting**: Embed an HTTP static file server into the broker's GraphQL listener (port 4000/8080) under `/hmi/`.
+2. **HMI as a First-Class Device Configuration**: Model each HMI application as a device configuration of type `"HMI"` in `DeviceConfigStore` (`deviceconfigs` table/collection), providing full enablement (`enabled == true/false`), lifecycle control (`start`/`stop`), and node assignment (`reassign`).
+3. **Feature Flag (`Hmi`)**: Expose an `Hmi` feature flag across both Go (`monster-mq-edge`) and Kotlin (`monster-mq`) brokers to enable or disable HMI hosting functionality.
+4. **GraphQL Schema Parity**: Standardize GraphQL query (`hmis`, `hmi`, `hmiFiles`, `exportHmiZip`) and mutation (`hmi: HmiMutations!`) interfaces across both brokers.
+5. **Dashboard App Lifecycle & Zip Packaging**: Provide zip import/export (`uploadZip`, `exportHmiZip`) to deploy and back up complete dashboard applications.
+6. **AI HMI Builder Skill**: Provide an AI skill (`monstermq-hmi-builder`) to assist AI assistants in generating responsive industrial HMI screens.
 
 ---
 
@@ -24,60 +25,68 @@ All HMI assets are stored under `./data/hmi/`:
 
 ```
 ./data/hmi/
-├── metadata.json                 # Records the designated "main" dashboard (default: "main")
-├── main/                         # Main dashboard served at /hmi/
+├── main/                         # Main default HMI served at /hmi/
 │   ├── index.html
 │   └── app.js
-├── solar-plant/                  # Secondary dashboard served at /hmi/solar-plant/
+├── dashboard1/                   # Secondary HMI served at /hmi/dashboard1/
 │   ├── index.html
 │   └── chart.js
-└── boiler-room/                  # Secondary dashboard served at /hmi/boiler-room/
+└── app2/                         # Secondary HMI served at /hmi/app2/
     └── index.html
 ```
 
-### 2.2 Routing Strategy (`internal/graphql/server.go`)
-The broker uses `go-chi/chi` on the existing GraphQL server port (4000 / 14000) to route incoming HTTP requests:
-
-- `http://<broker>:4000/hmi/` (or `/hmi`) -> Serves from `./data/hmi/<main_dashboard>/` (default: `main`).
-- `http://<broker>:4000/hmi/<dashboardname>/` -> Serves from `./data/hmi/<dashboardname>/` if `<dashboardname>` exists.
-- Static assets within subdirectories (e.g. `/hmi/solar-plant/js/chart.js`) are served directly.
-
----
-
-## 3. HMI Manager Subsystem (`internal/hmi/manager.go`)
-
-The `hmi.Manager` handles dashboard CRUD, metadata persistence, file isolation, and zip compression/extraction.
-
-### Operations
-- `ListDashboards()`: Scans `./data/hmi/` and returns stats (name, isMain, path, file count, total size, mod time).
-- `GetDashboard(name)`: Retrieves stats for a specific dashboard.
-- `CreateDashboard(name, setAsMain)`: Initializes a new directory with a default HTML template.
-- `DeleteDashboard(name)`: Deletes a dashboard directory (protects default `main` from deletion).
-- `SetMainDashboard(name)`: Updates `metadata.json` so `/hmi/` aliases to the selected dashboard.
-- `UploadDashboardZip(name, zipBase64, setAsMain)`: Unpacks a base64-encoded `.zip` into `./data/hmi/<name>/`.
-- `ExportDashboardZip(name)`: Zips `./data/hmi/<name>/` and returns a base64 string.
-- `ReadDashboardFile(name, relPath)` / `WriteDashboardFile(name, relPath, content)`: Safe file access with path traversal protection (`strings.HasPrefix(targetPath, basePath)`).
+### 2.2 HTTP Routing & Gating (`/hmi/`)
+The static HTTP handler mounts on the main GraphQL port (e.g., `:4000`):
+- `http://<broker>:4000/hmi/` (or `/hmi`) -> Serves the main HMI (`isMain: true` or name `"main"`).
+- `http://<broker>:4000/hmi/<name>/` -> Serves the named HMI app directory `./data/hmi/<name>/`.
+- **Enablement Check**: The router inspects `Hmi` feature flag and `IsHmiEnabled(name)`. If the HMI device is disabled (`enabled == false`), the request is rejected with `404 Not Found`.
 
 ---
 
-## 4. GraphQL Schema Extension (`internal/graphql/schema/schema.graphqls`)
+## 3. Device Configuration Model (Type: `"HMI"`)
 
-The GraphQL API is extended to expose dashboard management to external dashboards, developer tools, and automated build scripts:
+HMI dashboard applications are stored as persistent device configurations in `DeviceConfigStore`:
+- **`name`**: Dashboard identifier (e.g., `"main"`, `"dashboard1"`).
+- **`type`**: `"HMI"`.
+- **`nodeId`**: Target cluster node handling the HMI app (defaults to `"local"`).
+- **`enabled`**: `Boolean` — controls whether the HTTP route is active.
+- **`config`**: JSON object containing:
+  - `urlPath`: Relative URL path (e.g. `""` for main, or `"dashboard1"`).
+  - `isMain`: `Boolean` — whether this is the default dashboard served at `/hmi/`.
+  - `title`: Display title.
+  - `description`: Text description.
+  - `entryPoint`: Entry file (default: `"index.html"`).
 
+---
+
+## 4. GraphQL Schema Definition (`schema-types.graphqls` / `schema.graphqls`)
+
+### SDL Schema
 ```graphql
-type DashboardApp {
-    name: String!
+type HmiConfig {
+    urlPath: String!
     isMain: Boolean!
-    path: String!
-    fileCount: Int!
-    sizeBytes: Long!
-    updatedAt: String
+    title: String
+    description: String
+    entryPoint: String
 }
 
-type DashboardAppResult {
+type Hmi {
+    name: String!
+    nodeId: String!
+    enabled: Boolean!
+    config: HmiConfig!
+    createdAt: String!
+    updatedAt: String!
+    isOnCurrentNode: Boolean!
+    fileCount: Int
+    sizeBytes: Long
+}
+
+type HmiResult {
+    hmi: Hmi
     success: Boolean!
     message: String
-    dashboard: DashboardApp
 }
 
 type DashboardFile {
@@ -85,26 +94,65 @@ type DashboardFile {
     sizeBytes: Long!
 }
 
+input HmiConfigInput {
+    urlPath: String
+    isMain: Boolean
+    title: String
+    description: String
+    entryPoint: String
+}
+
+input HmiInput {
+    name: String!
+    nodeId: String
+    enabled: Boolean
+    config: HmiConfigInput!
+}
+
+type HmiMutations {
+    create(input: HmiInput!): HmiResult!
+    update(name: String!, input: HmiInput!): HmiResult!
+    delete(name: String!): HmiResult!
+    start(name: String!): HmiResult!
+    stop(name: String!): HmiResult!
+    toggle(name: String!, enabled: Boolean!): HmiResult!
+    reassign(name: String!, nodeId: String!): HmiResult!
+    uploadZip(name: String!, zipBase64: String!, setAsMain: Boolean): HmiResult!
+}
+
 type Query {
-    dashboards: [DashboardApp!]!
-    dashboard(name: String!): DashboardApp
-    dashboardFiles(name: String!): [DashboardFile!]!
-    exportDashboard(name: String!): String!
+    hmis(name: String, nodeId: String): [Hmi!]!
+    hmi(name: String!): Hmi
+    hmiFiles(name: String!): [DashboardFile!]!
+    exportHmiZip(name: String!): String!
 }
 
 type Mutation {
-    createDashboard(name: String!, setAsMain: Boolean): DashboardAppResult!
-    deleteDashboard(name: String!): DashboardAppResult!
-    setMainDashboard(name: String!): DashboardAppResult!
-    uploadDashboard(name: String!, zipBase64: String!, setAsMain: Boolean): DashboardAppResult!
+    hmi: HmiMutations!
 }
 ```
 
 ---
 
-## 5. AI Skill (`monstermq-hmi-builder`)
+## 5. Subsystem Implementations
 
-An AI skill is provided in `.agents/skills/monstermq-hmi-builder/SKILL.md` for coding assistants. It contains:
-- Industrial UI design tokens (dark theme `#0f172a`, card `#1e293b`, accents `#38bdf8`).
-- JS code snippets for GraphQL HTTP queries and WebSocket subscriptions (`graphql-ws`).
-- Complete single-file HMI boilerplate with live Chart.js integration.
+### 5.1 Go Broker (`monster-mq-edge`)
+- **Feature Flag**: `FeaturesConfig.Hmi` in `internal/config/config.go`, `yaml-json-schema.json`, `config.yaml`, and `resolver.go`.
+- **HMI Manager**: `internal/hmi/manager.go` uses `DeviceConfigStore` (`Type = "HMI"`) to manage dashboard devices and zip compression/extraction.
+- **HTTP Static Router**: `internal/graphql/server.go` serves `/hmi/` and verifies `IsHmiEnabled(name)`.
+- **GraphQL Resolvers**: `internal/graphql/resolvers/resolver.go` implements `HmiMutationsResolver` and `Query` resolvers. Registered in `gqlgen.yml`.
+
+### 5.2 Java/Kotlin Broker (`monster-mq`)
+- **Feature Flag**: `const val Hmi = "Hmi"` in `Features.kt` and `yaml-json-schema.json`.
+- **Device Constant**: `const val DEVICE_TYPE_HMI = "HMI"` in `DeviceConfig.kt`.
+- **GraphQL Resolvers**: `HmiClientConfigQueries.kt` and `HmiClientConfigMutations.kt` backed by `IDeviceConfigStore`.
+- **GraphQL Server**: Wired `hmiQueries` and `hmiMutations` into `GraphQLServer.kt`.
+- **System Config Page**: Updated `dashboard/src/js/system-config.js` and `system-config.html` to display HMI Hosting feature status.
+
+---
+
+## 6. Implementation Status & Verification
+
+- **`monster-mq-edge` (Go)**: Code generated via `make gen`. Binary compiled via `make build` (**0 errors**).
+- **`monster-mq` (Java/Kotlin)**: Kotlin classes and GraphQL schema compiled via `mvn test-compile` (**BUILD SUCCESS**).
+- **Consolidated Documentation**: Unified design and protocol recorded in this plan.

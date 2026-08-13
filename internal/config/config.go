@@ -140,6 +140,7 @@ type FeaturesConfig struct {
 	WinCCOa            bool `yaml:"WinCCOa"`
 	DeviceImportExport bool `yaml:"DeviceImportExport"`
 	Mcp                bool `yaml:"Mcp"`
+	Hmi                bool `yaml:"Hmi"`
 }
 
 type Config struct {

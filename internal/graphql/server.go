@@ -62,7 +62,7 @@ func NewServer(cfg *config.Config, resolver *resolvers.Resolver, hmiMgr *hmi.Man
 	r.Handle("/query", gql)
 	r.Get("/playground", playground.Handler("MonsterMQ Edge", "/graphql"))
 
-	if cfg.HMI.Enabled && hmiMgr != nil {
+	if (cfg.HMI.Enabled || cfg.Features.Hmi) && hmiMgr != nil {
 		mountPath := cfg.HMI.MountPath
 		if mountPath == "" {
 			mountPath = "/hmi"
@@ -79,7 +79,7 @@ func NewServer(cfg *config.Config, resolver *resolvers.Resolver, hmiMgr *hmi.Man
 			var fileSubPath string
 
 			if firstSegment != "" {
-				if _, err := hmiMgr.GetDashboard(firstSegment); err == nil {
+				if _, err := hmiMgr.GetHmi(firstSegment); err == nil {
 					dashName = firstSegment
 					fileSubPath = strings.Join(parts[1:], "/")
 				}
@@ -90,11 +90,20 @@ func NewServer(cfg *config.Config, resolver *resolvers.Resolver, hmiMgr *hmi.Man
 				fileSubPath = relPath
 			}
 
+			if !hmiMgr.IsHmiEnabled(dashName) {
+				http.Error(w, fmt.Sprintf("HMI dashboard %q is disabled", dashName), http.StatusNotFound)
+				return
+			}
+
 			if fileSubPath == "" || strings.HasSuffix(r.URL.Path, "/") {
 				fileSubPath = "index.html"
 			}
 
-			fullPath := filepath.Join(cfg.HMI.Path, dashName, fileSubPath)
+			dir := cfg.HMI.Path
+			if dir == "" {
+				dir = "./data/hmi"
+			}
+			fullPath := filepath.Join(dir, dashName, fileSubPath)
 			if info, err := os.Stat(fullPath); err == nil && !info.IsDir() {
 				http.ServeFile(w, r, fullPath)
 				return

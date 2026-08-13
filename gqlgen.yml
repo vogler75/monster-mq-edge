@@ -121,3 +121,14 @@ models:
   UserInfo:
     fields:
       aclRules: { resolver: true }
+  HmiMutations:
+    fields:
+      create:    { resolver: true }
+      update:    { resolver: true }
+      delete:    { resolver: true }
+      start:     { resolver: true }
+      stop:      { resolver: true }
+      toggle:    { resolver: true }
+      reassign:  { resolver: true }
+      uploadZip: { resolver: true }
+

@@ -96,6 +96,7 @@ type BrokerConfig {
     graphqlEnabled: Boolean!
     graphqlPort: Int!
     metricsEnabled: Boolean!
+    hmiEnabled: Boolean!
     genAiEnabled: Boolean!
     genAiProvider: String!
     genAiModel: String!
@@ -753,30 +754,67 @@ type Query {
     databaseConnection(name: String!): DatabaseConnectionInfo
     getDevices(names: [String!]): [Device!]!
     mqttClients(name: String, node: String): [MqttClient!]!
-    dashboards: [DashboardApp!]!
-    dashboard(name: String!): DashboardApp
-    dashboardFiles(name: String!): [DashboardFile!]!
-    exportDashboard(name: String!): String!
+    hmis(name: String, nodeId: String): [Hmi!]!
+    hmi(name: String!): Hmi
+    hmiFiles(name: String!): [DashboardFile!]!
+    exportHmiZip(name: String!): String!
 }
 
-type DashboardApp {
-    name: String!
+type HmiConfig {
+    urlPath: String!
     isMain: Boolean!
-    path: String!
-    fileCount: Int!
-    sizeBytes: Long!
-    updatedAt: String
+    title: String
+    description: String
+    entryPoint: String
 }
 
-type DashboardAppResult {
+type Hmi {
+    name: String!
+    nodeId: String!
+    enabled: Boolean!
+    config: HmiConfig!
+    createdAt: String!
+    updatedAt: String!
+    isOnCurrentNode: Boolean!
+    fileCount: Int
+    sizeBytes: Long
+}
+
+type HmiResult {
+    hmi: Hmi
     success: Boolean!
     message: String
-    dashboard: DashboardApp
 }
 
 type DashboardFile {
     path: String!
     sizeBytes: Long!
+}
+
+input HmiConfigInput {
+    urlPath: String
+    isMain: Boolean
+    title: String
+    description: String
+    entryPoint: String
+}
+
+input HmiInput {
+    name: String!
+    nodeId: String
+    enabled: Boolean
+    config: HmiConfigInput!
+}
+
+type HmiMutations {
+    create(input: HmiInput!): HmiResult!
+    update(name: String!, input: HmiInput!): HmiResult!
+    delete(name: String!): HmiResult!
+    start(name: String!): HmiResult!
+    stop(name: String!): HmiResult!
+    toggle(name: String!, enabled: Boolean!): HmiResult!
+    reassign(name: String!, nodeId: String!): HmiResult!
+    uploadZip(name: String!, zipBase64: String!, setAsMain: Boolean): HmiResult!
 }
 
 type Mutation {
@@ -785,14 +823,11 @@ type Mutation {
     publishBatch(inputs: [PublishInput!]!): [PublishResult!]!
     purgeQueuedMessages(clientId: String): PurgeResult!
     importDevices(configs: [DeviceInput!]!): ImportDeviceConfigResult!
-    createDashboard(name: String!, setAsMain: Boolean): DashboardAppResult!
-    deleteDashboard(name: String!): DashboardAppResult!
-    setMainDashboard(name: String!): DashboardAppResult!
-    uploadDashboard(name: String!, zipBase64: String!, setAsMain: Boolean): DashboardAppResult!
     user: UserManagementMutations!
     session: SessionMutations!
     archiveGroup: ArchiveGroupMutations!
     mqttClient: MqttClientMutations!
+    hmi: HmiMutations!
 }
 
 type Subscription {
