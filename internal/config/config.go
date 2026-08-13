@@ -200,7 +200,7 @@ func Default() *Config {
 		UserManagement:        UserManagementConfig{Enabled: false, PasswordAlgorithm: "BCRYPT", AnonymousEnabled: true, AclCacheEnabled: true},
 		Metrics:               MetricsConfig{Enabled: true, CollectionIntervalSeconds: 1, RetentionHours: 168, MaxHistoryRows: 3600},
 		Logging:               LoggingConfig{Level: "INFO", MqttSyslogEnabled: false, RingBufferSize: 1000},
-		GraphQL:               GraphQLConfig{Enabled: true, Port: 8080},
+		GraphQL:               GraphQLConfig{Enabled: true, Port: 4000},
 		MCP:                   MCPConfig{Enabled: false, Port: 3000},
 		Features:              FeaturesConfig{MqttClient: false, WinCCUa: false, WinCCOa: false, DeviceImportExport: false, Mcp: false},
 		HostMonitoring: HostMonitoringConfig{

@@ -113,8 +113,7 @@ fi
 if [ "$BUILD_BINARY" = true ]; then
     echo -e "${GREEN}[1/3] Building native Go binary...${NC}"
     make build
-    make build-cli
-    echo -e "${GREEN}✓ Native binaries built at: ${YELLOW}bin/monstermq-edge${NC} and ${YELLOW}bin/mmqctl${NC}"
+    echo -e "${GREEN}✓ Native binary built at: ${YELLOW}bin/monstermq-edge${NC}"
 fi
 
 if [ "$BUILD_DEB" = true ]; then
