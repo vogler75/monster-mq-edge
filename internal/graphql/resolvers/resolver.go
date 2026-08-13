@@ -316,6 +316,8 @@ func toDatabaseConnectionType(t stores.DatabaseConnectionType) generated.Databas
 	switch t {
 	case stores.DatabaseConnectionMongoDB:
 		return generated.DatabaseConnectionTypeMongodb
+	case stores.DatabaseConnectionSQLite:
+		return generated.DatabaseConnectionTypeSQLIte
 	}
 	return generated.DatabaseConnectionTypePostgres
 }
@@ -324,6 +326,8 @@ func fromDatabaseConnectionType(t generated.DatabaseConnectionType) stores.Datab
 	switch t {
 	case generated.DatabaseConnectionTypeMongodb:
 		return stores.DatabaseConnectionMongoDB
+	case generated.DatabaseConnectionTypeSQLIte:
+		return stores.DatabaseConnectionSQLite
 	}
 	return stores.DatabaseConnectionPostgres
 }
@@ -461,25 +465,31 @@ func (r *mutationResolver) Login(ctx context.Context, username, password string)
 }
 
 func (r *mutationResolver) Publish(ctx context.Context, input generated.PublishInput) (*generated.PublishResult, error) {
+	now := time.Now().UnixMilli()
 	payload, err := decodePayload(&input)
 	if err != nil {
-		return &generated.PublishResult{Success: false, Topic: input.Topic, Message: ptr(err.Error())}, nil
+		errStr := err.Error()
+		return &generated.PublishResult{Success: false, Topic: input.Topic, Timestamp: now, Error: ptr(errStr), Message: ptr(errStr)}, nil
 	}
 	qos := byte(0)
 	if input.Qos != nil {
 		qos = byte(*input.Qos)
 	}
 	retain := false
-	if input.Retain != nil {
+	if input.Retained != nil {
+		retain = *input.Retained
+	} else if input.Retain != nil {
 		retain = *input.Retain
 	}
 	if r.Resolver.Publish == nil {
-		return &generated.PublishResult{Success: false, Topic: input.Topic, Message: ptr("publish unavailable")}, nil
+		errMsg := "publish unavailable"
+		return &generated.PublishResult{Success: false, Topic: input.Topic, Timestamp: now, Error: ptr(errMsg), Message: ptr(errMsg)}, nil
 	}
 	if err := r.Resolver.Publish(input.Topic, payload, retain, qos); err != nil {
-		return &generated.PublishResult{Success: false, Topic: input.Topic, Message: ptr(err.Error())}, nil
+		errStr := err.Error()
+		return &generated.PublishResult{Success: false, Topic: input.Topic, Timestamp: now, Error: ptr(errStr), Message: ptr(errStr)}, nil
 	}
-	return &generated.PublishResult{Success: true, Topic: input.Topic}, nil
+	return &generated.PublishResult{Success: true, Topic: input.Topic, Timestamp: now}, nil
 }
 
 func (r *mutationResolver) PublishBatch(ctx context.Context, inputs []*generated.PublishInput) ([]*generated.PublishResult, error) {
@@ -502,9 +512,9 @@ func (r *mutationResolver) PurgeQueuedMessages(ctx context.Context, clientID *st
 		n, err = r.Storage.Queue.PurgeForClient(ctx, *clientID)
 	}
 	if err != nil {
-		return &generated.PurgeResult{Success: false, Message: ptr(err.Error()), PurgedCount: 0}, nil
+		return &generated.PurgeResult{Success: false, Message: ptr(err.Error()), DeletedCount: 0, PurgedCount: 0}, nil
 	}
-	return &generated.PurgeResult{Success: true, PurgedCount: n}, nil
+	return &generated.PurgeResult{Success: true, DeletedCount: n, PurgedCount: n}, nil
 }
 
 func (r *mutationResolver) ImportDevices(ctx context.Context, configs []*generated.DeviceInput) (*generated.ImportDeviceConfigResult, error) {
@@ -2177,12 +2187,37 @@ func (r *userManagementMutationsResolver) CreateACLRule(ctx context.Context, _ *
 	return &generated.UserManagementResult{Success: true}, nil
 }
 func (r *userManagementMutationsResolver) UpdateACLRule(ctx context.Context, _ *generated.UserManagementMutations, input generated.UpdateACLRuleInput) (*generated.UserManagementResult, error) {
-	rule := stores.AclRule{
-		ID: input.ID, Username: input.Username, TopicPattern: input.TopicPattern,
-		CanSubscribe: boolPtr(input.CanSubscribe, false), CanPublish: boolPtr(input.CanPublish, false),
-		Priority: intPtr(input.Priority, 0),
+	rules, err := r.Storage.Users.GetAllAclRules(ctx)
+	if err != nil {
+		return &generated.UserManagementResult{Success: false, Message: ptr(err.Error())}, nil
 	}
-	if err := r.Storage.Users.UpdateAclRule(ctx, rule); err != nil {
+	var existing *stores.AclRule
+	for _, rule := range rules {
+		if rule.ID == input.ID {
+			ruleCopy := rule
+			existing = &ruleCopy
+			break
+		}
+	}
+	if existing == nil {
+		return &generated.UserManagementResult{Success: false, Message: ptr("ACL rule not found")}, nil
+	}
+	if input.Username != nil {
+		existing.Username = *input.Username
+	}
+	if input.TopicPattern != nil {
+		existing.TopicPattern = *input.TopicPattern
+	}
+	if input.CanSubscribe != nil {
+		existing.CanSubscribe = *input.CanSubscribe
+	}
+	if input.CanPublish != nil {
+		existing.CanPublish = *input.CanPublish
+	}
+	if input.Priority != nil {
+		existing.Priority = *input.Priority
+	}
+	if err := r.Storage.Users.UpdateAclRule(ctx, *existing); err != nil {
 		return &generated.UserManagementResult{Success: false, Message: ptr(err.Error())}, nil
 	}
 	_ = r.AuthCache.Refresh(ctx)

@@ -486,20 +486,24 @@ type PublishInput struct {
 	PayloadBase64 *string        `json:"payloadBase64,omitempty"`
 	PayloadJSON   map[string]any `json:"payloadJson,omitempty"`
 	Qos           *int           `json:"qos,omitempty"`
+	Retained      *bool          `json:"retained,omitempty"`
 	Retain        *bool          `json:"retain,omitempty"`
 	Format        *DataFormat    `json:"format,omitempty"`
 }
 
 type PublishResult struct {
-	Success bool    `json:"success"`
-	Message *string `json:"message,omitempty"`
-	Topic   string  `json:"topic"`
+	Success   bool    `json:"success"`
+	Topic     string  `json:"topic"`
+	Timestamp int64   `json:"timestamp"`
+	Error     *string `json:"error,omitempty"`
+	Message   *string `json:"message,omitempty"`
 }
 
 type PurgeResult struct {
-	Success     bool    `json:"success"`
-	Message     *string `json:"message,omitempty"`
-	PurgedCount int64   `json:"purgedCount"`
+	Success      bool    `json:"success"`
+	Message      *string `json:"message,omitempty"`
+	DeletedCount int64   `json:"deletedCount"`
+	PurgedCount  int64   `json:"purgedCount"`
 }
 
 type Query struct {
@@ -621,12 +625,12 @@ type TopicValue struct {
 }
 
 type UpdateACLRuleInput struct {
-	ID           string `json:"id"`
-	Username     string `json:"username"`
-	TopicPattern string `json:"topicPattern"`
-	CanSubscribe *bool  `json:"canSubscribe,omitempty"`
-	CanPublish   *bool  `json:"canPublish,omitempty"`
-	Priority     *int   `json:"priority,omitempty"`
+	ID           string  `json:"id"`
+	Username     *string `json:"username,omitempty"`
+	TopicPattern *string `json:"topicPattern,omitempty"`
+	CanSubscribe *bool   `json:"canSubscribe,omitempty"`
+	CanPublish   *bool   `json:"canPublish,omitempty"`
+	Priority     *int    `json:"priority,omitempty"`
 }
 
 type UpdateArchiveGroupInput struct {
@@ -1097,16 +1101,18 @@ type DatabaseConnectionType string
 const (
 	DatabaseConnectionTypePostgres DatabaseConnectionType = "POSTGRES"
 	DatabaseConnectionTypeMongodb  DatabaseConnectionType = "MONGODB"
+	DatabaseConnectionTypeSQLIte   DatabaseConnectionType = "SQLITE"
 )
 
 var AllDatabaseConnectionType = []DatabaseConnectionType{
 	DatabaseConnectionTypePostgres,
 	DatabaseConnectionTypeMongodb,
+	DatabaseConnectionTypeSQLIte,
 }
 
 func (e DatabaseConnectionType) IsValid() bool {
 	switch e {
-	case DatabaseConnectionTypePostgres, DatabaseConnectionTypeMongodb:
+	case DatabaseConnectionTypePostgres, DatabaseConnectionTypeMongodb, DatabaseConnectionTypeSQLIte:
 		return true
 	}
 	return false

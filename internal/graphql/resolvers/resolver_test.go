@@ -35,3 +35,16 @@ func TestMqttClientConfigUpdateCanClearAddresses(t *testing.T) {
 		t.Fatalf("addresses = %#v, want explicit empty address list", cfg["addresses"])
 	}
 }
+
+func TestDatabaseConnectionTypeSQLiteMapping(t *testing.T) {
+	gt := toDatabaseConnectionType("SQLITE")
+	if gt != generated.DatabaseConnectionTypeSQLIte {
+		t.Fatalf("toDatabaseConnectionType(SQLITE) = %v, want SQLITE", gt)
+	}
+
+	st := fromDatabaseConnectionType(generated.DatabaseConnectionTypeSQLIte)
+	if st != "SQLITE" {
+		t.Fatalf("fromDatabaseConnectionType(SQLITE) = %v, want SQLITE", st)
+	}
+}
+

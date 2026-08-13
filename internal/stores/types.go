@@ -72,6 +72,7 @@ type DatabaseConnectionType string
 const (
 	DatabaseConnectionPostgres DatabaseConnectionType = "POSTGRES"
 	DatabaseConnectionMongoDB  DatabaseConnectionType = "MONGODB"
+	DatabaseConnectionSQLite   DatabaseConnectionType = "SQLITE"
 )
 
 type DatabaseConnectionConfig struct {

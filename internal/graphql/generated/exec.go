@@ -356,7 +356,7 @@ enum DataFormat { JSON BINARY }
 enum OrderDirection { ASC DESC }
 enum AggregationInterval { ONE_MINUTE FIVE_MINUTES FIFTEEN_MINUTES ONE_HOUR ONE_DAY }
 enum AggregationFunction { AVG MIN MAX COUNT }
-enum DatabaseConnectionType { POSTGRES MONGODB }
+enum DatabaseConnectionType { POSTGRES MONGODB SQLITE }
 
 enum MessageStoreType { NONE MEMORY HAZELCAST POSTGRES CRATEDB MONGODB SQLITE }
 enum MessageArchiveType { NONE POSTGRES CRATEDB MONGODB SQLITE }
@@ -743,8 +743,8 @@ input CreateAclRuleInput {
 
 input UpdateAclRuleInput {
     id: String!
-    username: String!
-    topicPattern: String!
+    username: String
+    topicPattern: String
     canSubscribe: Boolean
     canPublish: Boolean
     priority: Int
@@ -924,19 +924,23 @@ input PublishInput {
     payloadBase64: String
     payloadJson: JSON
     qos: Int
+    retained: Boolean
     retain: Boolean
     format: DataFormat
 }
 
 type PublishResult {
     success: Boolean!
-    message: String
     topic: String!
+    timestamp: Long!
+    error: String
+    message: String
 }
 
 type PurgeResult {
     success: Boolean!
     message: String
+    deletedCount: Long!
     purgedCount: Long!
 }
 
@@ -11612,10 +11616,14 @@ func (ec *executionContext) fieldContext_Mutation_publish(ctx context.Context, f
 			switch field.Name {
 			case "success":
 				return ec.fieldContext_PublishResult_success(ctx, field)
-			case "message":
-				return ec.fieldContext_PublishResult_message(ctx, field)
 			case "topic":
 				return ec.fieldContext_PublishResult_topic(ctx, field)
+			case "timestamp":
+				return ec.fieldContext_PublishResult_timestamp(ctx, field)
+			case "error":
+				return ec.fieldContext_PublishResult_error(ctx, field)
+			case "message":
+				return ec.fieldContext_PublishResult_message(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type PublishResult", field.Name)
 		},
@@ -11661,10 +11669,14 @@ func (ec *executionContext) fieldContext_Mutation_publishBatch(ctx context.Conte
 			switch field.Name {
 			case "success":
 				return ec.fieldContext_PublishResult_success(ctx, field)
-			case "message":
-				return ec.fieldContext_PublishResult_message(ctx, field)
 			case "topic":
 				return ec.fieldContext_PublishResult_topic(ctx, field)
+			case "timestamp":
+				return ec.fieldContext_PublishResult_timestamp(ctx, field)
+			case "error":
+				return ec.fieldContext_PublishResult_error(ctx, field)
+			case "message":
+				return ec.fieldContext_PublishResult_message(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type PublishResult", field.Name)
 		},
@@ -11712,6 +11724,8 @@ func (ec *executionContext) fieldContext_Mutation_purgeQueuedMessages(ctx contex
 				return ec.fieldContext_PurgeResult_success(ctx, field)
 			case "message":
 				return ec.fieldContext_PurgeResult_message(ctx, field)
+			case "deletedCount":
+				return ec.fieldContext_PurgeResult_deletedCount(ctx, field)
 			case "purgedCount":
 				return ec.fieldContext_PurgeResult_purgedCount(ctx, field)
 			}
@@ -12284,35 +12298,6 @@ func (ec *executionContext) fieldContext_PublishResult_success(_ context.Context
 	return fc, nil
 }
 
-func (ec *executionContext) _PublishResult_message(ctx context.Context, field graphql.CollectedField, obj *PublishResult) (ret graphql.Marshaler) {
-	return graphql.ResolveField(
-		ctx,
-		ec.OperationContext,
-		field,
-		ec.fieldContext_PublishResult_message,
-		func(ctx context.Context) (any, error) {
-			return obj.Message, nil
-		},
-		nil,
-		ec.marshalOString2ᚖstring,
-		true,
-		false,
-	)
-}
-
-func (ec *executionContext) fieldContext_PublishResult_message(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "PublishResult",
-		Field:      field,
-		IsMethod:   false,
-		IsResolver: false,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return nil, errors.New("field of type String does not have child fields")
-		},
-	}
-	return fc, nil
-}
-
 func (ec *executionContext) _PublishResult_topic(ctx context.Context, field graphql.CollectedField, obj *PublishResult) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -12330,6 +12315,93 @@ func (ec *executionContext) _PublishResult_topic(ctx context.Context, field grap
 }
 
 func (ec *executionContext) fieldContext_PublishResult_topic(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "PublishResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _PublishResult_timestamp(ctx context.Context, field graphql.CollectedField, obj *PublishResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_PublishResult_timestamp,
+		func(ctx context.Context) (any, error) {
+			return obj.Timestamp, nil
+		},
+		nil,
+		ec.marshalNLong2int64,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_PublishResult_timestamp(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "PublishResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Long does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _PublishResult_error(ctx context.Context, field graphql.CollectedField, obj *PublishResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_PublishResult_error,
+		func(ctx context.Context) (any, error) {
+			return obj.Error, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_PublishResult_error(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "PublishResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _PublishResult_message(ctx context.Context, field graphql.CollectedField, obj *PublishResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_PublishResult_message,
+		func(ctx context.Context) (any, error) {
+			return obj.Message, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_PublishResult_message(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "PublishResult",
 		Field:      field,
@@ -12395,6 +12467,35 @@ func (ec *executionContext) fieldContext_PurgeResult_message(_ context.Context, 
 		IsResolver: false,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _PurgeResult_deletedCount(ctx context.Context, field graphql.CollectedField, obj *PurgeResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_PurgeResult_deletedCount,
+		func(ctx context.Context) (any, error) {
+			return obj.DeletedCount, nil
+		},
+		nil,
+		ec.marshalNLong2int64,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_PurgeResult_deletedCount(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "PurgeResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Long does not have child fields")
 		},
 	}
 	return fc, nil
@@ -23371,7 +23472,7 @@ func (ec *executionContext) unmarshalInputPublishInput(ctx context.Context, obj 
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"topic", "payload", "payloadBase64", "payloadJson", "qos", "retain", "format"}
+	fieldsInOrder := [...]string{"topic", "payload", "payloadBase64", "payloadJson", "qos", "retained", "retain", "format"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -23413,6 +23514,13 @@ func (ec *executionContext) unmarshalInputPublishInput(ctx context.Context, obj 
 				return it, err
 			}
 			it.Qos = data
+		case "retained":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("retained"))
+			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Retained = data
 		case "retain":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("retain"))
 			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
@@ -23496,14 +23604,14 @@ func (ec *executionContext) unmarshalInputUpdateAclRuleInput(ctx context.Context
 			it.ID = data
 		case "username":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("username"))
-			data, err := ec.unmarshalNString2string(ctx, v)
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
 			if err != nil {
 				return it, err
 			}
 			it.Username = data
 		case "topicPattern":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("topicPattern"))
-			data, err := ec.unmarshalNString2string(ctx, v)
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -27863,13 +27971,20 @@ func (ec *executionContext) _PublishResult(ctx context.Context, sel ast.Selectio
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
-		case "message":
-			out.Values[i] = ec._PublishResult_message(ctx, field, obj)
 		case "topic":
 			out.Values[i] = ec._PublishResult_topic(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
+		case "timestamp":
+			out.Values[i] = ec._PublishResult_timestamp(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "error":
+			out.Values[i] = ec._PublishResult_error(ctx, field, obj)
+		case "message":
+			out.Values[i] = ec._PublishResult_message(ctx, field, obj)
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}
@@ -27911,6 +28026,11 @@ func (ec *executionContext) _PurgeResult(ctx context.Context, sel ast.SelectionS
 			}
 		case "message":
 			out.Values[i] = ec._PurgeResult_message(ctx, field, obj)
+		case "deletedCount":
+			out.Values[i] = ec._PurgeResult_deletedCount(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
 		case "purgedCount":
 			out.Values[i] = ec._PurgeResult_purgedCount(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
