@@ -49,6 +49,15 @@ GraphQL:
   Enabled: true
   Port: 4000
 
+HMI:
+  Enabled: false
+  Path: "./data/hmi"
+  MountPath: "/hmi"
+
+MCP:
+  Enabled: false
+  Port: 3000
+
 Features:
   MqttClient: true
   WinCCUa: false

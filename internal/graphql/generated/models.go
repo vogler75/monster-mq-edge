@@ -228,6 +228,26 @@ type DailyCount struct {
 	Count int64  `json:"count"`
 }
 
+type DashboardApp struct {
+	Name      string  `json:"name"`
+	IsMain    bool    `json:"isMain"`
+	Path      string  `json:"path"`
+	FileCount int     `json:"fileCount"`
+	SizeBytes int64   `json:"sizeBytes"`
+	UpdatedAt *string `json:"updatedAt,omitempty"`
+}
+
+type DashboardAppResult struct {
+	Success   bool          `json:"success"`
+	Message   *string       `json:"message,omitempty"`
+	Dashboard *DashboardApp `json:"dashboard,omitempty"`
+}
+
+type DashboardFile struct {
+	Path      string `json:"path"`
+	SizeBytes int64  `json:"sizeBytes"`
+}
+
 type DatabaseConnectionInfo struct {
 	Name      string                 `json:"name"`
 	Type      DatabaseConnectionType `json:"type"`

@@ -753,6 +753,30 @@ type Query {
     databaseConnection(name: String!): DatabaseConnectionInfo
     getDevices(names: [String!]): [Device!]!
     mqttClients(name: String, node: String): [MqttClient!]!
+    dashboards: [DashboardApp!]!
+    dashboard(name: String!): DashboardApp
+    dashboardFiles(name: String!): [DashboardFile!]!
+    exportDashboard(name: String!): String!
+}
+
+type DashboardApp {
+    name: String!
+    isMain: Boolean!
+    path: String!
+    fileCount: Int!
+    sizeBytes: Long!
+    updatedAt: String
+}
+
+type DashboardAppResult {
+    success: Boolean!
+    message: String
+    dashboard: DashboardApp
+}
+
+type DashboardFile {
+    path: String!
+    sizeBytes: Long!
 }
 
 type Mutation {
@@ -761,6 +785,10 @@ type Mutation {
     publishBatch(inputs: [PublishInput!]!): [PublishResult!]!
     purgeQueuedMessages(clientId: String): PurgeResult!
     importDevices(configs: [DeviceInput!]!): ImportDeviceConfigResult!
+    createDashboard(name: String!, setAsMain: Boolean): DashboardAppResult!
+    deleteDashboard(name: String!): DashboardAppResult!
+    setMainDashboard(name: String!): DashboardAppResult!
+    uploadDashboard(name: String!, zipBase64: String!, setAsMain: Boolean): DashboardAppResult!
     user: UserManagementMutations!
     session: SessionMutations!
     archiveGroup: ArchiveGroupMutations!

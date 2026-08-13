@@ -21,6 +21,7 @@ import (
 	"monstermq.io/edge/internal/bridge/winccua"
 	"monstermq.io/edge/internal/config"
 	"monstermq.io/edge/internal/graphql/generated"
+	"monstermq.io/edge/internal/hmi"
 	mlog "monstermq.io/edge/internal/log"
 	"monstermq.io/edge/internal/metrics"
 	"monstermq.io/edge/internal/pubsub"
@@ -45,6 +46,7 @@ type Resolver struct {
 	NodeID    string
 	Version   string
 	Mochi     *mqtt.Server
+	Hmi       *hmi.Manager
 
 	// Publish injects a message into the local broker (used by the publish mutation).
 	Publish func(topic string, payload []byte, retain bool, qos byte) error
@@ -55,7 +57,8 @@ func New(cfg *config.Config, storage *stores.Storage, bus *pubsub.Bus, archives 
 	authCache *auth.Cache, collector *metrics.Collector,
 	logBus *mlog.Bus, logger *slog.Logger,
 	mochi *mqtt.Server,
-	publish func(string, []byte, bool, byte) error) *Resolver {
+	publish func(string, []byte, bool, byte) error,
+	hmiMgr *hmi.Manager) *Resolver {
 	return &Resolver{
 		Cfg:       cfg,
 		Storage:   storage,
@@ -72,6 +75,7 @@ func New(cfg *config.Config, storage *stores.Storage, bus *pubsub.Bus, archives 
 		Version:   formatEdgeVersion(version.Version),
 		Mochi:     mochi,
 		Publish:   publish,
+		Hmi:       hmiMgr,
 	}
 }
 
@@ -2616,4 +2620,131 @@ func asInt64(v any, def int64) int64 {
 		return int64(n)
 	}
 	return def
+}
+
+func mapDashboardApp(d *hmi.DashboardApp) *generated.DashboardApp {
+	if d == nil {
+		return nil
+	}
+	updatedAt := d.UpdatedAt.Format(time.RFC3339)
+	return &generated.DashboardApp{
+		Name:      d.Name,
+		IsMain:    d.IsMain,
+		Path:      d.Path,
+		FileCount: d.FileCount,
+		SizeBytes: d.SizeBytes,
+		UpdatedAt: &updatedAt,
+	}
+}
+
+func (r *queryResolver) Dashboards(ctx context.Context) ([]*generated.DashboardApp, error) {
+	if r.Hmi == nil {
+		return []*generated.DashboardApp{}, nil
+	}
+	list, err := r.Hmi.ListDashboards()
+	if err != nil {
+		return nil, err
+	}
+	var out []*generated.DashboardApp
+	for _, d := range list {
+		out = append(out, mapDashboardApp(d))
+	}
+	return out, nil
+}
+
+func (r *queryResolver) Dashboard(ctx context.Context, name string) (*generated.DashboardApp, error) {
+	if r.Hmi == nil {
+		return nil, nil
+	}
+	d, err := r.Hmi.GetDashboard(name)
+	if err != nil {
+		return nil, nil
+	}
+	return mapDashboardApp(d), nil
+}
+
+func (r *queryResolver) DashboardFiles(ctx context.Context, name string) ([]*generated.DashboardFile, error) {
+	if r.Hmi == nil {
+		return []*generated.DashboardFile{}, nil
+	}
+	files, err := r.Hmi.ListDashboardFiles(name)
+	if err != nil {
+		return nil, err
+	}
+	var out []*generated.DashboardFile
+	for _, f := range files {
+		out = append(out, &generated.DashboardFile{
+			Path:      f.Path,
+			SizeBytes: f.SizeBytes,
+		})
+	}
+	return out, nil
+}
+
+func (r *queryResolver) ExportDashboard(ctx context.Context, name string) (string, error) {
+	if r.Hmi == nil {
+		return "", fmt.Errorf("HMI is not enabled")
+	}
+	return r.Hmi.ExportDashboardZip(name)
+}
+
+func (r *mutationResolver) CreateDashboard(ctx context.Context, name string, setAsMain *bool) (*generated.DashboardAppResult, error) {
+	if r.Hmi == nil {
+		msg := "HMI is not enabled"
+		return &generated.DashboardAppResult{Success: false, Message: &msg}, nil
+	}
+	isMain := false
+	if setAsMain != nil {
+		isMain = *setAsMain
+	}
+	d, err := r.Hmi.CreateDashboard(name, isMain)
+	if err != nil {
+		msg := err.Error()
+		return &generated.DashboardAppResult{Success: false, Message: &msg}, nil
+	}
+	return &generated.DashboardAppResult{Success: true, Dashboard: mapDashboardApp(d)}, nil
+}
+
+func (r *mutationResolver) DeleteDashboard(ctx context.Context, name string) (*generated.DashboardAppResult, error) {
+	if r.Hmi == nil {
+		msg := "HMI is not enabled"
+		return &generated.DashboardAppResult{Success: false, Message: &msg}, nil
+	}
+	err := r.Hmi.DeleteDashboard(name)
+	if err != nil {
+		msg := err.Error()
+		return &generated.DashboardAppResult{Success: false, Message: &msg}, nil
+	}
+	return &generated.DashboardAppResult{Success: true}, nil
+}
+
+func (r *mutationResolver) SetMainDashboard(ctx context.Context, name string) (*generated.DashboardAppResult, error) {
+	if r.Hmi == nil {
+		msg := "HMI is not enabled"
+		return &generated.DashboardAppResult{Success: false, Message: &msg}, nil
+	}
+	err := r.Hmi.SetMainDashboard(name)
+	if err != nil {
+		msg := err.Error()
+		return &generated.DashboardAppResult{Success: false, Message: &msg}, nil
+	}
+	d, _ := r.Hmi.GetDashboard(name)
+	return &generated.DashboardAppResult{Success: true, Dashboard: mapDashboardApp(d)}, nil
+}
+
+func (r *mutationResolver) UploadDashboard(ctx context.Context, name string, zipBase64 string, setAsMain *bool) (*generated.DashboardAppResult, error) {
+	if r.Hmi == nil {
+		msg := "HMI is not enabled"
+		return &generated.DashboardAppResult{Success: false, Message: &msg}, nil
+	}
+	isMain := false
+	if setAsMain != nil {
+		isMain = *setAsMain
+	}
+	d, err := r.Hmi.UploadDashboardZip(name, zipBase64, isMain)
+	if err != nil {
+		msg := err.Error()
+		return &generated.DashboardAppResult{Success: false, Message: &msg}, nil
+	}
+	return &generated.DashboardAppResult{Success: true, Dashboard: mapDashboardApp(d)}, nil
 }

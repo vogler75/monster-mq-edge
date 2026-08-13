@@ -120,6 +120,17 @@ type HostMonitoringConfig struct {
 	QoS             int    `yaml:"QoS"`
 }
 
+type HMIConfig struct {
+	Enabled   bool   `yaml:"Enabled"`
+	Path      string `yaml:"Path"`
+	MountPath string `yaml:"MountPath"`
+}
+
+type MCPConfig struct {
+	Enabled bool `yaml:"Enabled"`
+	Port    int  `yaml:"Port"`
+}
+
 // FeaturesConfig is a flat set of feature toggles, mirroring the Features
 // section in the Java monster-mq broker. Each field enables/disables a
 // subsystem at startup. Add new flags here as they come online.
@@ -154,6 +165,8 @@ type Config struct {
 	GraphQL        GraphQLConfig        `yaml:"GraphQL"`
 	Features       FeaturesConfig       `yaml:"Features"`
 	HostMonitoring HostMonitoringConfig `yaml:"HostMonitoring"`
+	HMI            HMIConfig            `yaml:"HMI"`
+	MCP            MCPConfig            `yaml:"MCP"`
 
 	// QueuedMessagesEnabled selects how messages for offline persistent (clean=false)
 	// sessions are held until the client reconnects.
@@ -192,6 +205,15 @@ func Default() *Config {
 			BaseTopic:       "nodes/{NodeId}/host",
 			IntervalSeconds: 10,
 			QoS:             0,
+		},
+		HMI: HMIConfig{
+			Enabled:   false,
+			Path:      "./data/hmi",
+			MountPath: "/hmi",
+		},
+		MCP: MCPConfig{
+			Enabled: false,
+			Port:    3000,
 		},
 		QueuedMessagesEnabled: true,
 		MaxQueueMessages:      nil,
