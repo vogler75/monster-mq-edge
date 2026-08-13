@@ -366,7 +366,7 @@ func (r *Resolver) deviceToWinCCOaClient(d stores.DeviceConfig) *generated.WinCC
 		Config:          winCCOaConfigToGraphQL(cfg),
 		CreatedAt:       formatTime(d.CreatedAt),
 		UpdatedAt:       formatTime(d.UpdatedAt),
-		IsOnCurrentNode: d.NodeID == r.NodeID || d.NodeID == "*",
+		IsOnCurrentNode: d.NodeID == r.NodeID || d.NodeID == "local" || d.NodeID == "*",
 	}
 }
 

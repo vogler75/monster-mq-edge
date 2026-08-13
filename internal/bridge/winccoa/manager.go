@@ -173,7 +173,7 @@ func (m *Manager) diagnoseNoDevices(ctx context.Context) {
 			disabled = append(disabled, d.Name+"(enabled=false)")
 			continue
 		}
-		if d.NodeID != m.nodeID {
+		if d.NodeID != m.nodeID && d.NodeID != "local" && d.NodeID != "*" {
 			mismatched = append(mismatched, d.Name+"(nodeId="+d.NodeID+")")
 		}
 	}

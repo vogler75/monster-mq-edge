@@ -622,11 +622,7 @@ func (r *queryResolver) BrokerConfig(ctx context.Context) (*generated.BrokerConf
 }
 
 func (r *queryResolver) Broker(ctx context.Context, nodeID *string) (*generated.Broker, error) {
-	id := r.NodeID
-	if nodeID != nil {
-		id = *nodeID
-	}
-	if id != r.NodeID {
+	if nodeID != nil && *nodeID != "local" && *nodeID != r.NodeID {
 		return nil, nil
 	}
 	return r.brokerObj(), nil
@@ -638,7 +634,7 @@ func (r *queryResolver) Brokers(ctx context.Context) ([]*generated.Broker, error
 
 func (r *Resolver) brokerObj() *generated.Broker {
 	return &generated.Broker{
-		NodeID: r.NodeID, Version: r.Version,
+		NodeID: "local", Version: r.Version,
 		UserManagementEnabled: r.Cfg.UserManagement.Enabled,
 		AnonymousEnabled:      r.Cfg.UserManagement.AnonymousEnabled,
 		IsLeader:              true, IsCurrent: true,
@@ -1326,8 +1322,12 @@ func (r *queryResolver) MqttClients(ctx context.Context, name, node *string) ([]
 		if name != nil && d.Name != *name {
 			continue
 		}
-		if node != nil && d.NodeID != *node {
-			continue
+		if node != nil && *node != "" {
+			target := *node
+			matches := d.NodeID == target || d.NodeID == "local" || d.NodeID == "*" || (target == "local" && (d.NodeID == r.NodeID || d.NodeID == "local" || d.NodeID == "*"))
+			if !matches {
+				continue
+			}
 		}
 		out = append(out, r.deviceToMqttClient(d))
 	}
@@ -2521,7 +2521,7 @@ func (r *Resolver) deviceToMqttClient(d stores.DeviceConfig) *generated.MqttClie
 		Config:          mapToConnectionConfig(cfg),
 		CreatedAt:       formatTime(d.CreatedAt),
 		UpdatedAt:       formatTime(d.UpdatedAt),
-		IsOnCurrentNode: d.NodeID == r.NodeID || d.NodeID == "*",
+		IsOnCurrentNode: d.NodeID == r.NodeID || d.NodeID == "local" || d.NodeID == "*",
 	}
 }
 
