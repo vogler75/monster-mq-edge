@@ -202,7 +202,7 @@ func Default() *Config {
 		Logging:               LoggingConfig{Level: "INFO", MqttSyslogEnabled: false, RingBufferSize: 1000},
 		GraphQL:               GraphQLConfig{Enabled: true, Port: 4000},
 		MCP:                   MCPConfig{Enabled: false, Port: 3000},
-		Features:              FeaturesConfig{MqttClient: false, WinCCUa: false, WinCCOa: false, DeviceImportExport: false, Mcp: false},
+		Features:              FeaturesConfig{MqttClient: false, WinCCUa: false, WinCCOa: false, DeviceImportExport: false, Mcp: false, Hmi: false},
 		HostMonitoring: HostMonitoringConfig{
 			Enabled:         false,
 			BaseTopic:       "nodes/{NodeId}/host",
