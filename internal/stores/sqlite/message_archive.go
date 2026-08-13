@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -79,7 +80,7 @@ func (a *MessageArchive) AddHistory(ctx context.Context, msgs []stores.BrokerMes
 	for _, m := range msgs {
 		var payloadBlob []byte
 		var payloadJSON sql.NullString
-		if a.format == stores.PayloadJSON && isProbablyJSON(m.Payload) {
+		if a.format == stores.PayloadJSON && len(m.Payload) > 0 && json.Valid(m.Payload) {
 			payloadJSON = sql.NullString{String: string(m.Payload), Valid: true}
 		} else {
 			payloadBlob = m.Payload
@@ -227,4 +228,162 @@ func isProbablyJSON(b []byte) bool {
 		return c == '{' || c == '[' || c == '"' || (c >= '0' && c <= '9') || c == '-' || c == 't' || c == 'f' || c == 'n'
 	}
 	return false
+}
+
+func (a *MessageArchive) GetAggregatedHistory(ctx context.Context, topics []string, startTime, endTime time.Time, intervalMinutes int, functions []string, fields []string) (*stores.AggregatedResult, error) {
+	if len(topics) == 0 {
+		return &stores.AggregatedResult{
+			Columns:    []string{"timestamp"},
+			Rows:       [][]any{},
+			Interval:   fmt.Sprintf("%d", intervalMinutes),
+			StartTime:  startTime.UTC().Format(time.RFC3339),
+			EndTime:    endTime.UTC().Format(time.RFC3339),
+			TopicCount: 0,
+			RowCount:   0,
+		}, nil
+	}
+
+	if intervalMinutes <= 0 {
+		intervalMinutes = 5
+	}
+	if len(functions) == 0 {
+		functions = []string{"AVG"}
+	}
+
+	var bucketExpr string
+	switch intervalMinutes {
+	case 1:
+		bucketExpr = "strftime('%Y-%m-%dT%H:%M:00Z', time)"
+	case 5:
+		bucketExpr = "strftime('%Y-%m-%dT%H:', time) || printf('%02d', (CAST(strftime('%M', time) AS INTEGER) / 5) * 5) || ':00Z'"
+	case 15:
+		bucketExpr = "strftime('%Y-%m-%dT%H:', time) || printf('%02d', (CAST(strftime('%M', time) AS INTEGER) / 15) * 15) || ':00Z'"
+	case 60:
+		bucketExpr = "strftime('%Y-%m-%dT%H:00:00Z', time)"
+	case 1440:
+		bucketExpr = "strftime('%Y-%m-%dT00:00:00Z', time)"
+	default:
+		bucketExpr = fmt.Sprintf("strftime('%%Y-%%m-%%dT%%H:', time) || printf('%%02d', (CAST(strftime('%%M', time) AS INTEGER) / %d) * %d) || ':00Z'", intervalMinutes, intervalMinutes)
+	}
+
+	columns := []string{"timestamp"}
+	selectClauses := make([]string, 0)
+	columnNames := make([]string, 0)
+	var params []any
+
+	effectiveFields := fields
+	if len(effectiveFields) == 0 {
+		effectiveFields = []string{""}
+	}
+
+	for _, topic := range topics {
+		for _, field := range effectiveFields {
+			fieldAlias := ""
+			if field != "" {
+				fieldAlias = "." + strings.ReplaceAll(field, ".", "_")
+			}
+
+			var valExpr string
+			if field == "" {
+				valExpr = "COALESCE(CAST(payload_json AS REAL), CAST(CAST(payload_blob AS TEXT) AS REAL))"
+			} else {
+				valExpr = fmt.Sprintf("COALESCE(CAST(json_extract(payload_json, '$.%s') AS REAL), CAST(json_extract(CAST(payload_blob AS TEXT), '$.%s') AS REAL))", field, field)
+			}
+
+			for _, fn := range functions {
+				fnUpper := strings.ToUpper(fn)
+				fnLower := strings.ToLower(fn)
+				colName := fmt.Sprintf("%s%s_%s", topic, fieldAlias, fnLower)
+				columnNames = append(columnNames, colName)
+				columns = append(columns, colName)
+
+				sqlFunc := "AVG"
+				switch fnUpper {
+				case "AVG":
+					sqlFunc = "AVG"
+				case "MIN":
+					sqlFunc = "MIN"
+				case "MAX":
+					sqlFunc = "MAX"
+				case "COUNT":
+					sqlFunc = "COUNT"
+				case "SUM":
+					sqlFunc = "SUM"
+				default:
+					sqlFunc = "AVG"
+				}
+
+				selectClauses = append(selectClauses, fmt.Sprintf("%s(CASE WHEN topic = ? THEN %s END)", sqlFunc, valExpr))
+				params = append(params, topic)
+			}
+		}
+	}
+
+	topicPlaceholders := make([]string, len(topics))
+	for i, t := range topics {
+		topicPlaceholders[i] = "?"
+		params = append(params, t)
+	}
+
+	params = append(params, startTime.UTC().Format(time.RFC3339Nano), endTime.UTC().Format(time.RFC3339Nano))
+
+	q := fmt.Sprintf(`SELECT
+		%s AS bucket,
+		%s
+	FROM %s
+	WHERE topic IN (%s) AND time >= ? AND time <= ?
+	GROUP BY bucket
+	ORDER BY bucket ASC`,
+		bucketExpr,
+		strings.Join(selectClauses, ",\n"),
+		a.tableName,
+		strings.Join(topicPlaceholders, ", "),
+	)
+
+	dbRows, err := a.db.Conn().QueryContext(ctx, q, params...)
+	if err != nil {
+		return nil, err
+	}
+	defer dbRows.Close()
+
+	rows := make([][]any, 0)
+	for dbRows.Next() {
+		scanTargets := make([]any, len(columnNames)+1)
+		var bucket string
+		scanTargets[0] = &bucket
+		for i := range columnNames {
+			var val sql.NullFloat64
+			scanTargets[i+1] = &val
+		}
+
+		if err := dbRows.Scan(scanTargets...); err != nil {
+			return nil, err
+		}
+
+		row := make([]any, len(columnNames)+1)
+		row[0] = bucket
+		for i := range columnNames {
+			val := scanTargets[i+1].(*sql.NullFloat64)
+			if val.Valid {
+				row[i+1] = val.Float64
+			} else {
+				row[i+1] = nil
+			}
+		}
+		rows = append(rows, row)
+	}
+
+	if err := dbRows.Err(); err != nil {
+		return nil, err
+	}
+
+	return &stores.AggregatedResult{
+		Columns:    columns,
+		Rows:       rows,
+		Interval:   fmt.Sprintf("%d", intervalMinutes),
+		StartTime:  startTime.UTC().Format(time.RFC3339),
+		EndTime:    endTime.UTC().Format(time.RFC3339),
+		TopicCount: len(topics),
+		RowCount:   len(rows),
+	}, nil
 }

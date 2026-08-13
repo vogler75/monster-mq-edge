@@ -301,3 +301,46 @@ func TestArchiveConfigMigrationAddsDatabaseConnectionName(t *testing.T) {
 		t.Fatalf("migration did not add/persist database_connection_name: %+v", got)
 	}
 }
+
+func TestMessageArchiveGetAggregatedHistory(t *testing.T) {
+	db := tempDB(t)
+	arc := NewMessageArchive("messages_archive", db, stores.PayloadDefault)
+	ctx := context.Background()
+	if err := arc.EnsureTable(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().Truncate(time.Minute)
+	t1 := now.Add(-10 * time.Minute)
+	t2 := now.Add(-8 * time.Minute)
+
+	msgs := []stores.BrokerMessage{
+		{MessageUUID: "m1", TopicName: "sensors/temp", Payload: []byte("20.5"), QoS: 0, Time: t1},
+		{MessageUUID: "m2", TopicName: "sensors/temp", Payload: []byte("22.5"), QoS: 0, Time: t2},
+		{MessageUUID: "m3", TopicName: "sensors/humidity", Payload: []byte(`{"value": 55.0}`), QoS: 0, Time: t1},
+	}
+	if err := arc.AddHistory(ctx, msgs); err != nil {
+		t.Fatal(err)
+	}
+
+	// Aggregated query raw numeric payload
+	res, err := arc.GetAggregatedHistory(ctx, []string{"sensors/temp"}, t1.Add(-time.Minute), now, 5, []string{"AVG", "MAX"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.RowCount == 0 {
+		t.Fatalf("expected aggregated rows, got 0")
+	}
+	if len(res.Columns) != 3 { // timestamp, sensors/temp_avg, sensors/temp_max
+		t.Fatalf("expected 3 columns, got %v", res.Columns)
+	}
+
+	// Aggregated query JSON field extraction
+	resJSON, err := arc.GetAggregatedHistory(ctx, []string{"sensors/humidity"}, t1.Add(-time.Minute), now, 5, []string{"AVG"}, []string{"value"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resJSON.RowCount == 0 {
+		t.Fatalf("expected aggregated JSON rows, got 0")
+	}
+}

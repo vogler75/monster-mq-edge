@@ -5,8 +5,10 @@ package mongodb
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -151,6 +153,21 @@ func getInt(d bson.M, k string) int {
 	}
 	return 0
 }
+func getFloat(d bson.M, k string) float64 {
+	switch v := d[k].(type) {
+	case float64:
+		return v
+	case float32:
+		return float64(v)
+	case int32:
+		return float64(v)
+	case int64:
+		return float64(v)
+	case int:
+		return float64(v)
+	}
+	return 0
+}
 func getBool(d bson.M, k string) bool {
 	if v, ok := d[k].(bool); ok {
 		return v
@@ -254,10 +271,11 @@ func (s *MessageStore) PurgeOlderThan(ctx context.Context, t time.Time) (stores.
 type MessageArchive struct {
 	name string
 	db   *DB
+	fmt  stores.PayloadFormat
 }
 
-func NewMessageArchive(name string, db *DB, _ stores.PayloadFormat) *MessageArchive {
-	return &MessageArchive{name: name, db: db}
+func NewMessageArchive(name string, db *DB, fmt stores.PayloadFormat) *MessageArchive {
+	return &MessageArchive{name: name, db: db, fmt: fmt}
 }
 func (a *MessageArchive) Name() string                    { return a.name }
 func (a *MessageArchive) Type() stores.MessageArchiveType { return stores.ArchiveMongoDB }
@@ -272,17 +290,40 @@ func (a *MessageArchive) EnsureTable(ctx context.Context) error {
 	return err
 }
 
+func isProbablyJSON(b []byte) bool {
+	for _, c := range b {
+		if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
+			continue
+		}
+		return c == '{' || c == '[' || c == '"' || (c >= '0' && c <= '9') || c == '-' || c == 't' || c == 'f' || c == 'n'
+	}
+	return false
+}
+
 func (a *MessageArchive) AddHistory(ctx context.Context, msgs []stores.BrokerMessage) error {
 	if len(msgs) == 0 {
 		return nil
 	}
 	docs := make([]any, 0, len(msgs))
 	for _, m := range msgs {
-		docs = append(docs, bson.M{
+		doc := bson.M{
 			"topic": m.TopicName, "time": m.Time.UTC(),
-			"payload": bson.Binary{Data: m.Payload}, "qos": int(m.QoS),
-			"retained": m.IsRetain, "client_id": m.ClientID, "message_uuid": m.MessageUUID,
-		})
+			"qos": int(m.QoS), "retained": m.IsRetain,
+			"client_id": m.ClientID, "message_uuid": m.MessageUUID,
+		}
+
+		if a.fmt == stores.PayloadJSON && len(m.Payload) > 0 && json.Valid(m.Payload) {
+			var jsonObj map[string]any
+			if err := json.Unmarshal(m.Payload, &jsonObj); err == nil {
+				doc["payload"] = jsonObj
+			} else {
+				doc["payload_blob"] = bson.Binary{Data: m.Payload}
+			}
+		} else {
+			doc["payload_blob"] = bson.Binary{Data: m.Payload}
+		}
+
+		docs = append(docs, doc)
 	}
 	_, err := a.coll().InsertMany(ctx, docs, options.InsertMany().SetOrdered(false))
 	if mongo.IsDuplicateKeyError(err) {
@@ -334,8 +375,14 @@ func (a *MessageArchive) GetHistory(ctx context.Context, topic string, from, to 
 		} else if t, ok := doc["time"].(time.Time); ok {
 			m.Timestamp = t
 		}
-		if b, ok := doc["payload"].(bson.Binary); ok {
+		if b, ok := doc["payload_blob"].(bson.Binary); ok {
 			m.Payload = b.Data
+		} else if b, ok := doc["payload"].(bson.Binary); ok {
+			m.Payload = b.Data
+		} else if doc["payload"] != nil {
+			if jsonBytes, err := json.Marshal(doc["payload"]); err == nil {
+				m.Payload = jsonBytes
+			}
 		}
 		out = append(out, m)
 	}
@@ -421,6 +468,214 @@ func (a *MessageArchive) PurgeOlderThan(ctx context.Context, t time.Time) (store
 		return stores.PurgeResult{Err: err}, err
 	}
 	return stores.PurgeResult{DeletedRows: res.DeletedCount}, nil
+}
+
+func (a *MessageArchive) GetAggregatedHistory(ctx context.Context, topics []string, startTime, endTime time.Time, intervalMinutes int, functions []string, fields []string) (*stores.AggregatedResult, error) {
+	if len(topics) == 0 {
+		return &stores.AggregatedResult{
+			Columns:    []string{"timestamp"},
+			Rows:       [][]any{},
+			Interval:   fmt.Sprintf("%d", intervalMinutes),
+			StartTime:  startTime.UTC().Format(time.RFC3339),
+			EndTime:    endTime.UTC().Format(time.RFC3339),
+			TopicCount: 0,
+			RowCount:   0,
+		}, nil
+	}
+
+	if intervalMinutes <= 0 {
+		intervalMinutes = 5
+	}
+	if len(functions) == 0 {
+		functions = []string{"AVG"}
+	}
+
+	dateTruncUnit := "minute"
+	binSize := intervalMinutes
+	if intervalMinutes >= 1440 {
+		dateTruncUnit = "day"
+		binSize = intervalMinutes / 1440
+	} else if intervalMinutes >= 60 {
+		dateTruncUnit = "hour"
+		binSize = intervalMinutes / 60
+	}
+
+	effectiveFields := fields
+	if len(effectiveFields) == 0 {
+		effectiveFields = []string{""}
+	}
+
+	topicMatch := bson.M{}
+	if len(topics) == 1 {
+		topicMatch["topic"] = topics[0]
+	} else {
+		topicMatch["topic"] = bson.M{"$in": topics}
+	}
+	topicMatch["time"] = bson.M{
+		"$gte": startTime.UTC(),
+		"$lte": endTime.UTC(),
+	}
+
+	groupDoc := bson.M{
+		"_id": bson.M{
+			"bucket": bson.M{
+				"$dateTrunc": bson.M{
+					"date":    "$time",
+					"unit":    dateTruncUnit,
+					"binSize": binSize,
+				},
+			},
+			"topic": "$topic",
+		},
+	}
+
+	columnNames := make([]string, 0)
+	columns := []string{"timestamp"}
+
+	for _, topic := range topics {
+		for fieldIdx, field := range effectiveFields {
+			fieldAlias := ""
+			if field != "" {
+				fieldAlias = "." + strings.ReplaceAll(field, ".", "_")
+			}
+
+			for _, fn := range functions {
+				fnLower := strings.ToLower(fn)
+				colName := fmt.Sprintf("%s%s_%s", topic, fieldAlias, fnLower)
+				columnNames = append(columnNames, colName)
+				columns = append(columns, colName)
+			}
+
+			var valExpr any
+			if field == "" {
+				valExpr = bson.M{"$ifNull": bson.A{"$payload", "$payload_blob"}}
+			} else {
+				valExpr = bson.M{"$ifNull": bson.A{"$payload." + field, "$payload_blob"}}
+			}
+
+			for _, fn := range functions {
+				fnUpper := strings.ToUpper(fn)
+				fnLower := strings.ToLower(fn)
+				accumKey := fmt.Sprintf("agg_%d_%s", fieldIdx, fnLower)
+
+				switch fnUpper {
+				case "AVG":
+					groupDoc[accumKey] = bson.M{"$avg": bson.M{"$toDouble": valExpr}}
+				case "MIN":
+					groupDoc[accumKey] = bson.M{"$min": bson.M{"$toDouble": valExpr}}
+				case "MAX":
+					groupDoc[accumKey] = bson.M{"$max": bson.M{"$toDouble": valExpr}}
+				case "SUM":
+					groupDoc[accumKey] = bson.M{"$sum": bson.M{"$toDouble": valExpr}}
+				case "COUNT":
+					groupDoc[accumKey] = bson.M{"$sum": bson.M{"$cond": bson.A{
+						bson.M{"$ne": bson.A{valExpr, nil}}, 1, 0,
+					}}}
+				default:
+					groupDoc[accumKey] = bson.M{"$avg": bson.M{"$toDouble": valExpr}}
+				}
+			}
+		}
+	}
+
+	pipeline := mongo.Pipeline{
+		bson.D{{Key: "$match", Value: topicMatch}},
+		bson.D{{Key: "$group", Value: groupDoc}},
+		bson.D{{Key: "$sort", Value: bson.D{{Key: "_id.bucket", Value: 1}}}},
+	}
+
+	cur, err := a.coll().Aggregate(ctx, pipeline)
+	if err != nil {
+		return nil, err
+	}
+	defer cur.Close(ctx)
+
+	type topicVals map[string]float64
+	bucketMap := make(map[string]map[string]topicVals)
+
+	for cur.Next(ctx) {
+		var doc bson.M
+		if err := cur.Decode(&doc); err != nil {
+			return nil, err
+		}
+
+		idDoc, _ := doc["_id"].(bson.M)
+		if idDoc == nil {
+			continue
+		}
+		topicStr := getStr(idDoc, "topic")
+		var bucketTime time.Time
+		if b, ok := idDoc["bucket"].(bson.DateTime); ok {
+			bucketTime = b.Time()
+		} else if b, ok := idDoc["bucket"].(time.Time); ok {
+			bucketTime = b
+		}
+		bucketStr := bucketTime.UTC().Format(time.RFC3339)
+
+		if bucketMap[bucketStr] == nil {
+			bucketMap[bucketStr] = make(map[string]topicVals)
+		}
+		if bucketMap[bucketStr][topicStr] == nil {
+			bucketMap[bucketStr][topicStr] = make(topicVals)
+		}
+
+		for fieldIdx, field := range effectiveFields {
+			fieldAlias := ""
+			if field != "" {
+				fieldAlias = "." + strings.ReplaceAll(field, ".", "_")
+			}
+			for _, fn := range functions {
+				fnLower := strings.ToLower(fn)
+				colName := fmt.Sprintf("%s%s_%s", topicStr, fieldAlias, fnLower)
+				accumKey := fmt.Sprintf("agg_%d_%s", fieldIdx, fnLower)
+
+				if _, ok := doc[accumKey]; ok && doc[accumKey] != nil {
+					bucketMap[bucketStr][topicStr][colName] = getFloat(doc, accumKey)
+				}
+			}
+		}
+	}
+
+	if err := cur.Err(); err != nil {
+		return nil, err
+	}
+
+	sortedBuckets := make([]string, 0, len(bucketMap))
+	for b := range bucketMap {
+		sortedBuckets = append(sortedBuckets, b)
+	}
+	sort.Strings(sortedBuckets)
+
+	rows := make([][]any, 0, len(sortedBuckets))
+	for _, b := range sortedBuckets {
+		row := make([]any, len(columnNames)+1)
+		row[0] = b
+
+		for i, colName := range columnNames {
+			var valFound bool
+			for _, tMap := range bucketMap[b] {
+				if v, exists := tMap[colName]; exists {
+					row[i+1] = v
+					valFound = true
+					break
+				}
+			}
+			if !valFound {
+				row[i+1] = nil
+			}
+		}
+		rows = append(rows, row)
+	}
+
+	return &stores.AggregatedResult{
+		Columns:    columns,
+		Rows:       rows,
+		Interval:   fmt.Sprintf("%d", intervalMinutes),
+		StartTime:  startTime.UTC().Format(time.RFC3339),
+		EndTime:    endTime.UTC().Format(time.RFC3339),
+		TopicCount: len(topics),
+		RowCount:   len(rows),
+	}, nil
 }
 
 // SessionStore -----------------------------------------------------------
