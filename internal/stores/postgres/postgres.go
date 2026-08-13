@@ -299,16 +299,34 @@ func (a *MessageArchive) EnsureTable(ctx context.Context) error {
 	return nil
 }
 
+func isProbablyJSON(b []byte) bool {
+	for _, c := range b {
+		if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
+			continue
+		}
+		return c == '{' || c == '[' || c == '"' || (c >= '0' && c <= '9') || c == '-' || c == 't' || c == 'f' || c == 'n'
+	}
+	return false
+}
+
 func (a *MessageArchive) AddHistory(ctx context.Context, msgs []stores.BrokerMessage) error {
 	if len(msgs) == 0 {
 		return nil
 	}
 	t := a.tableName()
-	q := fmt.Sprintf(`INSERT INTO %s (topic, time, payload_blob, qos, retained, client_id, message_uuid)
-        VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (topic, time) DO NOTHING`, t)
+	q := fmt.Sprintf(`INSERT INTO %s (topic, time, payload_blob, payload_json, qos, retained, client_id, message_uuid)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (topic, time) DO NOTHING`, t)
 	b := &pgx.Batch{}
 	for _, m := range msgs {
-		b.Queue(q, m.TopicName, m.Time.UTC(), m.Payload, int(m.QoS), m.IsRetain, m.ClientID, m.MessageUUID)
+		var payloadBlob []byte
+		var payloadJSON *string
+		if a.fmt == stores.PayloadJSON && len(m.Payload) > 0 && json.Valid(m.Payload) {
+			s := string(m.Payload)
+			payloadJSON = &s
+		} else {
+			payloadBlob = m.Payload
+		}
+		b.Queue(q, m.TopicName, m.Time.UTC(), payloadBlob, payloadJSON, int(m.QoS), m.IsRetain, m.ClientID, m.MessageUUID)
 	}
 	br := a.db.pool.SendBatch(ctx, b)
 	defer br.Close()
@@ -325,7 +343,7 @@ func (a *MessageArchive) GetHistory(ctx context.Context, topic string, from, to 
 		limit = 100
 	}
 	pattern := strings.ReplaceAll(strings.ReplaceAll(topic, "#", "%"), "+", "%")
-	q := fmt.Sprintf(`SELECT topic, time, payload_blob, qos, client_id FROM %s WHERE topic LIKE $1`, a.tableName())
+	q := fmt.Sprintf(`SELECT topic, time, payload_blob, payload_json, qos, client_id FROM %s WHERE topic LIKE $1`, a.tableName())
 	args := []any{pattern}
 	if from != nil {
 		q += fmt.Sprintf(` AND time >= $%d`, len(args)+1)
@@ -345,14 +363,19 @@ func (a *MessageArchive) GetHistory(ctx context.Context, topic string, from, to 
 	out := []stores.ArchivedMessage{}
 	for rows.Next() {
 		var (
-			topic   string
-			ts      time.Time
-			payload []byte
-			qos     int
-			cid     *string
+			topic       string
+			ts          time.Time
+			payloadBlob []byte
+			payloadJSON *string
+			qos         int
+			cid         *string
 		)
-		if err := rows.Scan(&topic, &ts, &payload, &qos, &cid); err != nil {
+		if err := rows.Scan(&topic, &ts, &payloadBlob, &payloadJSON, &qos, &cid); err != nil {
 			return nil, err
+		}
+		payload := payloadBlob
+		if len(payload) == 0 && payloadJSON != nil {
+			payload = []byte(*payloadJSON)
 		}
 		am := stores.ArchivedMessage{Topic: topic, Timestamp: ts, Payload: payload, QoS: byte(qos)}
 		if cid != nil {
@@ -424,6 +447,178 @@ func (a *MessageArchive) PurgeOlderThan(ctx context.Context, t time.Time) (store
 		return stores.PurgeResult{Err: err}, err
 	}
 	return stores.PurgeResult{DeletedRows: res.RowsAffected()}, nil
+}
+
+func (a *MessageArchive) GetAggregatedHistory(ctx context.Context, topics []string, startTime, endTime time.Time, intervalMinutes int, functions []string, fields []string) (*stores.AggregatedResult, error) {
+	if len(topics) == 0 {
+		return &stores.AggregatedResult{
+			Columns:    []string{"timestamp"},
+			Rows:       [][]any{},
+			Interval:   fmt.Sprintf("%d", intervalMinutes),
+			StartTime:  startTime.UTC().Format(time.RFC3339),
+			EndTime:    endTime.UTC().Format(time.RFC3339),
+			TopicCount: 0,
+			RowCount:   0,
+		}, nil
+	}
+
+	if intervalMinutes <= 0 {
+		intervalMinutes = 5
+	}
+	if len(functions) == 0 {
+		functions = []string{"AVG"}
+	}
+
+	var bucketExpr string
+	switch intervalMinutes {
+	case 1:
+		bucketExpr = "to_char(date_trunc('minute', time), 'YYYY-MM-DD\"T\"HH24:MI:00\"Z\"')"
+	case 60:
+		bucketExpr = "to_char(date_trunc('hour', time), 'YYYY-MM-DD\"T\"HH24:00:00\"Z\"')"
+	case 1440:
+		bucketExpr = "to_char(date_trunc('day', time), 'YYYY-MM-DD\"T\"00:00:00\"Z\"')"
+	default:
+		bucketExpr = fmt.Sprintf("to_char(date_trunc('hour', time) + (EXTRACT(minute FROM time)::int / %d * %d) * interval '1 minute', 'YYYY-MM-DD\"T\"HH24:MI:00\"Z\"')", intervalMinutes, intervalMinutes)
+	}
+
+	columns := []string{"timestamp"}
+	selectClauses := make([]string, 0)
+	columnNames := make([]string, 0)
+	var args []any
+	paramIndex := 1
+
+	effectiveFields := fields
+	if len(effectiveFields) == 0 {
+		effectiveFields = []string{""}
+	}
+
+	for _, topic := range topics {
+		for _, field := range effectiveFields {
+			fieldAlias := ""
+			if field != "" {
+				fieldAlias = "." + strings.ReplaceAll(field, ".", "_")
+			}
+
+			var valExpr string
+			if field == "" {
+				valExpr = "COALESCE((payload_json)::NUMERIC, (convert_from(payload_blob, 'UTF8'))::NUMERIC)"
+			} else {
+				jsonDocExpr := "COALESCE(payload_json, (convert_from(payload_blob, 'UTF8'))::jsonb)"
+				pathParts := strings.Split(field, ".")
+				if len(pathParts) == 1 {
+					valExpr = fmt.Sprintf("(%s->>'%s')::NUMERIC", jsonDocExpr, field)
+				} else {
+					jsonPath := strings.Join(pathParts[:len(pathParts)-1], "->")
+					lastField := pathParts[len(pathParts)-1]
+					valExpr = fmt.Sprintf("(%s->%s->>'%s')::NUMERIC", jsonDocExpr, jsonPath, lastField)
+				}
+			}
+
+			for _, fn := range functions {
+				fnUpper := strings.ToUpper(fn)
+				fnLower := strings.ToLower(fn)
+				colName := fmt.Sprintf("%s%s_%s", topic, fieldAlias, fnLower)
+				columnNames = append(columnNames, colName)
+				columns = append(columns, colName)
+
+				sqlFunc := "AVG"
+				switch fnUpper {
+				case "AVG":
+					sqlFunc = "AVG"
+				case "MIN":
+					sqlFunc = "MIN"
+				case "MAX":
+					sqlFunc = "MAX"
+				case "COUNT":
+					sqlFunc = "COUNT"
+				case "SUM":
+					sqlFunc = "SUM"
+				default:
+					sqlFunc = "AVG"
+				}
+
+				selectClauses = append(selectClauses, fmt.Sprintf("%s(CASE WHEN topic = $%d THEN %s END)", sqlFunc, paramIndex, valExpr))
+				args = append(args, topic)
+				paramIndex++
+			}
+		}
+	}
+
+	topicPlaceholders := make([]string, len(topics))
+	for i, t := range topics {
+		topicPlaceholders[i] = fmt.Sprintf("$%d", paramIndex)
+		args = append(args, t)
+		paramIndex++
+	}
+
+	startTimeParamIdx := paramIndex
+	args = append(args, startTime.UTC())
+	paramIndex++
+
+	endTimeParamIdx := paramIndex
+	args = append(args, endTime.UTC())
+
+	q := fmt.Sprintf(`SELECT
+		%s AS bucket,
+		%s
+	FROM %s
+	WHERE topic IN (%s) AND time >= $%d AND time <= $%d
+	GROUP BY bucket
+	ORDER BY bucket ASC`,
+		bucketExpr,
+		strings.Join(selectClauses, ",\n"),
+		a.tableName(),
+		strings.Join(topicPlaceholders, ", "),
+		startTimeParamIdx,
+		endTimeParamIdx,
+	)
+
+	dbRows, err := a.db.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer dbRows.Close()
+
+	rows := make([][]any, 0)
+	for dbRows.Next() {
+		scanTargets := make([]any, len(columnNames)+1)
+		var bucket string
+		scanTargets[0] = &bucket
+		for i := range columnNames {
+			var val *float64
+			scanTargets[i+1] = &val
+		}
+
+		if err := dbRows.Scan(scanTargets...); err != nil {
+			return nil, err
+		}
+
+		row := make([]any, len(columnNames)+1)
+		row[0] = bucket
+		for i := range columnNames {
+			val := scanTargets[i+1].(**float64)
+			if *val != nil {
+				row[i+1] = **val
+			} else {
+				row[i+1] = nil
+			}
+		}
+		rows = append(rows, row)
+	}
+
+	if err := dbRows.Err(); err != nil {
+		return nil, err
+	}
+
+	return &stores.AggregatedResult{
+		Columns:    columns,
+		Rows:       rows,
+		Interval:   fmt.Sprintf("%d", intervalMinutes),
+		StartTime:  startTime.UTC().Format(time.RFC3339),
+		EndTime:    endTime.UTC().Format(time.RFC3339),
+		TopicCount: len(topics),
+		RowCount:   len(rows),
+	}, nil
 }
 
 // SessionStore -------------------------------------------------------------

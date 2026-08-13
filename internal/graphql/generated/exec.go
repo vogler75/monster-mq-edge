@@ -3204,7 +3204,7 @@ func (ec *executionContext) _AggregatedResult_rows(ctx context.Context, field gr
 			return obj.Rows, nil
 		},
 		nil,
-		ec.marshalNJSON2ᚕᚕmapᚄ,
+		ec.marshalNJSON2ᚕᚕinterfaceᚄ,
 		true,
 		true,
 	)
@@ -31305,14 +31305,14 @@ func (ec *executionContext) marshalNInt2int(ctx context.Context, sel ast.Selecti
 	return res
 }
 
-func (ec *executionContext) unmarshalNJSON2ᚕmap(ctx context.Context, v any) ([]map[string]any, error) {
+func (ec *executionContext) unmarshalNJSON2ᚕinterface(ctx context.Context, v any) ([]any, error) {
 	var vSlice []any
 	vSlice = graphql.CoerceList(v)
 	var err error
-	res := make([]map[string]any, len(vSlice))
+	res := make([]any, len(vSlice))
 	for i := range vSlice {
 		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
-		res[i], err = ec.unmarshalOJSON2map(ctx, vSlice[i])
+		res[i], err = ec.unmarshalOJSON2interface(ctx, vSlice[i])
 		if err != nil {
 			return nil, err
 		}
@@ -31320,23 +31320,23 @@ func (ec *executionContext) unmarshalNJSON2ᚕmap(ctx context.Context, v any) ([
 	return res, nil
 }
 
-func (ec *executionContext) marshalNJSON2ᚕmap(ctx context.Context, sel ast.SelectionSet, v []map[string]any) graphql.Marshaler {
+func (ec *executionContext) marshalNJSON2ᚕinterface(ctx context.Context, sel ast.SelectionSet, v []any) graphql.Marshaler {
 	ret := make(graphql.Array, len(v))
 	for i := range v {
-		ret[i] = ec.marshalOJSON2map(ctx, sel, v[i])
+		ret[i] = ec.marshalOJSON2interface(ctx, sel, v[i])
 	}
 
 	return ret
 }
 
-func (ec *executionContext) unmarshalNJSON2ᚕᚕmapᚄ(ctx context.Context, v any) ([][]map[string]any, error) {
+func (ec *executionContext) unmarshalNJSON2ᚕᚕinterfaceᚄ(ctx context.Context, v any) ([][]any, error) {
 	var vSlice []any
 	vSlice = graphql.CoerceList(v)
 	var err error
-	res := make([][]map[string]any, len(vSlice))
+	res := make([][]any, len(vSlice))
 	for i := range vSlice {
 		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
-		res[i], err = ec.unmarshalNJSON2ᚕmap(ctx, vSlice[i])
+		res[i], err = ec.unmarshalNJSON2ᚕinterface(ctx, vSlice[i])
 		if err != nil {
 			return nil, err
 		}
@@ -31344,10 +31344,10 @@ func (ec *executionContext) unmarshalNJSON2ᚕᚕmapᚄ(ctx context.Context, v a
 	return res, nil
 }
 
-func (ec *executionContext) marshalNJSON2ᚕᚕmapᚄ(ctx context.Context, sel ast.SelectionSet, v [][]map[string]any) graphql.Marshaler {
+func (ec *executionContext) marshalNJSON2ᚕᚕinterfaceᚄ(ctx context.Context, sel ast.SelectionSet, v [][]any) graphql.Marshaler {
 	ret := make(graphql.Array, len(v))
 	for i := range v {
-		ret[i] = ec.marshalNJSON2ᚕmap(ctx, sel, v[i])
+		ret[i] = ec.marshalNJSON2ᚕinterface(ctx, sel, v[i])
 	}
 
 	for _, e := range ret {
@@ -32698,6 +32698,24 @@ func (ec *executionContext) marshalOInt2ᚖint(ctx context.Context, sel ast.Sele
 	_ = sel
 	_ = ctx
 	res := graphql.MarshalInt(*v)
+	return res
+}
+
+func (ec *executionContext) unmarshalOJSON2interface(ctx context.Context, v any) (any, error) {
+	if v == nil {
+		return nil, nil
+	}
+	res, err := graphql.UnmarshalAny(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalOJSON2interface(ctx context.Context, sel ast.SelectionSet, v any) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	_ = sel
+	_ = ctx
+	res := graphql.MarshalAny(v)
 	return res
 }
 

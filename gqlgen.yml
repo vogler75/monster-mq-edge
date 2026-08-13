@@ -27,6 +27,8 @@ models:
     model:
       - github.com/99designs/gqlgen/graphql.Map
       - github.com/99designs/gqlgen/graphql.Any
+  AggregatedResult:
+    model: monstermq.io/edge/internal/graphql/generated.AggregatedResult
   ArchiveGroupMutations:
     fields:
       create:    { resolver: true }

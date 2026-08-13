@@ -23,11 +23,22 @@ type DailyCount struct {
 	Count int64  `json:"count"`
 }
 
+type AggregatedResult struct {
+	Columns    []string `json:"columns"`
+	Rows       [][]any  `json:"rows"`
+	Interval   string   `json:"interval"`
+	StartTime  string   `json:"startTime"`
+	EndTime    string   `json:"endTime"`
+	TopicCount int      `json:"topicCount"`
+	RowCount   int      `json:"rowCount"`
+}
+
 type MessageArchive interface {
 	Name() string
 	Type() MessageArchiveType
 	AddHistory(ctx context.Context, msgs []BrokerMessage) error
 	GetHistory(ctx context.Context, topic string, from, to *time.Time, limit int) ([]ArchivedMessage, error)
+	GetAggregatedHistory(ctx context.Context, topics []string, startTime, endTime time.Time, intervalMinutes int, functions []string, fields []string) (*AggregatedResult, error)
 	GetArchiveStats(ctx context.Context, startTime, endTime *time.Time) (minTimestamp *time.Time, dailyCounts []DailyCount, err error)
 	PurgeOlderThan(ctx context.Context, t time.Time) (PurgeResult, error)
 	EnsureTable(ctx context.Context) error

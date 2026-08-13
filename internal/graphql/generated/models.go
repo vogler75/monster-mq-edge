@@ -19,16 +19,6 @@ type ACLRuleInfo struct {
 	CreatedAt    *string `json:"createdAt,omitempty"`
 }
 
-type AggregatedResult struct {
-	Columns    []string            `json:"columns"`
-	Rows       [][]map[string]any  `json:"rows"`
-	Interval   AggregationInterval `json:"interval"`
-	StartTime  string              `json:"startTime"`
-	EndTime    string              `json:"endTime"`
-	TopicCount int                 `json:"topicCount"`
-	RowCount   int                 `json:"rowCount"`
-}
-
 type ArchiveGroupInfo struct {
 	Name                   string                  `json:"name"`
 	Enabled                bool                    `json:"enabled"`

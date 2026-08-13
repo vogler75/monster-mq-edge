@@ -34,6 +34,9 @@ func (m *mockArchiveStore) AddHistory(ctx context.Context, msgs []stores.BrokerM
 func (m *mockArchiveStore) GetHistory(ctx context.Context, topic string, from, to *time.Time, limit int) ([]stores.ArchivedMessage, error) {
 	return nil, nil
 }
+func (m *mockArchiveStore) GetAggregatedHistory(ctx context.Context, topics []string, startTime, endTime time.Time, intervalMinutes int, functions []string, fields []string) (*stores.AggregatedResult, error) {
+	return nil, nil
+}
 func (m *mockArchiveStore) GetArchiveStats(ctx context.Context, startTime, endTime *time.Time) (*time.Time, []stores.DailyCount, error) {
 	return nil, nil, nil
 }

@@ -918,14 +918,69 @@ func (r *queryResolver) ArchivedMessages(ctx context.Context, topicFilter string
 }
 
 func (r *queryResolver) AggregatedMessages(ctx context.Context, topics []string, interval generated.AggregationInterval, startTime, endTime string, functions []generated.AggregationFunction, fields []string, archiveGroup *string) (*generated.AggregatedResult, error) {
+	arc := r.archive(archiveGroup)
+	if arc == nil {
+		return &generated.AggregatedResult{
+			Columns:    []string{"timestamp"},
+			Rows:       [][]any{},
+			Interval:   interval,
+			StartTime:  startTime,
+			EndTime:    endTime,
+			TopicCount: len(topics),
+			RowCount:   0,
+		}, nil
+	}
+
+	fromTime, _ := parseTimeArg(&startTime)
+	toTime, _ := parseTimeArg(&endTime)
+
+	var from, to time.Time
+	if fromTime != nil {
+		from = *fromTime
+	} else {
+		from = time.Now().Add(-24 * time.Hour)
+	}
+	if toTime != nil {
+		to = *toTime
+	} else {
+		to = time.Now()
+	}
+
+	intervalMinutes := 5
+	switch interval {
+	case generated.AggregationIntervalOneMinute:
+		intervalMinutes = 1
+	case generated.AggregationIntervalFiveMinutes:
+		intervalMinutes = 5
+	case generated.AggregationIntervalFifteenMinutes:
+		intervalMinutes = 15
+	case generated.AggregationIntervalOneHour:
+		intervalMinutes = 60
+	case generated.AggregationIntervalOneDay:
+		intervalMinutes = 1440
+	}
+
+	fnStrings := make([]string, len(functions))
+	for i, fn := range functions {
+		fnStrings[i] = string(fn)
+	}
+	if len(fnStrings) == 0 {
+		fnStrings = []string{"AVG"}
+	}
+
+	storeRes, err := arc.GetAggregatedHistory(ctx, topics, from, to, intervalMinutes, fnStrings, fields)
+	if err != nil {
+		return nil, err
+	}
+
 	return &generated.AggregatedResult{
-		Columns:    []string{"timestamp"},
-		Rows:       [][]map[string]any{},
+		Columns:    storeRes.Columns,
+		Rows:       storeRes.Rows,
 		Interval:   interval,
 		StartTime:  startTime,
 		EndTime:    endTime,
-		TopicCount: len(topics),
-		RowCount:   0,
+		TopicCount: storeRes.TopicCount,
+		RowCount:   storeRes.RowCount,
 	}, nil
 }
 
