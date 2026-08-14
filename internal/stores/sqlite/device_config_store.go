@@ -65,6 +65,10 @@ func (d *DeviceConfigStore) GetAll(ctx context.Context) ([]stores.DeviceConfig, 
 	return d.query(ctx, `SELECT name, namespace, node_id, config, enabled, type, created_at, updated_at FROM `+deviceConfigTable+` ORDER BY name`)
 }
 
+func (d *DeviceConfigStore) GetByType(ctx context.Context, deviceType string) ([]stores.DeviceConfig, error) {
+	return d.query(ctx, `SELECT name, namespace, node_id, config, enabled, type, created_at, updated_at FROM `+deviceConfigTable+` WHERE type = ? ORDER BY name`, deviceType)
+}
+
 func (d *DeviceConfigStore) GetByNode(ctx context.Context, nodeID string) ([]stores.DeviceConfig, error) {
 	return d.query(ctx, `SELECT name, namespace, node_id, config, enabled, type, created_at, updated_at FROM `+deviceConfigTable+` WHERE node_id = ? OR node_id = 'local' OR node_id = '*' ORDER BY name`, nodeID)
 }

@@ -1426,6 +1426,9 @@ func (d *DeviceConfigStore) EnsureTable(ctx context.Context) error {
 func (d *DeviceConfigStore) GetAll(ctx context.Context) ([]stores.DeviceConfig, error) {
 	return d.query(ctx, bson.M{})
 }
+func (d *DeviceConfigStore) GetByType(ctx context.Context, deviceType string) ([]stores.DeviceConfig, error) {
+	return d.query(ctx, bson.M{"type": deviceType})
+}
 func (d *DeviceConfigStore) GetByNode(ctx context.Context, nodeID string) ([]stores.DeviceConfig, error) {
 	return d.query(ctx, bson.M{
 		"$or": []bson.M{

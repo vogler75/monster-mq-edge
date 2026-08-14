@@ -197,6 +197,7 @@ type DeviceConfig struct {
 
 type DeviceConfigStore interface {
 	GetAll(ctx context.Context) ([]DeviceConfig, error)
+	GetByType(ctx context.Context, deviceType string) ([]DeviceConfig, error)
 	GetByNode(ctx context.Context, nodeID string) ([]DeviceConfig, error)
 	GetEnabledByNode(ctx context.Context, nodeID string) ([]DeviceConfig, error)
 	Get(ctx context.Context, name string) (*DeviceConfig, error)

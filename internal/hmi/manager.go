@@ -222,13 +222,11 @@ func (m *Manager) ListHmis() ([]*HmiDevice, error) {
 	var dbConfigs map[string]stores.DeviceConfig
 	if m.deviceStore != nil {
 		ctx := context.Background()
-		all, err := m.deviceStore.GetAll(ctx)
+		hmis, err := m.deviceStore.GetByType(ctx, "HMI")
 		if err == nil {
 			dbConfigs = make(map[string]stores.DeviceConfig)
-			for _, dc := range all {
-				if dc.Type == "HMI" {
-					dbConfigs[dc.Name] = dc
-				}
+			for _, dc := range hmis {
+				dbConfigs[dc.Name] = dc
 			}
 		}
 	}
@@ -337,6 +335,12 @@ func (m *Manager) getHmiStatsLocked(name, mainDashName string, dc stores.DeviceC
 			_ = json.Unmarshal([]byte(dc.Config), &cfg)
 		}
 	}
+	cfg.IsMain = (name == mainDashName)
+	if cfg.IsMain {
+		cfg.UrlPath = ""
+	} else if cfg.UrlPath == "" {
+		cfg.UrlPath = name
+	}
 
 	return &HmiDevice{
 		Name:            name,
@@ -354,7 +358,10 @@ func (m *Manager) getHmiStatsLocked(name, mainDashName string, dc stores.DeviceC
 func (m *Manager) SaveHmiDevice(name string, nodeID string, enabled *bool, cfg HmiConfig) (*HmiDevice, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.saveHmiDeviceLocked(name, nodeID, enabled, cfg)
+}
 
+func (m *Manager) saveHmiDeviceLocked(name string, nodeID string, enabled *bool, cfg HmiConfig) (*HmiDevice, error) {
 	name = strings.TrimSpace(name)
 	if name == "" || strings.Contains(name, "/") || strings.Contains(name, "\\") || strings.HasPrefix(name, ".") {
 		return nil, fmt.Errorf("invalid HMI name %q", name)
@@ -383,7 +390,7 @@ func (m *Manager) SaveHmiDevice(name string, nodeID string, enabled *bool, cfg H
 	}
 
 	if nodeID == "" {
-		nodeID = m.nodeID
+		nodeID = "local"
 	}
 
 	isEnabled := true
@@ -395,14 +402,36 @@ func (m *Manager) SaveHmiDevice(name string, nodeID string, enabled *bool, cfg H
 	if cfg.IsMain {
 		meta.MainDashboard = name
 		_ = m.saveMetadataLocked(meta)
+	} else if meta.MainDashboard == name {
+		meta.MainDashboard = ""
+		_ = m.saveMetadataLocked(meta)
 	}
 
 	if m.deviceStore != nil {
 		ctx := context.Background()
-		cfgJSON, _ := json.Marshal(cfg)
-		if nodeID == "" {
-			nodeID = "local"
+		if cfg.IsMain {
+			hmis, err := m.deviceStore.GetByType(ctx, "HMI")
+			if err == nil {
+				for _, otherDc := range hmis {
+					if otherDc.Name != name {
+						var otherCfg HmiConfig
+						if otherDc.Config != "" {
+							_ = json.Unmarshal([]byte(otherDc.Config), &otherCfg)
+						}
+						if otherCfg.IsMain {
+							otherCfg.IsMain = false
+							if otherCfg.UrlPath == "" {
+								otherCfg.UrlPath = otherDc.Name
+							}
+							otherBytes, _ := json.Marshal(otherCfg)
+							otherDc.Config = string(otherBytes)
+							_ = m.deviceStore.Save(ctx, otherDc)
+						}
+					}
+				}
+			}
 		}
+		cfgJSON, _ := json.Marshal(cfg)
 		dc := stores.DeviceConfig{
 			Name:      name,
 			Namespace: name,
@@ -616,13 +645,17 @@ func (m *Manager) UploadDashboardZip(name string, zipBase64 string, setAsMain bo
 		outFile.Close()
 	}
 
-	meta := m.getMetadataLocked()
+	urlPath := name
 	if setAsMain {
-		meta.MainDashboard = name
-		_ = m.saveMetadataLocked(meta)
+		urlPath = ""
 	}
-
-	return m.getHmiStatsLocked(name, meta.MainDashboard, stores.DeviceConfig{})
+	cfg := HmiConfig{
+		UrlPath:    urlPath,
+		IsMain:     setAsMain,
+		EntryPoint: "index.html",
+	}
+	enabled := true
+	return m.saveHmiDeviceLocked(name, "local", &enabled, cfg)
 }
 
 func (m *Manager) ExportDashboardZip(name string) (string, error) {
