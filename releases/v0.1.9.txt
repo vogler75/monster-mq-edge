@@ -1,0 +1,33 @@
+Release v0.1.9
+Built from commit: 126a588
+Date: 2026-08-14 12:58:30
+
+Changes since v0.1.8:
+---
+126a588 Fix device import when user management is enabled
+dc55d43 Enable HMI feature; remove Siemens compose
+2382add feat(stores): add GetByType to DeviceConfigStore across all database backends and enforce single main HMI screen
+6b94013 fix(archive): expose Default SQLite connection and support SQLite database connections
+f7e1121 feat(graphql): align PublishInput with main broker and add TEXT data format
+4ff5fae Fix wildcard and substring topic search in GraphQL searchTopics query
+aedf94b feat(graphql): adapt edge broker GraphQL schema and resolvers for main broker parity
+9d33007 Delete SKILL.md
+c2c478d Merge branch 'main' into hmi
+30948a2 refactor: remove mmqctl/cli directory and update edge build scripts
+eea6861 Remove OPCUA-Client default device type fallback
+8f4c683 feat(hmi): model HMI dashboards as HMI device configurations
+9b656c9 feat: add Hmi feature flag to configuration and enabledFeatures
+b39c3e5 Merge branch 'main' into hmi
+5d6aa4d Support 'local' as node_id for MQTT Clients and Edge broker
+876b898 Add mmqctl command-line tool for GraphQL interface
+4c98906 Merge branch 'main' into hmi
+ce09af5 Add MCP server implementation using official Go SDK
+b054258 refactor: remove MCP server and update HMI hosting plan
+9be3733 Merge branch 'main' into hmi
+b503f23 feat(graphql): implement aggregatedMessages query & time-series store aggregation
+7989316 feat: add HMI hosting, multi-dashboard management, GraphQL zip upload/export, and MCP server
+b202699 Delete last value store entry on empty payload publish (parity with monster-mq #29)
+800d883 Show usage help when no arguments are passed
+7d427c5 Update plan-mqtt-code-review-findings.md
+a9494fe Create plan-mqtt-code-review-findings.md
+db5c7d5 Standardize build, release, and publish scripts
