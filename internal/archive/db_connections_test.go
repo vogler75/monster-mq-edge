@@ -34,7 +34,11 @@ func TestRequiredDatabaseConnectionTypes(t *testing.T) {
 		t.Fatalf("mixed required types: %+v", got)
 	}
 	got = RequiredDatabaseConnectionTypes(stores.MessageStoreSQLite, stores.ArchiveNone)
-	if len(got) != 0 {
+	if len(got) != 1 || got[0] != stores.DatabaseConnectionSQLite {
 		t.Fatalf("sqlite/none required types: %+v", got)
+	}
+	got = RequiredDatabaseConnectionTypes(stores.MessageStoreMemory, stores.ArchiveNone)
+	if len(got) != 0 {
+		t.Fatalf("memory/none required types: %+v", got)
 	}
 }

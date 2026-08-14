@@ -59,6 +59,14 @@ func BuiltInDatabaseConnections(cfg *config.Config) []stores.DatabaseConnectionC
 			ReadOnly: true,
 		})
 	}
+	if cfg.SQLite.Path != "" {
+		out = append(out, stores.DatabaseConnectionConfig{
+			Name:     DefaultDatabaseConnectionName,
+			Type:     stores.DatabaseConnectionSQLite,
+			URL:      cfg.SQLite.Path,
+			ReadOnly: true,
+		})
+	}
 	return out
 }
 
@@ -74,15 +82,19 @@ func RequiredDatabaseConnectionTypes(lastVal stores.MessageStoreType, archiveTyp
 		add(stores.DatabaseConnectionPostgres)
 	case stores.MessageStoreMongoDB:
 		add(stores.DatabaseConnectionMongoDB)
+	case stores.MessageStoreSQLite:
+		add(stores.DatabaseConnectionSQLite)
 	}
 	switch archiveType {
 	case stores.ArchivePostgres:
 		add(stores.DatabaseConnectionPostgres)
 	case stores.ArchiveMongoDB:
 		add(stores.DatabaseConnectionMongoDB)
+	case stores.ArchiveSQLite:
+		add(stores.DatabaseConnectionSQLite)
 	}
 	out := make([]stores.DatabaseConnectionType, 0, len(seen))
-	for _, t := range []stores.DatabaseConnectionType{stores.DatabaseConnectionPostgres, stores.DatabaseConnectionMongoDB} {
+	for _, t := range []stores.DatabaseConnectionType{stores.DatabaseConnectionSQLite, stores.DatabaseConnectionPostgres, stores.DatabaseConnectionMongoDB} {
 		if _, ok := seen[t]; ok {
 			out = append(out, t)
 		}

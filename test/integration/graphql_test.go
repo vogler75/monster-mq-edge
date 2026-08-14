@@ -259,11 +259,21 @@ func TestGraphQLDatabaseConnectionCRUDAndValidation(t *testing.T) {
 	if len(names) != 1 || names[0] != "Default" {
 		t.Fatalf("postgres names: %v", names)
 	}
+	data = gqlQuery(t, url, `{ databaseConnectionNames(type: SQLITE) }`, nil)
+	sqliteNames := data["databaseConnectionNames"].([]any)
+	if len(sqliteNames) != 1 || sqliteNames[0] != "Default" {
+		t.Fatalf("sqlite names: %v", sqliteNames)
+	}
 	data = gqlQuery(t, url, `{ databaseConnections(type: POSTGRES) { name type url readOnly } }`, nil)
 	conns := data["databaseConnections"].([]any)
 	def := conns[0].(map[string]any)
 	if def["name"] != "Default" || def["readOnly"] != true || strings.Contains(def["url"].(string), "secret") {
 		t.Fatalf("unexpected default connection: %v", def)
+	}
+	data = gqlQuery(t, url, `{ databaseConnections(type: SQLITE) { name type url readOnly } }`, nil)
+	sqliteConns := data["databaseConnections"].([]any)
+	if len(sqliteConns) != 1 || sqliteConns[0].(map[string]any)["name"] != "Default" {
+		t.Fatalf("unexpected default sqlite connection: %v", sqliteConns)
 	}
 
 	data = gqlQuery(t, url, `mutation {

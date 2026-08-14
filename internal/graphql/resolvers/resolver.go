@@ -1360,13 +1360,13 @@ func (r *Resolver) validateDatabaseConnectionSelection(ctx context.Context, sele
 	}
 	required := archive.RequiredDatabaseConnectionTypes(lastValType, archiveType)
 	if len(required) == 0 {
-		return "", fmt.Errorf("a database connection can only be selected for PostgreSQL or MongoDB storage")
+		return "", fmt.Errorf("a database connection can only be selected for PostgreSQL, MongoDB, or SQLite storage")
 	}
 	if len(required) > 1 {
 		if archive.IsDefaultDatabaseConnectionName(selected) {
 			return "", nil
 		}
-		return "", fmt.Errorf("mixed PostgreSQL and MongoDB storage cannot use a named database connection; leave the selection empty to use config-file defaults")
+		return "", fmt.Errorf("mixed database storage cannot use a named database connection; leave the selection empty to use config-file defaults")
 	}
 	want := required[0]
 	if archive.IsDefaultDatabaseConnectionName(selected) {

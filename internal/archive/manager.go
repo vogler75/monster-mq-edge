@@ -196,9 +196,10 @@ func ValidateGroupName(name string) error {
 }
 
 type groupDatabaseHandles struct {
-	pgDB    *storepg.DB
-	mongoDB *storemongo.DB
-	owned   []func() error
+	sqliteDB *storesqlite.DB
+	pgDB     *storepg.DB
+	mongoDB  *storemongo.DB
+	owned    []func() error
 }
 
 func (h groupDatabaseHandles) close(logger *slog.Logger, group string) {
@@ -223,23 +224,27 @@ func (h groupDatabaseHandles) closeFunc(logger *slog.Logger, group string) func(
 }
 
 func (m *Manager) openGroupDatabaseHandles(ctx context.Context, c stores.ArchiveGroupConfig) (groupDatabaseHandles, error) {
-	handles := groupDatabaseHandles{pgDB: m.pgDB, mongoDB: m.mongoDB}
+	handles := groupDatabaseHandles{sqliteDB: m.sqliteDB, pgDB: m.pgDB, mongoDB: m.mongoDB}
 	selectedName := strings.TrimSpace(c.DatabaseConnectionName)
 	required := RequiredDatabaseConnectionTypes(c.LastValType, c.ArchiveType)
 	if selectedName == "" {
 		return handles, nil
 	}
 	if len(required) == 0 {
-		return handles, fmt.Errorf("group %s: databaseConnectionName can only be used with Postgres or MongoDB stores", c.Name)
+		return handles, fmt.Errorf("group %s: databaseConnectionName can only be used with SQLite, Postgres, or MongoDB stores", c.Name)
 	}
 	if len(required) > 1 {
 		if IsDefaultDatabaseConnectionName(selectedName) {
 			return handles, nil
 		}
-		return handles, fmt.Errorf("group %s: cannot use one named database connection for mixed Postgres and MongoDB stores", c.Name)
+		return handles, fmt.Errorf("group %s: cannot use one named database connection for mixed database stores", c.Name)
 	}
 	if IsDefaultDatabaseConnectionName(selectedName) {
 		switch required[0] {
+		case stores.DatabaseConnectionSQLite:
+			if m.sqliteDB == nil {
+				return handles, fmt.Errorf("group %s: default SQLite database connection is not configured", c.Name)
+			}
 		case stores.DatabaseConnectionPostgres:
 			if m.pgDB == nil {
 				return handles, fmt.Errorf("group %s: default Postgres database connection is not configured", c.Name)
@@ -262,6 +267,13 @@ func (m *Manager) openGroupDatabaseHandles(ctx context.Context, c stores.Archive
 		return handles, fmt.Errorf("group %s: selected %s connection %q but requires %s", c.Name, conn.Type, selectedName, required[0])
 	}
 	switch conn.Type {
+	case stores.DatabaseConnectionSQLite:
+		db, err := storesqlite.Open(conn.URL)
+		if err != nil {
+			return handles, err
+		}
+		handles.sqliteDB = db
+		handles.owned = append(handles.owned, db.Close)
 	case stores.DatabaseConnectionPostgres:
 		db, err := storepg.Open(ctx, postgresDSN(conn.URL, conn.Username, conn.Password))
 		if err != nil {
@@ -313,10 +325,10 @@ func (m *Manager) buildLastValStore(ctx context.Context, c stores.ArchiveGroupCo
 	case stores.MessageStoreMemory:
 		return storememory.NewMessageStore(name), nil
 	case stores.MessageStoreSQLite:
-		if m.sqliteDB == nil {
+		if handles.sqliteDB == nil {
 			return nil, fmt.Errorf("group %s: lastValType=SQLITE but no SQLite DB configured", c.Name)
 		}
-		s := storesqlite.NewMessageStore(name, m.sqliteDB)
+		s := storesqlite.NewMessageStore(name, handles.sqliteDB)
 		if err := s.EnsureTable(ctx); err != nil {
 			return nil, fmt.Errorf("ensure %s on sqlite: %w", name, err)
 		}
@@ -349,10 +361,10 @@ func (m *Manager) buildArchiveStore(ctx context.Context, c stores.ArchiveGroupCo
 	name := ArchiveName(c.Name)
 	switch c.ArchiveType {
 	case stores.ArchiveSQLite:
-		if m.sqliteDB == nil {
+		if handles.sqliteDB == nil {
 			return nil, fmt.Errorf("group %s: archiveType=SQLITE but no SQLite DB configured", c.Name)
 		}
-		a := storesqlite.NewMessageArchive(name, m.sqliteDB, c.PayloadFormat)
+		a := storesqlite.NewMessageArchive(name, handles.sqliteDB, c.PayloadFormat)
 		if err := a.EnsureTable(ctx); err != nil {
 			return nil, fmt.Errorf("ensure %s on sqlite: %w", name, err)
 		}
