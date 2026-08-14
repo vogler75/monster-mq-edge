@@ -352,7 +352,7 @@ scalar JSON
 # unchanged. Bridge-specific shapes (OPC UA, Kafka, NATS, Redis, WinCC, PLC4X,
 # Neo4j, GenAI, flows, MCP) are intentionally omitted.
 
-enum DataFormat { JSON BINARY }
+enum DataFormat { JSON TEXT BINARY }
 enum OrderDirection { ASC DESC }
 enum AggregationInterval { ONE_MINUTE FIVE_MINUTES FIFTEEN_MINUTES ONE_HOUR ONE_DAY }
 enum AggregationFunction { AVG MIN MAX COUNT }
@@ -920,13 +920,10 @@ type MqttClientResult {
 
 input PublishInput {
     topic: String!
-    payload: String
-    payloadBase64: String
-    payloadJson: JSON
-    qos: Int
-    retained: Boolean
-    retain: Boolean
-    format: DataFormat
+    payload: String!
+    format: DataFormat = JSON
+    qos: Int = 0
+    retained: Boolean = false
 }
 
 type PublishResult {
@@ -934,7 +931,6 @@ type PublishResult {
     topic: String!
     timestamp: Long!
     error: String
-    message: String
 }
 
 type PurgeResult {
@@ -11622,8 +11618,6 @@ func (ec *executionContext) fieldContext_Mutation_publish(ctx context.Context, f
 				return ec.fieldContext_PublishResult_timestamp(ctx, field)
 			case "error":
 				return ec.fieldContext_PublishResult_error(ctx, field)
-			case "message":
-				return ec.fieldContext_PublishResult_message(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type PublishResult", field.Name)
 		},
@@ -11675,8 +11669,6 @@ func (ec *executionContext) fieldContext_Mutation_publishBatch(ctx context.Conte
 				return ec.fieldContext_PublishResult_timestamp(ctx, field)
 			case "error":
 				return ec.fieldContext_PublishResult_error(ctx, field)
-			case "message":
-				return ec.fieldContext_PublishResult_message(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type PublishResult", field.Name)
 		},
@@ -12373,35 +12365,6 @@ func (ec *executionContext) _PublishResult_error(ctx context.Context, field grap
 }
 
 func (ec *executionContext) fieldContext_PublishResult_error(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "PublishResult",
-		Field:      field,
-		IsMethod:   false,
-		IsResolver: false,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return nil, errors.New("field of type String does not have child fields")
-		},
-	}
-	return fc, nil
-}
-
-func (ec *executionContext) _PublishResult_message(ctx context.Context, field graphql.CollectedField, obj *PublishResult) (ret graphql.Marshaler) {
-	return graphql.ResolveField(
-		ctx,
-		ec.OperationContext,
-		field,
-		ec.fieldContext_PublishResult_message,
-		func(ctx context.Context) (any, error) {
-			return obj.Message, nil
-		},
-		nil,
-		ec.marshalOString2ᚖstring,
-		true,
-		false,
-	)
-}
-
-func (ec *executionContext) fieldContext_PublishResult_message(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "PublishResult",
 		Field:      field,
@@ -23472,7 +23435,17 @@ func (ec *executionContext) unmarshalInputPublishInput(ctx context.Context, obj 
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"topic", "payload", "payloadBase64", "payloadJson", "qos", "retained", "retain", "format"}
+	if _, present := asMap["format"]; !present {
+		asMap["format"] = "JSON"
+	}
+	if _, present := asMap["qos"]; !present {
+		asMap["qos"] = 0
+	}
+	if _, present := asMap["retained"]; !present {
+		asMap["retained"] = false
+	}
+
+	fieldsInOrder := [...]string{"topic", "payload", "format", "qos", "retained"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -23488,25 +23461,18 @@ func (ec *executionContext) unmarshalInputPublishInput(ctx context.Context, obj 
 			it.Topic = data
 		case "payload":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("payload"))
-			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			data, err := ec.unmarshalNString2string(ctx, v)
 			if err != nil {
 				return it, err
 			}
 			it.Payload = data
-		case "payloadBase64":
-			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("payloadBase64"))
-			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+		case "format":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("format"))
+			data, err := ec.unmarshalODataFormat2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐDataFormat(ctx, v)
 			if err != nil {
 				return it, err
 			}
-			it.PayloadBase64 = data
-		case "payloadJson":
-			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("payloadJson"))
-			data, err := ec.unmarshalOJSON2map(ctx, v)
-			if err != nil {
-				return it, err
-			}
-			it.PayloadJSON = data
+			it.Format = data
 		case "qos":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("qos"))
 			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
@@ -23521,20 +23487,6 @@ func (ec *executionContext) unmarshalInputPublishInput(ctx context.Context, obj 
 				return it, err
 			}
 			it.Retained = data
-		case "retain":
-			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("retain"))
-			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
-			if err != nil {
-				return it, err
-			}
-			it.Retain = data
-		case "format":
-			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("format"))
-			data, err := ec.unmarshalODataFormat2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐDataFormat(ctx, v)
-			if err != nil {
-				return it, err
-			}
-			it.Format = data
 		}
 	}
 	return it, nil
@@ -27983,8 +27935,6 @@ func (ec *executionContext) _PublishResult(ctx context.Context, sel ast.Selectio
 			}
 		case "error":
 			out.Values[i] = ec._PublishResult_error(ctx, field, obj)
-		case "message":
-			out.Values[i] = ec._PublishResult_message(ctx, field, obj)
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}

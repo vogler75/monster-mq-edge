@@ -37,21 +37,15 @@ input PublishInput {
 
 ### 2.1 `PublishResult` Response Object
 
-- **Current Edge**: `{ success: Boolean!, message: String, topic: String! }`
-- **Main Broker**: `{ success: Boolean!, topic: String!, timestamp: Long!, error: String }`
-- **Required Adaptation in Edge Broker**:
-  - Add `timestamp: Long!` (server timestamp of publication) to `PublishResult`.
-  - Add `error: String` for error reporting.
-  - Keep `message: String` alongside `error` for smooth transition.
+- **Current Edge / Main Broker**: `{ success: Boolean!, topic: String!, timestamp: Long!, error: String }`
 
 ```graphql
 # Target Edge PublishResult Schema:
 type PublishResult {
   success: Boolean!
   topic: String!
-  timestamp: Long!   # <-- ADDED for Main Broker parity
-  error: String      # <-- ADDED for Main Broker parity
-  message: String    # Legacy field
+  timestamp: Long!
+  error: String
 }
 ```
 

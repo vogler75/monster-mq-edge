@@ -91,8 +91,8 @@ func TestGraphQLPublishAndCurrentValue(t *testing.T) {
 	srv, url := startWithGraphQL(t, 23002, 28002)
 	defer srv.Close()
 
-	// Publish via GraphQL.
-	gqlQuery(t, url, `mutation { publish(input: { topic: "g/temp", payload: "23.5", qos: 0, retain: true }) { success topic } }`, nil)
+	// Publish via GraphQL using retained: true.
+	gqlQuery(t, url, `mutation { publish(input: { topic: "g/temp", payload: "23.5", qos: 0, retained: true }) { success topic } }`, nil)
 
 	// Wait for archive group flush.
 	time.Sleep(500 * time.Millisecond)
@@ -111,6 +111,61 @@ func TestGraphQLPublishAndCurrentValue(t *testing.T) {
 	rm := data["retainedMessage"].(map[string]any)
 	if !strings.Contains(fmt.Sprintf("%v", rm["payload"]), "23.5") {
 		t.Fatalf("retained payload %v", rm["payload"])
+	}
+}
+
+func TestGraphQLPublishBatchAndBinary(t *testing.T) {
+	srv, url := startWithGraphQL(t, 23020, 28020)
+	defer srv.Close()
+
+	// Wildcard publish should be rejected with an error message
+	res := gqlQuery(t, url, `mutation { publish(input: { topic: "g/+/wildcard", payload: "fail" }) { success topic error } }`, nil)
+	pubRes := res["publish"].(map[string]any)
+	if pubRes["success"].(bool) {
+		t.Fatalf("expected wildcard publish to fail")
+	}
+	if !strings.Contains(fmt.Sprintf("%v", pubRes["error"]), "wildcard") {
+		t.Fatalf("unexpected error message: %v", pubRes["error"])
+	}
+
+	// Publish binary payload (base64 encoded "hello-edge" is "aGVsbG8tZWRnZQ==")
+	res = gqlQuery(t, url, `mutation { publish(input: { topic: "g/bin", payload: "aGVsbG8tZWRnZQ==", format: BINARY, retained: true }) { success topic } }`, nil)
+	pubRes = res["publish"].(map[string]any)
+	if !pubRes["success"].(bool) {
+		t.Fatalf("publish binary failed: %v", pubRes)
+	}
+
+	// Publish text payload
+	res = gqlQuery(t, url, `mutation { publish(input: { topic: "g/txt", payload: "plain-text-msg", format: TEXT, retained: true }) { success topic } }`, nil)
+	pubRes = res["publish"].(map[string]any)
+	if !pubRes["success"].(bool) {
+		t.Fatalf("publish text failed: %v", pubRes)
+	}
+
+	// Query currentValue with TEXT format
+	time.Sleep(100 * time.Millisecond)
+	data := gqlQuery(t, url, `{ currentValue(topic: "g/txt", format: TEXT) { topic payload format } }`, nil)
+	cv := data["currentValue"].(map[string]any)
+	if cv["payload"] != "plain-text-msg" || cv["format"] != "TEXT" {
+		t.Fatalf("unexpected currentValue for text: %v", cv)
+	}
+
+	// PublishBatch
+	res = gqlQuery(t, url, `mutation {
+		publishBatch(inputs: [
+			{ topic: "g/batch/1", payload: "val1", retained: true },
+			{ topic: "g/batch/2", payload: "val2", retained: true }
+		]) { success topic }
+	}`, nil)
+	batchList := res["publishBatch"].([]any)
+	if len(batchList) != 2 {
+		t.Fatalf("expected 2 batch results, got %d", len(batchList))
+	}
+	for _, item := range batchList {
+		itemMap := item.(map[string]any)
+		if !itemMap["success"].(bool) {
+			t.Fatalf("batch item failed: %v", itemMap)
+		}
 	}
 }
 

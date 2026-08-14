@@ -481,14 +481,11 @@ type NodeConnectionStatus struct {
 }
 
 type PublishInput struct {
-	Topic         string         `json:"topic"`
-	Payload       *string        `json:"payload,omitempty"`
-	PayloadBase64 *string        `json:"payloadBase64,omitempty"`
-	PayloadJSON   map[string]any `json:"payloadJson,omitempty"`
-	Qos           *int           `json:"qos,omitempty"`
-	Retained      *bool          `json:"retained,omitempty"`
-	Retain        *bool          `json:"retain,omitempty"`
-	Format        *DataFormat    `json:"format,omitempty"`
+	Topic    string      `json:"topic"`
+	Payload  string      `json:"payload"`
+	Format   *DataFormat `json:"format,omitempty"`
+	Qos      *int        `json:"qos,omitempty"`
+	Retained *bool       `json:"retained,omitempty"`
 }
 
 type PublishResult struct {
@@ -496,7 +493,6 @@ type PublishResult struct {
 	Topic     string  `json:"topic"`
 	Timestamp int64   `json:"timestamp"`
 	Error     *string `json:"error,omitempty"`
-	Message   *string `json:"message,omitempty"`
 }
 
 type PurgeResult struct {
@@ -1045,17 +1041,19 @@ type DataFormat string
 
 const (
 	DataFormatJSON   DataFormat = "JSON"
+	DataFormatText   DataFormat = "TEXT"
 	DataFormatBinary DataFormat = "BINARY"
 )
 
 var AllDataFormat = []DataFormat{
 	DataFormatJSON,
+	DataFormatText,
 	DataFormatBinary,
 }
 
 func (e DataFormat) IsValid() bool {
 	switch e {
-	case DataFormatJSON, DataFormatBinary:
+	case DataFormatJSON, DataFormatText, DataFormatBinary:
 		return true
 	}
 	return false

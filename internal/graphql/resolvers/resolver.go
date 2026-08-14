@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	mqtt "monstermq.io/edge/internal/mqtt"
 	"monstermq.io/edge/internal/mqtt/packets"
@@ -230,14 +231,31 @@ func ptrIfNonZero64(i int64) *int64 {
 //
 //	requested = JSON   → return (json text, JSON) if it parses as JSON,
 //	                     otherwise fall through to BINARY
+//	requested = TEXT   → return (plain text, TEXT) if valid UTF-8,
+//	                     otherwise fall through to BINARY
 //	requested = BINARY → return (base64, BINARY)
 //	requested = nil    → default to JSON behaviour (try JSON first, then base64)
 func encodePayload(raw []byte, requested *generated.DataFormat) (string, generated.DataFormat) {
 	if raw == nil {
 		return "", generated.DataFormatJSON
 	}
-	wantBinary := requested != nil && *requested == generated.DataFormatBinary
-	if !wantBinary && isJSON(raw) {
+	if requested != nil {
+		switch *requested {
+		case generated.DataFormatBinary:
+			return base64.StdEncoding.EncodeToString(raw), generated.DataFormatBinary
+		case generated.DataFormatText:
+			if utf8.Valid(raw) {
+				return string(raw), generated.DataFormatText
+			}
+			return base64.StdEncoding.EncodeToString(raw), generated.DataFormatBinary
+		case generated.DataFormatJSON:
+			if isJSON(raw) {
+				return string(raw), generated.DataFormatJSON
+			}
+			return base64.StdEncoding.EncodeToString(raw), generated.DataFormatBinary
+		}
+	}
+	if isJSON(raw) {
 		return string(raw), generated.DataFormatJSON
 	}
 	return base64.StdEncoding.EncodeToString(raw), generated.DataFormatBinary
@@ -249,16 +267,18 @@ func isJSON(raw []byte) bool {
 }
 
 func decodePayload(in *generated.PublishInput) ([]byte, error) {
-	if in.Payload != nil {
-		return []byte(*in.Payload), nil
+	format := generated.DataFormatJSON
+	if in.Format != nil {
+		format = *in.Format
 	}
-	if in.PayloadBase64 != nil {
-		return base64.StdEncoding.DecodeString(*in.PayloadBase64)
+	switch format {
+	case generated.DataFormatBinary:
+		return base64.StdEncoding.DecodeString(in.Payload)
+	case generated.DataFormatJSON, generated.DataFormatText:
+		return []byte(in.Payload), nil
+	default:
+		return []byte(in.Payload), nil
 	}
-	if in.PayloadJSON != nil {
-		return json.Marshal(in.PayloadJSON)
-	}
-	return nil, nil
 }
 
 func toMessageStoreType(s stores.MessageStoreType) generated.MessageStoreType {
@@ -467,10 +487,14 @@ func (r *mutationResolver) Login(ctx context.Context, username, password string)
 
 func (r *mutationResolver) Publish(ctx context.Context, input generated.PublishInput) (*generated.PublishResult, error) {
 	now := time.Now().UnixMilli()
+	if strings.ContainsRune(input.Topic, '+') || strings.ContainsRune(input.Topic, '#') {
+		errMsg := "Topic must not contain wildcard characters '+' or '#'"
+		return &generated.PublishResult{Success: false, Topic: input.Topic, Timestamp: now, Error: ptr(errMsg)}, nil
+	}
 	payload, err := decodePayload(&input)
 	if err != nil {
 		errStr := err.Error()
-		return &generated.PublishResult{Success: false, Topic: input.Topic, Timestamp: now, Error: ptr(errStr), Message: ptr(errStr)}, nil
+		return &generated.PublishResult{Success: false, Topic: input.Topic, Timestamp: now, Error: ptr(errStr)}, nil
 	}
 	qos := byte(0)
 	if input.Qos != nil {
@@ -479,16 +503,14 @@ func (r *mutationResolver) Publish(ctx context.Context, input generated.PublishI
 	retain := false
 	if input.Retained != nil {
 		retain = *input.Retained
-	} else if input.Retain != nil {
-		retain = *input.Retain
 	}
 	if r.Resolver.Publish == nil {
 		errMsg := "publish unavailable"
-		return &generated.PublishResult{Success: false, Topic: input.Topic, Timestamp: now, Error: ptr(errMsg), Message: ptr(errMsg)}, nil
+		return &generated.PublishResult{Success: false, Topic: input.Topic, Timestamp: now, Error: ptr(errMsg)}, nil
 	}
 	if err := r.Resolver.Publish(input.Topic, payload, retain, qos); err != nil {
 		errStr := err.Error()
-		return &generated.PublishResult{Success: false, Topic: input.Topic, Timestamp: now, Error: ptr(errStr), Message: ptr(errStr)}, nil
+		return &generated.PublishResult{Success: false, Topic: input.Topic, Timestamp: now, Error: ptr(errStr)}, nil
 	}
 	return &generated.PublishResult{Success: true, Topic: input.Topic, Timestamp: now}, nil
 }
@@ -496,6 +518,9 @@ func (r *mutationResolver) Publish(ctx context.Context, input generated.PublishI
 func (r *mutationResolver) PublishBatch(ctx context.Context, inputs []*generated.PublishInput) ([]*generated.PublishResult, error) {
 	out := make([]*generated.PublishResult, 0, len(inputs))
 	for _, in := range inputs {
+		if in == nil {
+			continue
+		}
 		res, _ := r.Publish(ctx, *in)
 		out = append(out, res)
 	}

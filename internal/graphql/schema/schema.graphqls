@@ -6,7 +6,7 @@ scalar JSON
 # unchanged. Bridge-specific shapes (OPC UA, Kafka, NATS, Redis, WinCC, PLC4X,
 # Neo4j, GenAI, flows, MCP) are intentionally omitted.
 
-enum DataFormat { JSON BINARY }
+enum DataFormat { JSON TEXT BINARY }
 enum OrderDirection { ASC DESC }
 enum AggregationInterval { ONE_MINUTE FIVE_MINUTES FIFTEEN_MINUTES ONE_HOUR ONE_DAY }
 enum AggregationFunction { AVG MIN MAX COUNT }
@@ -574,13 +574,10 @@ type MqttClientResult {
 
 input PublishInput {
     topic: String!
-    payload: String
-    payloadBase64: String
-    payloadJson: JSON
-    qos: Int
-    retained: Boolean
-    retain: Boolean
-    format: DataFormat
+    payload: String!
+    format: DataFormat = JSON
+    qos: Int = 0
+    retained: Boolean = false
 }
 
 type PublishResult {
@@ -588,7 +585,6 @@ type PublishResult {
     topic: String!
     timestamp: Long!
     error: String
-    message: String
 }
 
 type PurgeResult {
