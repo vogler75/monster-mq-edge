@@ -490,3 +490,42 @@ func TestGraphQLDeviceImportExportDisabled(t *testing.T) {
 		t.Fatalf("disabled importDevices result: %v", result)
 	}
 }
+
+func TestGraphQLDeviceImportExportWithUserManagement(t *testing.T) {
+	srv, url := startWithGraphQL(t, 23024, 28024, func(c *config.Config) {
+		c.UserManagement.Enabled = true
+		c.Features.DeviceImportExport = true
+		c.Features.MqttClient = true
+	})
+	defer srv.Close()
+
+	data := gqlQuery(t, url, `mutation Import($configs: [DeviceInput!]!) {
+        importDevices(configs: $configs) { success imported failed total errors }
+    }`, map[string]any{"configs": []any{
+		map[string]any{
+			"name":      "mqtt-edge-client",
+			"namespace": "default",
+			"nodeId":    "g-28024",
+			"type":      "MQTT-Client",
+			"enabled":   true,
+			"config": map[string]any{
+				"brokerUrl":    "tcp://localhost:1883",
+				"clientId":     "edge-client-1",
+				"cleanSession": true,
+				"addresses": []any{
+					map[string]any{
+						"mode":        "PUBLISH",
+						"remoteTopic": "remote/#",
+						"localTopic":  "local/#",
+						"removePath":  true,
+					},
+				},
+			},
+		},
+	}})
+	result := data["importDevices"].(map[string]any)
+	if result["success"] != true || int(result["imported"].(float64)) != 1 || int(result["failed"].(float64)) != 0 {
+		t.Fatalf("importDevices with UserManagement failed: %v", result)
+	}
+}
+

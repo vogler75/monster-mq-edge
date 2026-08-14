@@ -550,11 +550,6 @@ func (r *mutationResolver) ImportDevices(ctx context.Context, configs []*generat
 		res.Errors = append(res.Errors, "DeviceImportExport feature is not enabled on this node")
 		return res, nil
 	}
-	if r.Cfg.UserManagement.Enabled {
-		res.Failed = len(configs)
-		res.Errors = append(res.Errors, "admin authorization required")
-		return res, nil
-	}
 	if r.Storage == nil || r.Storage.DeviceConfig == nil {
 		res.Failed = len(configs)
 		res.Errors = append(res.Errors, "device config store unavailable")
