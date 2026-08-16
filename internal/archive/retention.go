@@ -31,16 +31,20 @@ func (m *Manager) RunRetention(ctx context.Context) context.CancelFunc {
 func (m *Manager) purgeOnce(ctx context.Context, now time.Time) {
 	for _, g := range m.Snapshot() {
 		cfg := g.Config()
-		if d := parseDuration(cfg.LastValRetention); d > 0 && g.LastValue() != nil {
-			cutoff := now.Add(-d)
-			if _, err := g.LastValue().PurgeOlderThan(ctx, cutoff); err != nil {
-				m.logger.Warn("retention lastval purge failed", "group", cfg.Name, "err", err)
+		if !cfg.LastValReadOnly {
+			if d := parseDuration(cfg.LastValRetention); d > 0 && g.LastValue() != nil {
+				cutoff := now.Add(-d)
+				if _, err := g.LastValue().PurgeOlderThan(ctx, cutoff); err != nil {
+					m.logger.Warn("retention lastval purge failed", "group", cfg.Name, "err", err)
+				}
 			}
 		}
-		if d := parseDuration(cfg.ArchiveRetention); d > 0 && g.Archive() != nil {
-			cutoff := now.Add(-d)
-			if _, err := g.Archive().PurgeOlderThan(ctx, cutoff); err != nil {
-				m.logger.Warn("retention archive purge failed", "group", cfg.Name, "err", err)
+		if !cfg.ArchiveReadOnly {
+			if d := parseDuration(cfg.ArchiveRetention); d > 0 && g.Archive() != nil {
+				cutoff := now.Add(-d)
+				if _, err := g.Archive().PurgeOlderThan(ctx, cutoff); err != nil {
+					m.logger.Warn("retention archive purge failed", "group", cfg.Name, "err", err)
+				}
 			}
 		}
 	}

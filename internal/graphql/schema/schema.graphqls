@@ -255,6 +255,8 @@ type ArchiveGroupInfo {
     queueDiskPath: String
     createdAt: String
     updatedAt: String
+    lastValReadOnly: Boolean!
+    archiveReadOnly: Boolean!
     connectionStatus: [NodeConnectionStatus!]!
     metrics: [ArchiveGroupMetrics!]!
     metricsHistory(from: String, to: String, lastMinutes: Int): [ArchiveGroupMetrics!]!
@@ -276,6 +278,8 @@ input CreateArchiveGroupInput {
     bulkSize: Int = 4000
     bulkTimeoutMs: Long = 1000
     queueDiskPath: String = "data/queue"
+    lastValReadOnly: Boolean = false
+    archiveReadOnly: Boolean = false
 }
 
 input UpdateArchiveGroupInput {
@@ -294,6 +298,8 @@ input UpdateArchiveGroupInput {
     bulkSize: Int
     bulkTimeoutMs: Long
     queueDiskPath: String
+    lastValReadOnly: Boolean
+    archiveReadOnly: Boolean
 }
 
 type ArchiveGroupResult {

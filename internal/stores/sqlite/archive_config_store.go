@@ -40,7 +40,9 @@ func (a *ArchiveConfigStore) EnsureTable(ctx context.Context) error {
         queue_size INTEGER DEFAULT 100000,
         bulk_size INTEGER DEFAULT 4000,
         bulk_timeout_ms INTEGER DEFAULT 250,
-        queue_disk_path TEXT DEFAULT 'data/queue'
+        queue_disk_path TEXT DEFAULT 'data/queue',
+        last_val_read_only INTEGER NOT NULL DEFAULT 0,
+        archive_read_only INTEGER NOT NULL DEFAULT 0
     )`); err != nil {
 		return err
 	}
@@ -60,6 +62,12 @@ func (a *ArchiveConfigStore) EnsureTable(ctx context.Context) error {
 		return err
 	}
 	if _, err := a.db.Exec(`ALTER TABLE ` + archiveConfigTable + ` ADD COLUMN queue_disk_path TEXT DEFAULT 'data/queue'`); err != nil && !isDuplicateColumnErr(err) {
+		return err
+	}
+	if _, err := a.db.Exec(`ALTER TABLE ` + archiveConfigTable + ` ADD COLUMN last_val_read_only INTEGER NOT NULL DEFAULT 0`); err != nil && !isDuplicateColumnErr(err) {
+		return err
+	}
+	if _, err := a.db.Exec(`ALTER TABLE ` + archiveConfigTable + ` ADD COLUMN archive_read_only INTEGER NOT NULL DEFAULT 0`); err != nil && !isDuplicateColumnErr(err) {
 		return err
 	}
 	_, err := a.db.Exec(`CREATE TABLE IF NOT EXISTS ` + databaseConnectionsTable + ` (
@@ -99,8 +107,10 @@ func rowToArchive(scanner interface{ Scan(...any) error }) (*stores.ArchiveGroup
 		bSize         sql.NullInt64
 		bTimeout      sql.NullInt64
 		qDiskPath     sql.NullString
+		lvReadOnly    sql.NullInt64
+		arReadOnly    sql.NullInt64
 	)
-	if err := scanner.Scan(&cfg.Name, &enabled, &topicFilter, &retainedOnly, &lvType, &arType, &dbConn, &lvRet, &arRet, &purgeInt, &payloadFormat, &qType, &qSize, &bSize, &bTimeout, &qDiskPath); err != nil {
+	if err := scanner.Scan(&cfg.Name, &enabled, &topicFilter, &retainedOnly, &lvType, &arType, &dbConn, &lvRet, &arRet, &purgeInt, &payloadFormat, &qType, &qSize, &bSize, &bTimeout, &qDiskPath, &lvReadOnly, &arReadOnly); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
@@ -139,6 +149,12 @@ func rowToArchive(scanner interface{ Scan(...any) error }) (*stores.ArchiveGroup
 	if qDiskPath.Valid {
 		cfg.QueueDiskPath = qDiskPath.String
 	}
+	if lvReadOnly.Valid {
+		cfg.LastValReadOnly = lvReadOnly.Int64 == 1
+	}
+	if arReadOnly.Valid {
+		cfg.ArchiveReadOnly = arReadOnly.Int64 == 1
+	}
 	return &cfg, nil
 }
 
@@ -157,7 +173,7 @@ func joinFilter(s []string) string { return strings.Join(s, ",") }
 
 func (a *ArchiveConfigStore) GetAll(ctx context.Context) ([]stores.ArchiveGroupConfig, error) {
 	rows, err := a.db.Conn().QueryContext(ctx,
-		`SELECT name, enabled, topic_filter, retained_only, last_val_type, archive_type, database_connection_name, last_val_retention, archive_retention, purge_interval, payload_format, queue_type, queue_size, bulk_size, bulk_timeout_ms, queue_disk_path FROM `+archiveConfigTable+` ORDER BY name`)
+		`SELECT name, enabled, topic_filter, retained_only, last_val_type, archive_type, database_connection_name, last_val_retention, archive_retention, purge_interval, payload_format, queue_type, queue_size, bulk_size, bulk_timeout_ms, queue_disk_path, last_val_read_only, archive_read_only FROM `+archiveConfigTable+` ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -177,13 +193,13 @@ func (a *ArchiveConfigStore) GetAll(ctx context.Context) ([]stores.ArchiveGroupC
 
 func (a *ArchiveConfigStore) Get(ctx context.Context, name string) (*stores.ArchiveGroupConfig, error) {
 	row := a.db.Conn().QueryRowContext(ctx,
-		`SELECT name, enabled, topic_filter, retained_only, last_val_type, archive_type, database_connection_name, last_val_retention, archive_retention, purge_interval, payload_format, queue_type, queue_size, bulk_size, bulk_timeout_ms, queue_disk_path FROM `+archiveConfigTable+` WHERE name = ?`, name)
+		`SELECT name, enabled, topic_filter, retained_only, last_val_type, archive_type, database_connection_name, last_val_retention, archive_retention, purge_interval, payload_format, queue_type, queue_size, bulk_size, bulk_timeout_ms, queue_disk_path, last_val_read_only, archive_read_only FROM `+archiveConfigTable+` WHERE name = ?`, name)
 	return rowToArchive(row)
 }
 
 func (a *ArchiveConfigStore) Save(ctx context.Context, cfg stores.ArchiveGroupConfig) error {
-	_, err := a.db.Exec(`INSERT INTO `+archiveConfigTable+` (name, enabled, topic_filter, retained_only, last_val_type, archive_type, database_connection_name, last_val_retention, archive_retention, purge_interval, payload_format, queue_type, queue_size, bulk_size, bulk_timeout_ms, queue_disk_path)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	_, err := a.db.Exec(`INSERT INTO `+archiveConfigTable+` (name, enabled, topic_filter, retained_only, last_val_type, archive_type, database_connection_name, last_val_retention, archive_retention, purge_interval, payload_format, queue_type, queue_size, bulk_size, bulk_timeout_ms, queue_disk_path, last_val_read_only, archive_read_only)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (name) DO UPDATE SET
             enabled = excluded.enabled,
             topic_filter = excluded.topic_filter,
@@ -200,10 +216,13 @@ func (a *ArchiveConfigStore) Save(ctx context.Context, cfg stores.ArchiveGroupCo
             bulk_size = excluded.bulk_size,
             bulk_timeout_ms = excluded.bulk_timeout_ms,
             queue_disk_path = excluded.queue_disk_path,
+            last_val_read_only = excluded.last_val_read_only,
+            archive_read_only = excluded.archive_read_only,
             updated_at = CURRENT_TIMESTAMP`,
 		cfg.Name, boolToInt(cfg.Enabled), joinFilter(cfg.TopicFilters), boolToInt(cfg.RetainedOnly),
 		string(cfg.LastValType), string(cfg.ArchiveType), nullStr(cfg.DatabaseConnectionName), nullStr(cfg.LastValRetention), nullStr(cfg.ArchiveRetention), nullStr(cfg.PurgeInterval), string(cfg.PayloadFormat),
-		nullStr(cfg.QueueType), cfg.QueueSize, cfg.BulkSize, cfg.BulkTimeoutMs, nullStr(cfg.QueueDiskPath))
+		nullStr(cfg.QueueType), cfg.QueueSize, cfg.BulkSize, cfg.BulkTimeoutMs, nullStr(cfg.QueueDiskPath),
+		boolToInt(cfg.LastValReadOnly), boolToInt(cfg.ArchiveReadOnly))
 	return err
 }
 

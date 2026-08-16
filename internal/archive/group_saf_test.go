@@ -154,3 +154,86 @@ func TestGroupStoreAndForwardDisk(t *testing.T) {
 		t.Fatalf("expected buffer size 0 after commit, got %d", group.BufferSize())
 	}
 }
+
+type mockLastValStore struct {
+	mu     sync.Mutex
+	values []stores.BrokerMessage
+}
+
+func (m *mockLastValStore) Name() string                     { return "mock" }
+func (m *mockLastValStore) Type() stores.MessageStoreType     { return stores.MessageStoreNone }
+func (m *mockLastValStore) EnsureTable(ctx context.Context) error { return nil }
+func (m *mockLastValStore) Get(ctx context.Context, topic string) (*stores.BrokerMessage, error) {
+	return nil, nil
+}
+func (m *mockLastValStore) AddAll(ctx context.Context, msgs []stores.BrokerMessage) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.values = append(m.values, msgs...)
+	return nil
+}
+func (m *mockLastValStore) DelAll(ctx context.Context, topics []string) error { return nil }
+func (m *mockLastValStore) FindMatchingMessages(ctx context.Context, pattern string, yield func(stores.BrokerMessage) bool) error {
+	return nil
+}
+func (m *mockLastValStore) FindMatchingTopics(ctx context.Context, pattern string, yield func(string) bool) error {
+	return nil
+}
+func (m *mockLastValStore) PurgeOlderThan(ctx context.Context, olderThan time.Time) (stores.PurgeResult, error) {
+	return stores.PurgeResult{}, nil
+}
+func (m *mockLastValStore) Close() error { return nil }
+
+func TestGroupReadOnly(t *testing.T) {
+	mockLV := &mockLastValStore{}
+	mockAR := &mockArchiveStore{}
+
+	cfg := stores.ArchiveGroupConfig{
+		Name:            "test-ro-group",
+		Enabled:         true,
+		TopicFilters:    []string{"sensor/#"},
+		LastValReadOnly: true,
+		ArchiveReadOnly: true,
+	}
+
+	group := NewGroup(cfg, mockLV, mockAR, nil)
+	group.Start()
+	defer group.Stop()
+
+	// Both read-only: Matches should return false on hot path
+	if group.Matches("sensor/temp", false) {
+		t.Fatalf("expected Matches() to return false when both LastValReadOnly and ArchiveReadOnly are true")
+	}
+
+	// Now LastVal enabled for write, Archive read-only
+	cfg.LastValReadOnly = false
+	group.cfg = cfg
+
+	if !group.Matches("sensor/temp", false) {
+		t.Fatalf("expected Matches() to return true when LastVal is writable")
+	}
+
+	msg := stores.BrokerMessage{
+		TopicName: "sensor/temp",
+		Payload:   []byte("25.5"),
+		Time:      time.Now().UTC(),
+	}
+	group.Submit(msg)
+
+	time.Sleep(100 * time.Millisecond)
+
+	mockLV.mu.Lock()
+	lvCount := len(mockLV.values)
+	mockLV.mu.Unlock()
+
+	mockAR.mu.Lock()
+	arCount := len(mockAR.history)
+	mockAR.mu.Unlock()
+
+	if lvCount != 1 {
+		t.Fatalf("expected lastval to receive 1 write, got %d", lvCount)
+	}
+	if arCount != 0 {
+		t.Fatalf("expected archive to receive 0 writes (ArchiveReadOnly=true), got %d", arCount)
+	}
+}

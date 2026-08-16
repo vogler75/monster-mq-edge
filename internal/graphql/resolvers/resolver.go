@@ -1307,6 +1307,8 @@ func (r *Resolver) archiveGroupInfoTo(c stores.ArchiveGroupConfig) *generated.Ar
 		BulkSize:               ptrIfNonZero(c.BulkSize),
 		BulkTimeoutMs:          ptrIfNonZero64(c.BulkTimeoutMs),
 		QueueDiskPath:          ptrIfNotEmpty(c.QueueDiskPath),
+		LastValReadOnly:        c.LastValReadOnly,
+		ArchiveReadOnly:        c.ArchiveReadOnly,
 		// createdAt/updatedAt aren't tracked in ArchiveGroupConfig today;
 		// surface as nil so the dashboard renders "—".
 	}
@@ -1934,6 +1936,8 @@ func (r *archiveGroupMutationsResolver) Create(ctx context.Context, _ *generated
 		BulkSize:         intPtr(input.BulkSize, 4000),
 		BulkTimeoutMs:    int64Ptr(input.BulkTimeoutMs, 1000),
 		QueueDiskPath:    derefStr(input.QueueDiskPath),
+		LastValReadOnly:  boolPtr(input.LastValReadOnly, false),
+		ArchiveReadOnly:  boolPtr(input.ArchiveReadOnly, false),
 	}
 	if input.PayloadFormat != nil {
 		cfg.PayloadFormat = stores.PayloadFormat(*input.PayloadFormat)
@@ -2018,6 +2022,12 @@ func (r *archiveGroupMutationsResolver) Update(ctx context.Context, _ *generated
 	}
 	if input.QueueDiskPath != nil {
 		existing.QueueDiskPath = *input.QueueDiskPath
+	}
+	if input.LastValReadOnly != nil {
+		existing.LastValReadOnly = *input.LastValReadOnly
+	}
+	if input.ArchiveReadOnly != nil {
+		existing.ArchiveReadOnly = *input.ArchiveReadOnly
 	}
 	if err := r.Storage.ArchiveConfig.Save(ctx, *existing); err != nil {
 		return &generated.ArchiveGroupResult{Success: false, Message: ptr(err.Error())}, nil

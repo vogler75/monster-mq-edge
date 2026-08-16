@@ -1307,6 +1307,8 @@ func docToArchive(doc bson.M) *stores.ArchiveGroupConfig {
 		BulkSize:               getInt(doc, "bulk_size"),
 		BulkTimeoutMs:          int64(getInt(doc, "bulk_timeout_ms")),
 		QueueDiskPath:          getStr(doc, "queue_disk_path"),
+		LastValReadOnly:        getBool(doc, "last_val_read_only"),
+		ArchiveReadOnly:        getBool(doc, "archive_read_only"),
 	}
 	if c.PayloadFormat == "" {
 		c.PayloadFormat = stores.PayloadDefault
@@ -1333,8 +1335,10 @@ func (a *ArchiveConfigStore) Save(ctx context.Context, cfg stores.ArchiveGroupCo
 			"purge_interval": cfg.PurgeInterval, "payload_format": string(cfg.PayloadFormat),
 			"queue_type": cfg.QueueType, "queue_size": cfg.QueueSize,
 			"bulk_size": cfg.BulkSize, "bulk_timeout_ms": cfg.BulkTimeoutMs,
-			"queue_disk_path": cfg.QueueDiskPath,
-			"updated_at":       time.Now().UTC(),
+			"queue_disk_path":    cfg.QueueDiskPath,
+			"last_val_read_only": cfg.LastValReadOnly,
+			"archive_read_only":  cfg.ArchiveReadOnly,
+			"updated_at":         time.Now().UTC(),
 		}, "$setOnInsert": bson.M{"created_at": time.Now().UTC()}},
 		options.UpdateOne().SetUpsert(true))
 	return err

@@ -447,6 +447,9 @@ func configsEqual(a, b stores.ArchiveGroupConfig) bool {
 	if a.LastValType != b.LastValType || a.ArchiveType != b.ArchiveType {
 		return false
 	}
+	if a.LastValReadOnly != b.LastValReadOnly || a.ArchiveReadOnly != b.ArchiveReadOnly {
+		return false
+	}
 	if a.DatabaseConnectionName != b.DatabaseConnectionName {
 		return false
 	}

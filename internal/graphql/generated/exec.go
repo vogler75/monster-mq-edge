@@ -601,6 +601,8 @@ type ArchiveGroupInfo {
     queueDiskPath: String
     createdAt: String
     updatedAt: String
+    lastValReadOnly: Boolean!
+    archiveReadOnly: Boolean!
     connectionStatus: [NodeConnectionStatus!]!
     metrics: [ArchiveGroupMetrics!]!
     metricsHistory(from: String, to: String, lastMinutes: Int): [ArchiveGroupMetrics!]!
@@ -622,6 +624,8 @@ input CreateArchiveGroupInput {
     bulkSize: Int = 4000
     bulkTimeoutMs: Long = 1000
     queueDiskPath: String = "data/queue"
+    lastValReadOnly: Boolean = false
+    archiveReadOnly: Boolean = false
 }
 
 input UpdateArchiveGroupInput {
@@ -640,6 +644,8 @@ input UpdateArchiveGroupInput {
     bulkSize: Int
     bulkTimeoutMs: Long
     queueDiskPath: String
+    lastValReadOnly: Boolean
+    archiveReadOnly: Boolean
 }
 
 type ArchiveGroupResult {
@@ -4063,6 +4069,64 @@ func (ec *executionContext) fieldContext_ArchiveGroupInfo_updatedAt(_ context.Co
 	return fc, nil
 }
 
+func (ec *executionContext) _ArchiveGroupInfo_lastValReadOnly(ctx context.Context, field graphql.CollectedField, obj *ArchiveGroupInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ArchiveGroupInfo_lastValReadOnly,
+		func(ctx context.Context) (any, error) {
+			return obj.LastValReadOnly, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_ArchiveGroupInfo_lastValReadOnly(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ArchiveGroupInfo",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ArchiveGroupInfo_archiveReadOnly(ctx context.Context, field graphql.CollectedField, obj *ArchiveGroupInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ArchiveGroupInfo_archiveReadOnly,
+		func(ctx context.Context) (any, error) {
+			return obj.ArchiveReadOnly, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_ArchiveGroupInfo_archiveReadOnly(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ArchiveGroupInfo",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _ArchiveGroupInfo_connectionStatus(ctx context.Context, field graphql.CollectedField, obj *ArchiveGroupInfo) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -4791,6 +4855,10 @@ func (ec *executionContext) fieldContext_ArchiveGroupResult_archiveGroup(_ conte
 				return ec.fieldContext_ArchiveGroupInfo_createdAt(ctx, field)
 			case "updatedAt":
 				return ec.fieldContext_ArchiveGroupInfo_updatedAt(ctx, field)
+			case "lastValReadOnly":
+				return ec.fieldContext_ArchiveGroupInfo_lastValReadOnly(ctx, field)
+			case "archiveReadOnly":
+				return ec.fieldContext_ArchiveGroupInfo_archiveReadOnly(ctx, field)
 			case "connectionStatus":
 				return ec.fieldContext_ArchiveGroupInfo_connectionStatus(ctx, field)
 			case "metrics":
@@ -13585,6 +13653,10 @@ func (ec *executionContext) fieldContext_Query_archiveGroups(ctx context.Context
 				return ec.fieldContext_ArchiveGroupInfo_createdAt(ctx, field)
 			case "updatedAt":
 				return ec.fieldContext_ArchiveGroupInfo_updatedAt(ctx, field)
+			case "lastValReadOnly":
+				return ec.fieldContext_ArchiveGroupInfo_lastValReadOnly(ctx, field)
+			case "archiveReadOnly":
+				return ec.fieldContext_ArchiveGroupInfo_archiveReadOnly(ctx, field)
 			case "connectionStatus":
 				return ec.fieldContext_ArchiveGroupInfo_connectionStatus(ctx, field)
 			case "metrics":
@@ -13674,6 +13746,10 @@ func (ec *executionContext) fieldContext_Query_archiveGroup(ctx context.Context,
 				return ec.fieldContext_ArchiveGroupInfo_createdAt(ctx, field)
 			case "updatedAt":
 				return ec.fieldContext_ArchiveGroupInfo_updatedAt(ctx, field)
+			case "lastValReadOnly":
+				return ec.fieldContext_ArchiveGroupInfo_lastValReadOnly(ctx, field)
+			case "archiveReadOnly":
+				return ec.fieldContext_ArchiveGroupInfo_archiveReadOnly(ctx, field)
 			case "connectionStatus":
 				return ec.fieldContext_ArchiveGroupInfo_connectionStatus(ctx, field)
 			case "metrics":
@@ -22586,8 +22662,14 @@ func (ec *executionContext) unmarshalInputCreateArchiveGroupInput(ctx context.Co
 	if _, present := asMap["queueDiskPath"]; !present {
 		asMap["queueDiskPath"] = "data/queue"
 	}
+	if _, present := asMap["lastValReadOnly"]; !present {
+		asMap["lastValReadOnly"] = false
+	}
+	if _, present := asMap["archiveReadOnly"]; !present {
+		asMap["archiveReadOnly"] = false
+	}
 
-	fieldsInOrder := [...]string{"name", "topicFilter", "retainedOnly", "lastValType", "archiveType", "databaseConnectionName", "payloadFormat", "lastValRetention", "archiveRetention", "purgeInterval", "queueType", "queueSize", "bulkSize", "bulkTimeoutMs", "queueDiskPath"}
+	fieldsInOrder := [...]string{"name", "topicFilter", "retainedOnly", "lastValType", "archiveType", "databaseConnectionName", "payloadFormat", "lastValRetention", "archiveRetention", "purgeInterval", "queueType", "queueSize", "bulkSize", "bulkTimeoutMs", "queueDiskPath", "lastValReadOnly", "archiveReadOnly"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -22699,6 +22781,20 @@ func (ec *executionContext) unmarshalInputCreateArchiveGroupInput(ctx context.Co
 				return it, err
 			}
 			it.QueueDiskPath = data
+		case "lastValReadOnly":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("lastValReadOnly"))
+			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.LastValReadOnly = data
+		case "archiveReadOnly":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("archiveReadOnly"))
+			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ArchiveReadOnly = data
 		}
 	}
 	return it, nil
@@ -23605,7 +23701,7 @@ func (ec *executionContext) unmarshalInputUpdateArchiveGroupInput(ctx context.Co
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"name", "topicFilter", "retainedOnly", "lastValType", "archiveType", "databaseConnectionName", "payloadFormat", "lastValRetention", "archiveRetention", "purgeInterval", "queueType", "queueSize", "bulkSize", "bulkTimeoutMs", "queueDiskPath"}
+	fieldsInOrder := [...]string{"name", "topicFilter", "retainedOnly", "lastValType", "archiveType", "databaseConnectionName", "payloadFormat", "lastValRetention", "archiveRetention", "purgeInterval", "queueType", "queueSize", "bulkSize", "bulkTimeoutMs", "queueDiskPath", "lastValReadOnly", "archiveReadOnly"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -23717,6 +23813,20 @@ func (ec *executionContext) unmarshalInputUpdateArchiveGroupInput(ctx context.Co
 				return it, err
 			}
 			it.QueueDiskPath = data
+		case "lastValReadOnly":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("lastValReadOnly"))
+			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.LastValReadOnly = data
+		case "archiveReadOnly":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("archiveReadOnly"))
+			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ArchiveReadOnly = data
 		}
 	}
 	return it, nil
@@ -24727,6 +24837,16 @@ func (ec *executionContext) _ArchiveGroupInfo(ctx context.Context, sel ast.Selec
 			out.Values[i] = ec._ArchiveGroupInfo_createdAt(ctx, field, obj)
 		case "updatedAt":
 			out.Values[i] = ec._ArchiveGroupInfo_updatedAt(ctx, field, obj)
+		case "lastValReadOnly":
+			out.Values[i] = ec._ArchiveGroupInfo_lastValReadOnly(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "archiveReadOnly":
+			out.Values[i] = ec._ArchiveGroupInfo_archiveReadOnly(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
 		case "connectionStatus":
 			field := field
 

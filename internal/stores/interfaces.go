@@ -169,6 +169,8 @@ type ArchiveGroupConfig struct {
 	BulkSize               int
 	BulkTimeoutMs          int64
 	QueueDiskPath          string
+	LastValReadOnly        bool
+	ArchiveReadOnly        bool
 }
 
 type ArchiveConfigStore interface {

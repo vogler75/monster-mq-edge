@@ -133,6 +133,9 @@ func (g *Group) Matches(topic string, retain bool) bool {
 	if !g.cfg.Enabled {
 		return false
 	}
+	if g.cfg.LastValReadOnly && g.cfg.ArchiveReadOnly {
+		return false
+	}
 	if g.cfg.RetainedOnly && !retain {
 		return false
 	}
@@ -146,7 +149,7 @@ func (g *Group) Matches(topic string, retain bool) bool {
 
 func (g *Group) Submit(msg stores.BrokerMessage) {
 	g.outCount.Add(1)
-	if g.lastVal != nil {
+	if g.lastVal != nil && !g.cfg.LastValReadOnly {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		if len(msg.Payload) == 0 {
 			if err := g.lastVal.DelAll(ctx, []string{msg.TopicName}); err != nil && g.logger != nil {
@@ -159,7 +162,7 @@ func (g *Group) Submit(msg stores.BrokerMessage) {
 		}
 		cancel()
 	}
-	if g.archive == nil {
+	if g.archive == nil || g.cfg.ArchiveReadOnly {
 		return
 	}
 	if g.queue != nil {

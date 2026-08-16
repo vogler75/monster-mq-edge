@@ -40,6 +40,8 @@ type ArchiveGroupInfo struct {
 	QueueDiskPath          *string                 `json:"queueDiskPath,omitempty"`
 	CreatedAt              *string                 `json:"createdAt,omitempty"`
 	UpdatedAt              *string                 `json:"updatedAt,omitempty"`
+	LastValReadOnly        bool                    `json:"lastValReadOnly"`
+	ArchiveReadOnly        bool                    `json:"archiveReadOnly"`
 	ConnectionStatus       []*NodeConnectionStatus `json:"connectionStatus"`
 	Metrics                []*ArchiveGroupMetrics  `json:"metrics"`
 	MetricsHistory         []*ArchiveGroupMetrics  `json:"metricsHistory"`
@@ -188,6 +190,8 @@ type CreateArchiveGroupInput struct {
 	BulkSize               *int               `json:"bulkSize,omitempty"`
 	BulkTimeoutMs          *int64             `json:"bulkTimeoutMs,omitempty"`
 	QueueDiskPath          *string            `json:"queueDiskPath,omitempty"`
+	LastValReadOnly        *bool              `json:"lastValReadOnly,omitempty"`
+	ArchiveReadOnly        *bool              `json:"archiveReadOnly,omitempty"`
 }
 
 type CreateDatabaseConnectionInput struct {
@@ -645,6 +649,8 @@ type UpdateArchiveGroupInput struct {
 	BulkSize               *int                `json:"bulkSize,omitempty"`
 	BulkTimeoutMs          *int64              `json:"bulkTimeoutMs,omitempty"`
 	QueueDiskPath          *string             `json:"queueDiskPath,omitempty"`
+	LastValReadOnly        *bool               `json:"lastValReadOnly,omitempty"`
+	ArchiveReadOnly        *bool               `json:"archiveReadOnly,omitempty"`
 }
 
 type UpdateDatabaseConnectionInput struct {
