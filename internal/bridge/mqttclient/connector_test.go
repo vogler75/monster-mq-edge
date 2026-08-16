@@ -189,6 +189,69 @@ func TestPublishLocalMessageUsesPahoBufferWhenConfigured(t *testing.T) {
 	}
 }
 
+func TestSubscribeInboundPreservesRetainFlag(t *testing.T) {
+	cases := []struct {
+		name         string
+		addrRetain   bool
+		msgRetained  bool
+		wantRetained bool
+	}{
+		{"remote retained true, addr retain false", false, true, true},
+		{"remote retained false, addr retain false", false, false, false},
+		{"remote retained false, addr retain true", true, false, true},
+		{"remote retained true, addr retain true", true, true, true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &fakePahoClient{connected: true, open: true}
+			var publishedRetain bool
+			var publishedTopic string
+			var publishedPayload []byte
+			pub := func(topic string, payload []byte, retain bool, qos byte) error {
+				publishedTopic = topic
+				publishedPayload = payload
+				publishedRetain = retain
+				return nil
+			}
+			c := NewConnector("test", Config{
+				Addresses: []Address{
+					{
+						Mode:        "SUBSCRIBE",
+						RemoteTopic: "remote/+",
+						LocalTopic:  "local",
+						RemovePath:  true,
+						Retain:      tc.addrRetain,
+						QoS:         0,
+					},
+				},
+			}, pub, nil, nil)
+
+			c.subscribeInbound(client)
+			if client.subHandler == nil {
+				t.Fatal("subHandler was not set")
+			}
+
+			msg := &fakePahoMessage{
+				topic:    "remote/sensor",
+				payload:  []byte("123"),
+				retained: tc.msgRetained,
+			}
+			client.subHandler(client, msg)
+
+			if publishedTopic != "local/sensor" {
+				t.Fatalf("publishedTopic = %q, want local/sensor", publishedTopic)
+			}
+			if string(publishedPayload) != "123" {
+				t.Fatalf("publishedPayload = %q, want 123", string(publishedPayload))
+			}
+			if publishedRetain != tc.wantRetained {
+				t.Fatalf("publishedRetain = %v, want %v", publishedRetain, tc.wantRetained)
+			}
+		})
+	}
+}
+
 type fakePahoClient struct {
 	connected    bool
 	open         bool
@@ -197,6 +260,7 @@ type fakePahoClient struct {
 	retained     bool
 	payload      interface{}
 	publishCount int
+	subHandler   paho.MessageHandler
 }
 
 func (f *fakePahoClient) IsConnected() bool      { return f.connected }
@@ -211,7 +275,8 @@ func (f *fakePahoClient) Publish(topic string, qos byte, retained bool, payload 
 	f.payload = payload
 	return fakeToken{}
 }
-func (f *fakePahoClient) Subscribe(string, byte, paho.MessageHandler) paho.Token {
+func (f *fakePahoClient) Subscribe(topic string, qos byte, handler paho.MessageHandler) paho.Token {
+	f.subHandler = handler
 	return fakeToken{}
 }
 func (f *fakePahoClient) SubscribeMultiple(map[string]byte, paho.MessageHandler) paho.Token {
@@ -223,9 +288,27 @@ func (f *fakePahoClient) OptionsReader() paho.ClientOptionsReader {
 	return paho.ClientOptionsReader{}
 }
 
+type fakePahoMessage struct {
+	duplicate bool
+	qos       byte
+	retained  bool
+	topic     string
+	messageID uint16
+	payload   []byte
+}
+
+func (m *fakePahoMessage) Duplicate() bool   { return m.duplicate }
+func (m *fakePahoMessage) Qos() byte         { return m.qos }
+func (m *fakePahoMessage) Retained() bool    { return m.retained }
+func (m *fakePahoMessage) Topic() string     { return m.topic }
+func (m *fakePahoMessage) MessageID() uint16 { return m.messageID }
+func (m *fakePahoMessage) Payload() []byte   { return m.payload }
+func (m *fakePahoMessage) Ack()              {}
+
 type fakeToken struct{}
 
 func (fakeToken) Wait() bool                     { return true }
 func (fakeToken) WaitTimeout(time.Duration) bool { return true }
 func (fakeToken) Done() <-chan struct{}          { ch := make(chan struct{}); close(ch); return ch }
 func (fakeToken) Error() error                   { return nil }
+

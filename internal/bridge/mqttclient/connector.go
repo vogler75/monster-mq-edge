@@ -343,7 +343,7 @@ func (c *Connector) subscribeInbound(client paho.Client) {
 		tok := client.Subscribe(addr.RemoteTopic, byte(addr.QoS), func(_ paho.Client, m paho.Message) {
 			localTopic := mapInboundTopic(addr, m.Topic())
 			c.recordIn()
-			if err := c.publisher(localTopic, m.Payload(), addr.Retain, byte(addr.QoS)); err != nil {
+			if err := c.publisher(localTopic, m.Payload(), addr.Retain || m.Retained(), byte(addr.QoS)); err != nil {
 				c.logger.Warn("bridge inbound publish failed", "name", c.name, "topic", localTopic, "err", err)
 			}
 		})
