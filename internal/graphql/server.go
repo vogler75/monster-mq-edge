@@ -101,7 +101,9 @@ func NewServer(cfg *config.Config, resolver *resolvers.Resolver, hmiMgr *hmi.Man
 
 			dir := cfg.HMI.Path
 			if dir == "" {
-				dir = "./data/hmi"
+				logger.Warn("HMI.Path is not specified in configuration. HMI server will not be started.")
+				http.Error(w, "HMI server not configured (HMI.Path missing)", http.StatusNotFound)
+				return
 			}
 			fullPath := filepath.Join(dir, dashName, fileSubPath)
 			if info, err := os.Stat(fullPath); err == nil && !info.IsDir() {

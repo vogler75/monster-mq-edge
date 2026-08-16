@@ -245,7 +245,11 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 	// 7d. HMI Manager
 	var hmiMgr *hmi.Manager
 	if cfg.HMI.Enabled || cfg.Features.Hmi {
-		hmiMgr = hmi.NewManager(cfg, storage.DeviceConfig)
+		if cfg.HMI.Path == "" {
+			logger.Warn("HMI is enabled, but HMI.Path is not specified in configuration. HMI server will not be started.")
+		} else {
+			hmiMgr = hmi.NewManager(cfg, storage.DeviceConfig)
+		}
 	}
 
 	// 8. GraphQL server (HTTP + WebSocket)

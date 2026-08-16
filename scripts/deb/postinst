@@ -17,7 +17,7 @@ if ! getent passwd monstermq >/dev/null; then
 fi
 
 # Create directories and set correct owner/group
-mkdir -p /var/lib/monstermq
+mkdir -p /var/lib/monstermq /var/lib/monstermq/db /var/lib/monstermq/hmi
 chown -R monstermq:monstermq /var/lib/monstermq
 
 # Ensure config directory exists and has correct permissions

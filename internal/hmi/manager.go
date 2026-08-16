@@ -57,7 +57,7 @@ type Manager struct {
 func NewManager(cfg *config.Config, deviceStore stores.DeviceConfigStore) *Manager {
 	dir := cfg.HMI.Path
 	if dir == "" {
-		dir = "./data/hmi"
+		return nil
 	}
 	m := &Manager{
 		baseDir:     dir,
