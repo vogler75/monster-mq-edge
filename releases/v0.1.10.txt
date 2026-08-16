@@ -1,0 +1,12 @@
+Release v0.1.10
+Built from commit: 3b928fa
+Date: 2026-08-16 18:05:07
+
+Changes since v0.1.9:
+---
+3b928fa fix(bridge): map exact inbound topics directly and test retained bridge delivery
+0300ffe feat(archive): populate in-memory last value stores with retained messages on start
+99b00c1 feat(hmi): require explicit HMI.Path config, log warning if missing, and update deb paths
+8ca2e80 fix(mongodb): align MessageArchive with main broker time-series schema and safe aggregation
+1a42856 feat(archive): add separate lastValReadOnly and archiveReadOnly support
+05e7044 Preserve retain flag for inbound bridge messages
