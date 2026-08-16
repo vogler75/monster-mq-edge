@@ -55,6 +55,9 @@ func NewStorageHook(s *stores.Storage, bus *pubsub.Bus, subs *topic.Subscription
 func (h *StorageHook) ID() string { return "monstermq-storage" }
 
 func (h *StorageHook) Provides(b byte) bool {
+	if h.retainedInMemory && b == mqtt.OnSelectRetainedMessages {
+		return false
+	}
 	return bytes.Contains([]byte{
 		mqtt.OnSessionEstablished,
 		mqtt.OnDisconnect,
@@ -176,13 +179,14 @@ func (h *StorageHook) OnPublished(cl *mqtt.Client, pk packets.Packet) {
 
 // OnRetainMessage is called when a message with retain=true is published. r=1 set, r=-1 clear.
 func (h *StorageHook) OnRetainMessage(cl *mqtt.Client, pk packets.Packet, r int64) {
-	if h.retainedInMemory {
-		return
-	}
 	ctx := context.Background()
 	if r == -1 || len(pk.Payload) == 0 {
 		_ = h.store.Retained.DelAll(ctx, []string{pk.TopicName})
 		return
+	}
+	clientID := ""
+	if cl != nil {
+		clientID = cl.ID
 	}
 	msg := stores.BrokerMessage{
 		MessageUUID: uuid.NewString(),
@@ -190,7 +194,7 @@ func (h *StorageHook) OnRetainMessage(cl *mqtt.Client, pk packets.Packet, r int6
 		Payload:     append([]byte(nil), pk.Payload...),
 		QoS:         pk.FixedHeader.Qos,
 		IsRetain:    true,
-		ClientID:    cl.ID,
+		ClientID:    clientID,
 		Time:        time.Now().UTC(),
 	}
 	if err := h.store.Retained.AddAll(ctx, []stores.BrokerMessage{msg}); err != nil {

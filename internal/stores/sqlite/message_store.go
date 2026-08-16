@@ -226,7 +226,7 @@ func (s *MessageStore) FindMatchingMessages(ctx context.Context, pattern string,
 			continue
 		}
 		// Drop expired messages (MQTT v5 message_expiry_interval, in seconds).
-		if expiry.Valid && expiry.Int64 >= 0 {
+		if expiry.Valid && expiry.Int64 > 0 && creation.Valid && creation.Int64 > 0 {
 			ageSec := (now - creation.Int64) / 1000
 			if ageSec >= expiry.Int64 {
 				continue

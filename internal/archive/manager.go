@@ -167,6 +167,25 @@ func (m *Manager) startGroup(ctx context.Context, c stores.ArchiveGroupConfig) e
 	delete(m.deployError, c.Name)
 	m.mu.Unlock()
 	closeOnErr = false
+
+	// Populate in-memory last-value store with existing retained messages from storage.
+	if c.LastValType == stores.MessageStoreMemory && lastVal != nil && m.storage.Retained != nil {
+		var batch []stores.BrokerMessage
+		_ = m.storage.Retained.FindMatchingMessages(ctx, "#", func(msg stores.BrokerMessage) bool {
+			if g.Matches(msg.TopicName, msg.IsRetain) {
+				batch = append(batch, msg)
+			}
+			return true
+		})
+		if len(batch) > 0 {
+			if err := lastVal.AddAll(ctx, batch); err != nil {
+				m.logger.Warn("failed to populate retained messages to memory store", "group", c.Name, "err", err)
+			} else {
+				m.logger.Info("populated retained messages to memory store", "group", c.Name, "count", len(batch))
+			}
+		}
+	}
+
 	m.logger.Info("archive group started",
 		"name", c.Name, "filters", c.TopicFilters,
 		"lastValType", c.LastValType, "archiveType", c.ArchiveType)

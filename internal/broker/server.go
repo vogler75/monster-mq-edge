@@ -274,6 +274,9 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 }
 
 func configureVolatileStores(ctx context.Context, cfg *config.Config, storage *stores.Storage) error {
+	if cfg.RetainedStore() == config.StoreMemory {
+		storage.Retained = storememory.NewMessageStore("retainedmessages")
+	}
 	if storage.Backend == config.StoreSQLite {
 		return nil
 	}

@@ -139,6 +139,9 @@ func (g *Group) Matches(topic string, retain bool) bool {
 	if g.cfg.RetainedOnly && !retain {
 		return false
 	}
+	if len(g.cfg.TopicFilters) == 0 {
+		return true
+	}
 	for _, f := range g.cfg.TopicFilters {
 		if matchTopic(strings.TrimSpace(f), topic) {
 			return true

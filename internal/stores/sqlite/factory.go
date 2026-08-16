@@ -6,6 +6,7 @@ import (
 
 	"monstermq.io/edge/internal/config"
 	"monstermq.io/edge/internal/stores"
+	storememory "monstermq.io/edge/internal/stores/memory"
 )
 
 // Build wires up a full Storage backed by a single SQLite file. The schema is
@@ -21,7 +22,10 @@ func Build(ctx context.Context, cfg *config.Config) (*stores.Storage, *DB, error
 	}
 	closers := []func() error{db.Close}
 
-	retained := NewMessageStore("retainedmessages", db)
+	var retained stores.MessageStore = NewMessageStore("retainedmessages", db)
+	if cfg.RetainedStore() == config.StoreMemory {
+		retained = storememory.NewMessageStore("retainedmessages")
+	}
 	users := NewUserStore(db)
 	archives := NewArchiveConfigStore(db)
 	devices := NewDeviceConfigStore(db)

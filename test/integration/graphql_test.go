@@ -529,3 +529,62 @@ func TestGraphQLDeviceImportExportWithUserManagement(t *testing.T) {
 	}
 }
 
+func TestGraphQLRetainedMessageInArchiveAcrossRestart(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "retained_arch.db")
+	mqttPort := 23025
+	gqlPort := 28025
+
+	srv, url := startWithGraphQL(t, mqttPort, gqlPort, func(c *config.Config) {
+		c.SQLite.Path = dbPath
+	})
+
+	// 1. Publish retained message via GraphQL
+	gqlQuery(t, url, `mutation { publish(input: { topic: "sensors/temp/office", payload: "21.5", retained: true }) { success topic } }`, nil)
+	time.Sleep(300 * time.Millisecond)
+
+	// Verify before restart
+	data := gqlQuery(t, url, `{ currentValue(topic: "sensors/temp/office") { topic payload } }`, nil)
+	cv := data["currentValue"].(map[string]any)
+	if cv["topic"] != "sensors/temp/office" || !strings.Contains(fmt.Sprintf("%v", cv["payload"]), "21.5") {
+		t.Fatalf("currentValue before restart mismatch: %+v", cv)
+	}
+
+	// 2. Restart broker on same DB
+	srv.Close()
+	time.Sleep(100 * time.Millisecond)
+
+	srv2, url2 := startWithGraphQL(t, mqttPort, gqlPort, func(c *config.Config) {
+		c.SQLite.Path = dbPath
+	})
+	defer srv2.Close()
+
+	// 3. Query currentValue from Default archive group (in-memory last-value store)
+	data2 := gqlQuery(t, url2, `{ currentValue(topic: "sensors/temp/office") { topic payload } }`, nil)
+	cv2, ok := data2["currentValue"].(map[string]any)
+	if !ok || cv2["topic"] != "sensors/temp/office" || !strings.Contains(fmt.Sprintf("%v", cv2["payload"]), "21.5") {
+		t.Fatalf("currentValue after restart mismatch: %+v", data2)
+	}
+
+	// 4. Query currentValues with wildcard
+	dataValues := gqlQuery(t, url2, `{ currentValues(topicFilter: "sensors/#") { topic payload } }`, nil)
+	list, ok := dataValues["currentValues"].([]any)
+	if !ok || len(list) == 0 {
+		t.Fatalf("currentValues after restart empty: %+v", dataValues)
+	}
+
+	// 5. Query retainedMessage
+	dataRet := gqlQuery(t, url2, `{ retainedMessage(topic: "sensors/temp/office") { topic payload } }`, nil)
+	rm, ok := dataRet["retainedMessage"].(map[string]any)
+	if !ok || rm["topic"] != "sensors/temp/office" || !strings.Contains(fmt.Sprintf("%v", rm["payload"]), "21.5") {
+		t.Fatalf("retainedMessage after restart mismatch: %+v", dataRet)
+	}
+
+	// 6. Query browseTopics
+	dataBrowse := gqlQuery(t, url2, `{ browseTopics(topic: "sensors/+") { name } }`, nil)
+	browseList, ok := dataBrowse["browseTopics"].([]any)
+	if !ok || len(browseList) == 0 {
+		t.Fatalf("browseTopics after restart empty: %+v", dataBrowse)
+	}
+}
+
+

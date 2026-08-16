@@ -210,7 +210,7 @@ func (s *MessageStore) FindMatchingMessages(ctx context.Context, pattern string,
 		if !matchTopic(pattern, topic) {
 			continue
 		}
-		if expiry != nil && *expiry >= 0 && creat != nil && (now-*creat)/1000 >= *expiry {
+		if expiry != nil && *expiry > 0 && creat != nil && *creat > 0 && (now-*creat)/1000 >= *expiry {
 			continue
 		}
 		msg := stores.BrokerMessage{TopicName: topic, Payload: payload, QoS: byte(qos), IsRetain: true}

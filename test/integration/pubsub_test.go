@@ -122,3 +122,57 @@ func TestRetainedMessageDelivery(t *testing.T) {
 		t.Fatal("retained message not delivered")
 	}
 }
+
+func TestRetainedMessageDelivery_MemoryMode(t *testing.T) {
+	port := 21885
+	cfg := config.Default()
+	cfg.NodeID = fmt.Sprintf("test-%d", port)
+	cfg.TCP.Enabled = true
+	cfg.TCP.Port = port
+	cfg.WS.Enabled = false
+	cfg.GraphQL.Enabled = false
+	cfg.Metrics.Enabled = false
+	cfg.RetainedStoreType = config.StoreMemory
+	cfg.SQLite.Path = t.TempDir() + "/test.db"
+
+	logger := slog.New(slog.DiscardHandler)
+	srv, err := broker.New(cfg, logger, nil)
+	if err != nil {
+		t.Fatalf("broker init: %v", err)
+	}
+	go func() { _ = srv.Serve() }()
+	defer srv.Close()
+	time.Sleep(100 * time.Millisecond)
+
+	pub := mqtt.NewClient(mqttOpts(port, "pub-ret-mem"))
+	if tok := pub.Connect(); tok.WaitTimeout(2*time.Second) && tok.Error() != nil {
+		t.Fatalf("pub connect: %v", tok.Error())
+	}
+	if tok := pub.Publish("retained/memtopic", 1, true, "stay-mem"); tok.WaitTimeout(2*time.Second) && tok.Error() != nil {
+		t.Fatalf("publish retained: %v", tok.Error())
+	}
+	pub.Disconnect(100)
+
+	sub := mqtt.NewClient(mqttOpts(port, "sub-ret-mem"))
+	if tok := sub.Connect(); tok.WaitTimeout(2*time.Second) && tok.Error() != nil {
+		t.Fatalf("sub connect: %v", tok.Error())
+	}
+	defer sub.Disconnect(100)
+
+	got := make(chan string, 1)
+	if tok := sub.Subscribe("retained/+", 1, func(_ mqtt.Client, m mqtt.Message) {
+		got <- string(m.Payload())
+	}); tok.WaitTimeout(2*time.Second) && tok.Error() != nil {
+		t.Fatalf("subscribe: %v", tok.Error())
+	}
+
+	select {
+	case payload := <-got:
+		if payload != "stay-mem" {
+			t.Fatalf("retained payload mismatch: %q", payload)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("retained message not delivered in memory mode")
+	}
+}
+

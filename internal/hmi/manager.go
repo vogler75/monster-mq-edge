@@ -81,14 +81,13 @@ func (m *Manager) EnsureInit() error {
 		meta := Metadata{MainDashboard: "main"}
 		data, _ := json.MarshalIndent(meta, "", "  ")
 		_ = os.WriteFile(metaPath, data, 0644)
-	}
 
-	mainDir := filepath.Join(m.baseDir, "main")
-	if _, err := os.Stat(mainDir); os.IsNotExist(err) {
-		_ = os.MkdirAll(mainDir, 0755)
-		indexPath := filepath.Join(mainDir, "index.html")
-		if _, err := os.Stat(indexPath); os.IsNotExist(err) {
-			defaultHTML := `<!DOCTYPE html>
+		mainDir := filepath.Join(m.baseDir, "main")
+		if _, err := os.Stat(mainDir); os.IsNotExist(err) {
+			_ = os.MkdirAll(mainDir, 0755)
+			indexPath := filepath.Join(mainDir, "index.html")
+			if _, err := os.Stat(indexPath); os.IsNotExist(err) {
+				defaultHTML := `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -129,38 +128,32 @@ func (m *Manager) EnsureInit() error {
     </script>
 </body>
 </html>`
-			_ = os.WriteFile(indexPath, []byte(defaultHTML), 0644)
-		}
-	}
-
-	// Ensure DB entry for 'main' device if deviceStore is available
-	if m.deviceStore != nil {
-		ctx := context.Background()
-		dc, _ := m.deviceStore.Get(ctx, "main")
-		if dc == nil {
-			cfgJSON, _ := json.Marshal(HmiConfig{
-				UrlPath:    "",
-				IsMain:     true,
-				Title:      "Main Dashboard",
-				EntryPoint: "index.html",
-			})
-			_ = m.deviceStore.Save(ctx, stores.DeviceConfig{
-				Name:      "main",
-				Namespace: "main",
-				NodeID:    "local",
-				Type:      "HMI",
-				Enabled:   true,
-				Config:    string(cfgJSON),
-				CreatedAt: time.Now(),
-				UpdatedAt: time.Now(),
-			})
-		} else if dc.Type == "HMI" && (dc.NodeID != "local" || dc.Namespace == "") {
-			dc.NodeID = "local"
-			if dc.Namespace == "" {
-				dc.Namespace = dc.Name
+				_ = os.WriteFile(indexPath, []byte(defaultHTML), 0644)
 			}
-			dc.UpdatedAt = time.Now()
-			_ = m.deviceStore.Save(ctx, *dc)
+		}
+
+		// Ensure DB entry for 'main' device if deviceStore is available
+		if m.deviceStore != nil {
+			ctx := context.Background()
+			dc, _ := m.deviceStore.Get(ctx, "main")
+			if dc == nil {
+				cfgJSON, _ := json.Marshal(HmiConfig{
+					UrlPath:    "",
+					IsMain:     true,
+					Title:      "Main Dashboard",
+					EntryPoint: "index.html",
+				})
+				_ = m.deviceStore.Save(ctx, stores.DeviceConfig{
+					Name:      "main",
+					Namespace: "main",
+					NodeID:    "local",
+					Type:      "HMI",
+					Enabled:   true,
+					Config:    string(cfgJSON),
+					CreatedAt: time.Now(),
+					UpdatedAt: time.Now(),
+				})
+			}
 		}
 	}
 
@@ -452,13 +445,9 @@ func (m *Manager) DeleteHmiDevice(name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if name == "main" {
-		return fmt.Errorf("cannot delete default 'main' dashboard")
-	}
-
 	meta := m.getMetadataLocked()
 	if meta.MainDashboard == name {
-		meta.MainDashboard = "main"
+		meta.MainDashboard = ""
 		_ = m.saveMetadataLocked(meta)
 	}
 

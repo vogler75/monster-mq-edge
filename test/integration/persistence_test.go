@@ -83,6 +83,19 @@ func TestRetainedSurvivesRestart(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("retained message did not survive restart")
 	}
+
+	// Verify the in-memory last-value store was populated with the retained message on restart.
+	defGroup := srv2.Archives().Get("Default")
+	if defGroup == nil {
+		t.Fatal("Default archive group not found")
+	}
+	memMsg, err := defGroup.LastValue().Get(context.Background(), "persist/topic")
+	if err != nil {
+		t.Fatalf("failed to get from Default last-value store: %v", err)
+	}
+	if memMsg == nil || string(memMsg.Payload) != "stay-on-disk" {
+		t.Fatalf("expected retained message in memory store, got %+v", memMsg)
+	}
 }
 
 // TestAuthAndAclEnforcement creates a user with a topic restriction, then
