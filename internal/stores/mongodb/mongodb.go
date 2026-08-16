@@ -283,11 +283,36 @@ func (a *MessageArchive) Close() error                    { return nil }
 func (a *MessageArchive) coll() *mongo.Collection         { return a.db.db.Collection(strings.ToLower(a.name)) }
 
 func (a *MessageArchive) EnsureTable(ctx context.Context) error {
-	_, err := a.coll().Indexes().CreateMany(ctx, []mongo.IndexModel{
-		{Keys: bson.D{{Key: "topic", Value: 1}, {Key: "time", Value: 1}}, Options: options.Index().SetUnique(true)},
-		{Keys: bson.D{{Key: "time", Value: 1}}},
+	collName := strings.ToLower(a.name)
+	collNames, err := a.db.db.ListCollectionNames(ctx, bson.M{"name": collName})
+	if err != nil {
+		return fmt.Errorf("list collections: %w", err)
+	}
+	if len(collNames) == 0 {
+		tsOpts := options.TimeSeries().
+			SetTimeField("time").
+			SetMetaField("meta").
+			SetGranularity("seconds")
+		createOpts := options.CreateCollection().
+			SetTimeSeriesOptions(tsOpts).
+			SetExpireAfterSeconds(365 * 24 * 3600)
+		if err := a.db.db.CreateCollection(ctx, collName, createOpts); err != nil {
+			if !strings.Contains(err.Error(), "NamespaceExists") && !strings.Contains(err.Error(), "already exists") {
+				return fmt.Errorf("create time-series collection %s: %w", collName, err)
+			}
+		}
+	}
+
+	_, err = a.coll().Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys:    bson.D{{Key: "time", Value: -1}},
+		Options: options.Index().SetName("time_idx"),
 	})
-	return err
+	if err != nil {
+		if !strings.Contains(err.Error(), "IndexAlreadyExists") && !strings.Contains(err.Error(), "already exists") && !strings.Contains(err.Error(), "IndexKeySpecsConflict") {
+			return fmt.Errorf("create index on %s: %w", collName, err)
+		}
+	}
+	return nil
 }
 
 func isProbablyJSON(b []byte) bool {
@@ -307,14 +332,17 @@ func (a *MessageArchive) AddHistory(ctx context.Context, msgs []stores.BrokerMes
 	docs := make([]any, 0, len(msgs))
 	for _, m := range msgs {
 		doc := bson.M{
-			"topic": m.TopicName, "time": m.Time.UTC(),
-			"qos": int(m.QoS), "retained": m.IsRetain,
-			"client_id": m.ClientID, "message_uuid": m.MessageUUID,
+			"meta":         bson.M{"topic": m.TopicName},
+			"time":         m.Time.UTC(),
+			"client_id":    m.ClientID,
+			"qos":          int(m.QoS),
+			"retained":     m.IsRetain,
+			"message_uuid": m.MessageUUID,
 		}
 
-		if a.fmt == stores.PayloadJSON && len(m.Payload) > 0 && json.Valid(m.Payload) {
+		if a.fmt == stores.PayloadJSON && len(m.Payload) > 0 {
 			var jsonObj map[string]any
-			if err := json.Unmarshal(m.Payload, &jsonObj); err == nil {
+			if err := json.Unmarshal(m.Payload, &jsonObj); err == nil && jsonObj != nil {
 				doc["payload"] = jsonObj
 			} else {
 				doc["payload_blob"] = bson.Binary{Data: m.Payload}
@@ -325,7 +353,7 @@ func (a *MessageArchive) AddHistory(ctx context.Context, msgs []stores.BrokerMes
 
 		docs = append(docs, doc)
 	}
-	_, err := a.coll().InsertMany(ctx, docs, options.InsertMany().SetOrdered(false))
+	_, err := a.coll().InsertMany(ctx, docs, options.InsertMany().SetOrdered(false).SetBypassDocumentValidation(true))
 	if mongo.IsDuplicateKeyError(err) {
 		return nil
 	}
@@ -340,9 +368,9 @@ func (a *MessageArchive) GetHistory(ctx context.Context, topic string, from, to 
 	if strings.ContainsAny(topic, "+#") {
 		// best-effort regex translation
 		re := strings.ReplaceAll(strings.ReplaceAll(topic, "#", ".*"), "+", "[^/]+")
-		filter["topic"] = bson.M{"$regex": "^" + re + "$"}
+		filter["meta.topic"] = bson.M{"$regex": "^" + re + "$"}
 	} else {
-		filter["topic"] = topic
+		filter["meta.topic"] = topic
 	}
 	if from != nil || to != nil {
 		t := bson.M{}
@@ -365,10 +393,34 @@ func (a *MessageArchive) GetHistory(ctx context.Context, topic string, from, to 
 		if err := cur.Decode(&doc); err != nil {
 			return nil, err
 		}
+
+		top := topic
+		if metaDoc, ok := doc["meta"].(bson.M); ok {
+			if t := getStr(metaDoc, "topic"); t != "" {
+				top = t
+			}
+		} else if t := getStr(doc, "topic"); t != "" {
+			top = t
+		}
+
+		clientID := getStr(doc, "client_id")
+		if clientID == "" {
+			if metaDoc, ok := doc["meta"].(bson.M); ok {
+				clientID = getStr(metaDoc, "client_id")
+			}
+		}
+
+		qos := byte(getInt(doc, "qos"))
+		if qos == 0 {
+			if metaDoc, ok := doc["meta"].(bson.M); ok {
+				qos = byte(getInt(metaDoc, "qos"))
+			}
+		}
+
 		m := stores.ArchivedMessage{
-			Topic:    getStr(doc, "topic"),
-			ClientID: getStr(doc, "client_id"),
-			QoS:      byte(getInt(doc, "qos")),
+			Topic:    top,
+			ClientID: clientID,
+			QoS:      qos,
 		}
 		if t, ok := doc["time"].(bson.DateTime); ok {
 			m.Timestamp = t.Time()
@@ -377,12 +429,25 @@ func (a *MessageArchive) GetHistory(ctx context.Context, topic string, from, to 
 		}
 		if b, ok := doc["payload_blob"].(bson.Binary); ok {
 			m.Payload = b.Data
+		} else if b, ok := doc["payload_blob"].([]byte); ok {
+			m.Payload = b
+		} else if doc["payload"] != nil {
+			switch p := doc["payload"].(type) {
+			case bson.Binary:
+				m.Payload = p.Data
+			case []byte:
+				m.Payload = p
+			case string:
+				m.Payload = []byte(p)
+			default:
+				if jsonBytes, err := json.Marshal(p); err == nil {
+					m.Payload = jsonBytes
+				}
+			}
 		} else if b, ok := doc["payload"].(bson.Binary); ok {
 			m.Payload = b.Data
-		} else if doc["payload"] != nil {
-			if jsonBytes, err := json.Marshal(doc["payload"]); err == nil {
-				m.Payload = jsonBytes
-			}
+		} else if s := getStr(doc, "payload_json"); s != "" {
+			m.Payload = []byte(s)
 		}
 		out = append(out, m)
 	}
@@ -507,9 +572,9 @@ func (a *MessageArchive) GetAggregatedHistory(ctx context.Context, topics []stri
 
 	topicMatch := bson.M{}
 	if len(topics) == 1 {
-		topicMatch["topic"] = topics[0]
+		topicMatch["meta.topic"] = topics[0]
 	} else {
-		topicMatch["topic"] = bson.M{"$in": topics}
+		topicMatch["meta.topic"] = bson.M{"$in": topics}
 	}
 	topicMatch["time"] = bson.M{
 		"$gte": startTime.UTC(),
@@ -525,7 +590,7 @@ func (a *MessageArchive) GetAggregatedHistory(ctx context.Context, topics []stri
 					"binSize": binSize,
 				},
 			},
-			"topic": "$topic",
+			"topic": "$meta.topic",
 		},
 	}
 
@@ -533,7 +598,7 @@ func (a *MessageArchive) GetAggregatedHistory(ctx context.Context, topics []stri
 	columns := []string{"timestamp"}
 
 	for _, topic := range topics {
-		for fieldIdx, field := range effectiveFields {
+		for _, field := range effectiveFields {
 			fieldAlias := ""
 			if field != "" {
 				fieldAlias = "." + strings.ReplaceAll(field, ".", "_")
@@ -545,35 +610,46 @@ func (a *MessageArchive) GetAggregatedHistory(ctx context.Context, topics []stri
 				columnNames = append(columnNames, colName)
 				columns = append(columns, colName)
 			}
+		}
+	}
 
-			var valExpr any
-			if field == "" {
-				valExpr = bson.M{"$ifNull": bson.A{"$payload", "$payload_blob"}}
-			} else {
-				valExpr = bson.M{"$ifNull": bson.A{"$payload." + field, "$payload_blob"}}
-			}
+	for fieldIdx, field := range effectiveFields {
+		var inputExpr any
+		if field == "" {
+			inputExpr = "$payload"
+		} else {
+			inputExpr = "$payload." + field
+		}
 
-			for _, fn := range functions {
-				fnUpper := strings.ToUpper(fn)
-				fnLower := strings.ToLower(fn)
-				accumKey := fmt.Sprintf("agg_%d_%s", fieldIdx, fnLower)
+		convertExpr := bson.M{
+			"$convert": bson.M{
+				"input":   inputExpr,
+				"to":      "double",
+				"onError": nil,
+				"onNull":  nil,
+			},
+		}
 
-				switch fnUpper {
-				case "AVG":
-					groupDoc[accumKey] = bson.M{"$avg": bson.M{"$toDouble": valExpr}}
-				case "MIN":
-					groupDoc[accumKey] = bson.M{"$min": bson.M{"$toDouble": valExpr}}
-				case "MAX":
-					groupDoc[accumKey] = bson.M{"$max": bson.M{"$toDouble": valExpr}}
-				case "SUM":
-					groupDoc[accumKey] = bson.M{"$sum": bson.M{"$toDouble": valExpr}}
-				case "COUNT":
-					groupDoc[accumKey] = bson.M{"$sum": bson.M{"$cond": bson.A{
-						bson.M{"$ne": bson.A{valExpr, nil}}, 1, 0,
-					}}}
-				default:
-					groupDoc[accumKey] = bson.M{"$avg": bson.M{"$toDouble": valExpr}}
-				}
+		for _, fn := range functions {
+			fnUpper := strings.ToUpper(fn)
+			fnLower := strings.ToLower(fn)
+			accumKey := fmt.Sprintf("agg_%d_%s", fieldIdx, fnLower)
+
+			switch fnUpper {
+			case "AVG":
+				groupDoc[accumKey] = bson.M{"$avg": convertExpr}
+			case "MIN":
+				groupDoc[accumKey] = bson.M{"$min": convertExpr}
+			case "MAX":
+				groupDoc[accumKey] = bson.M{"$max": convertExpr}
+			case "SUM":
+				groupDoc[accumKey] = bson.M{"$sum": convertExpr}
+			case "COUNT":
+				groupDoc[accumKey] = bson.M{"$sum": bson.M{"$cond": bson.A{
+					bson.M{"$ne": bson.A{convertExpr, nil}}, 1, 0,
+				}}}
+			default:
+				groupDoc[accumKey] = bson.M{"$avg": convertExpr}
 			}
 		}
 	}
@@ -599,16 +675,35 @@ func (a *MessageArchive) GetAggregatedHistory(ctx context.Context, topics []stri
 			return nil, err
 		}
 
-		idDoc, _ := doc["_id"].(bson.M)
-		if idDoc == nil {
-			continue
-		}
-		topicStr := getStr(idDoc, "topic")
+		var topicStr string
 		var bucketTime time.Time
-		if b, ok := idDoc["bucket"].(bson.DateTime); ok {
-			bucketTime = b.Time()
-		} else if b, ok := idDoc["bucket"].(time.Time); ok {
-			bucketTime = b
+
+		switch id := doc["_id"].(type) {
+		case bson.M:
+			topicStr = getStr(id, "topic")
+			if b, ok := id["bucket"].(bson.DateTime); ok {
+				bucketTime = b.Time()
+			} else if b, ok := id["bucket"].(time.Time); ok {
+				bucketTime = b
+			}
+		case bson.D:
+			for _, elem := range id {
+				if elem.Key == "topic" {
+					if s, ok := elem.Value.(string); ok {
+						topicStr = s
+					}
+				} else if elem.Key == "bucket" {
+					if b, ok := elem.Value.(bson.DateTime); ok {
+						bucketTime = b.Time()
+					} else if b, ok := elem.Value.(time.Time); ok {
+						bucketTime = b
+					}
+				}
+			}
+		}
+
+		if bucketTime.IsZero() || topicStr == "" {
+			continue
 		}
 		bucketStr := bucketTime.UTC().Format(time.RFC3339)
 
