@@ -81,6 +81,17 @@ func TestMapInboundTopicWithoutRemovePathAppendsFullRemoteTopic(t *testing.T) {
 	}
 }
 
+func TestMapInboundTopicExactMatch(t *testing.T) {
+	addr := Address{
+		Mode:        "SUBSCRIBE",
+		RemoteTopic: "sensor/temp",
+		LocalTopic:  "plant/temp",
+	}
+	if got := mapInboundTopic(addr, "sensor/temp"); got != "plant/temp" {
+		t.Fatalf("exact inbound topic mapped to %q, want plant/temp", got)
+	}
+}
+
 func TestConfigMillisOrSecondsSupportsOldSecondValues(t *testing.T) {
 	if got := configMillisOrSeconds(10).Seconds(); got != 10 {
 		t.Fatalf("duration for small value = %v seconds, want 10", got)

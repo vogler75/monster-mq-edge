@@ -151,3 +151,183 @@ func TestMqttBridgeOutboundAndInbound(t *testing.T) {
 		t.Fatal("inbound bridge did not deliver to B")
 	}
 }
+
+func TestMqttBridgeRetainedMessages(t *testing.T) {
+	// Broker A (Remote)
+	dbA := filepath.Join(t.TempDir(), "a_ret.db")
+	cfgA := config.Default()
+	cfgA.NodeID = "broker-a-ret"
+	cfgA.TCP.Port = 24011
+	cfgA.GraphQL.Enabled = false
+	cfgA.Metrics.Enabled = false
+	cfgA.SQLite.Path = dbA
+	srvA, err := broker.New(cfgA, slog.New(slog.DiscardHandler), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = srvA.Serve() }()
+	defer srvA.Close()
+	time.Sleep(100 * time.Millisecond)
+
+	// Publish a retained message to A *before* bridge connects
+	pubA := mqtt.NewClient(mqttOpts(24011, "pubA-init"))
+	if tok := pubA.Connect(); tok.WaitTimeout(2*time.Second) && tok.Error() != nil {
+		t.Fatal(tok.Error())
+	}
+	if tok := pubA.Publish("remote/retained/sensor", 1, true, "remote-retained-data"); tok.WaitTimeout(2*time.Second) && tok.Error() != nil {
+		t.Fatal(tok.Error())
+	}
+	pubA.Disconnect(100)
+
+	// Broker B (Local with Bridge)
+	dbB := filepath.Join(t.TempDir(), "b_ret.db")
+	bootDB, _ := sqlite.Open(dbB)
+	dcs := sqlite.NewDeviceConfigStore(bootDB)
+	if err := dcs.EnsureTable(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	bridgeCfg := map[string]any{
+		"brokerUrl":    "tcp://localhost:24011",
+		"clientId":     "bridge-ret-b-to-a",
+		"cleanSession": true,
+		"addresses": []map[string]any{
+			{"mode": "SUBSCRIBE", "remoteTopic": "remote/retained/#", "localTopic": "local/retained", "qos": 1, "retain": false},
+		},
+	}
+	cfgJSON, _ := json.Marshal(bridgeCfg)
+	if err := dcs.Save(context.Background(), stores.DeviceConfig{
+		Name: "bridge-ret", Namespace: "bridge", NodeID: "broker-b-ret", Type: "MQTT_CLIENT",
+		Enabled: true, Config: string(cfgJSON),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	bootDB.Close()
+
+	cfgB := config.Default()
+	cfgB.NodeID = "broker-b-ret"
+	cfgB.TCP.Port = 24012
+	cfgB.GraphQL.Enabled = false
+	cfgB.Metrics.Enabled = false
+	cfgB.SQLite.Path = dbB
+	cfgB.Features.MqttClient = true
+	srvB, err := broker.New(cfgB, slog.New(slog.DiscardHandler), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = srvB.Serve() }()
+	defer srvB.Close()
+	time.Sleep(1000 * time.Millisecond) // wait for bridge to connect and sync retained messages
+
+	// Connect a new subscriber to Broker B and subscribe to local/retained/#
+	subB := mqtt.NewClient(mqttOpts(24012, "subB-late"))
+	if tok := subB.Connect(); tok.WaitTimeout(2*time.Second) && tok.Error() != nil {
+		t.Fatal(tok.Error())
+	}
+	defer subB.Disconnect(100)
+
+	type msgInfo struct {
+		topic    string
+		payload  string
+		retained bool
+	}
+	gotCh := make(chan msgInfo, 1)
+	if tok := subB.Subscribe("local/retained/#", 1, func(_ mqtt.Client, m mqtt.Message) {
+		gotCh <- msgInfo{
+			topic:    m.Topic(),
+			payload:  string(m.Payload()),
+			retained: m.Retained(),
+		}
+	}); tok.WaitTimeout(2*time.Second) && tok.Error() != nil {
+		t.Fatal(tok.Error())
+	}
+
+	select {
+	case info := <-gotCh:
+		t.Logf("Received on B: topic=%s payload=%s retained=%v", info.topic, info.payload, info.retained)
+		if info.payload != "remote-retained-data" {
+			t.Fatalf("expected payload 'remote-retained-data', got %q", info.payload)
+		}
+		if !info.retained {
+			t.Fatalf("expected retained=true, got retained=false")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("subscriber on B did not receive retained message from bridge")
+	}
+
+	// ---------------------------------------------------------
+	// Test Outbound Retained Message:
+	// Publish a retained message on Broker B -> Bridge should forward to A with Retain=true.
+	// ---------------------------------------------------------
+	// Update bridge config to include outbound PUBLISH address with retain: true
+	dcsB, _ := sqlite.Open(dbB)
+	dcsStoreB := sqlite.NewDeviceConfigStore(dcsB)
+	bridgeCfgOut := map[string]any{
+		"brokerUrl":    "tcp://localhost:24011",
+		"clientId":     "bridge-ret-b-to-a",
+		"cleanSession": true,
+		"addresses": []map[string]any{
+			{"mode": "PUBLISH", "localTopic": "local/out/#", "remoteTopic": "remote/out", "qos": 1, "retain": true},
+		},
+	}
+	cfgJSONOut, _ := json.Marshal(bridgeCfgOut)
+	_ = dcsStoreB.Save(context.Background(), stores.DeviceConfig{
+		Name: "bridge-ret", Namespace: "bridge", NodeID: "broker-b-ret", Type: "MQTT_CLIENT",
+		Enabled: true, Config: string(cfgJSONOut),
+	})
+	dcsB.Close()
+
+	// Restart Broker B with updated bridge config
+	srvB.Close()
+	time.Sleep(200 * time.Millisecond)
+
+	srvB2, err := broker.New(cfgB, slog.New(slog.DiscardHandler), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = srvB2.Serve() }()
+	defer srvB2.Close()
+	time.Sleep(1000 * time.Millisecond)
+
+	// Publish retained message on Broker B
+	pubB := mqtt.NewClient(mqttOpts(24012, "pubB-out-ret"))
+	if tok := pubB.Connect(); tok.WaitTimeout(2*time.Second) && tok.Error() != nil {
+		t.Fatal(tok.Error())
+	}
+	if tok := pubB.Publish("local/out/sensor1", 1, true, "local-retained-data"); tok.WaitTimeout(2*time.Second) && tok.Error() != nil {
+		t.Fatal(tok.Error())
+	}
+	pubB.Disconnect(100)
+	time.Sleep(500 * time.Millisecond)
+
+	// Connect a new subscriber to Broker A and verify it receives the retained message
+	subA := mqtt.NewClient(mqttOpts(24011, "subA-late"))
+	if tok := subA.Connect(); tok.WaitTimeout(2*time.Second) && tok.Error() != nil {
+		t.Fatal(tok.Error())
+	}
+	defer subA.Disconnect(100)
+
+	gotOutCh := make(chan msgInfo, 1)
+	if tok := subA.Subscribe("remote/out/#", 1, func(_ mqtt.Client, m mqtt.Message) {
+		gotOutCh <- msgInfo{
+			topic:    m.Topic(),
+			payload:  string(m.Payload()),
+			retained: m.Retained(),
+		}
+	}); tok.WaitTimeout(2*time.Second) && tok.Error() != nil {
+		t.Fatal(tok.Error())
+	}
+
+	select {
+	case info := <-gotOutCh:
+		t.Logf("Received on A: topic=%s payload=%s retained=%v", info.topic, info.payload, info.retained)
+		if info.payload != "local-retained-data" {
+			t.Fatalf("expected payload 'local-retained-data', got %q", info.payload)
+		}
+		if !info.retained {
+			t.Fatalf("expected retained=true on remote broker A, got retained=false")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("subscriber on A did not receive forwarded retained message")
+	}
+}
+
