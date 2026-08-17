@@ -59,6 +59,9 @@ func Build(ctx context.Context, cfg *config.Config) (*stores.Storage, *DB, error
 	if cfg.MetricsStore() == config.StoreMongoDB {
 		metricsStore = &MetricsStore{db: db}
 	}
+	
+	datacatalog := NewDataCatalogStore(db.client)
+	
 	toEnsure := []interface{ EnsureTable(context.Context) error }{retained, sessions, queue, users, archives, devices}
 	if metricsStore != nil {
 		toEnsure = append(toEnsure, metricsStore.(interface{ EnsureTable(context.Context) error }))
@@ -69,11 +72,16 @@ func Build(ctx context.Context, cfg *config.Config) (*stores.Storage, *DB, error
 			return nil, nil, err
 		}
 	}
+	if err := datacatalog.Initialize(); err != nil {
+		db.Close()
+		return nil, nil, err
+	}
 	return &stores.Storage{
 		Backend:  config.StoreMongoDB,
 		Sessions: sessions, Subscriptions: sessions,
 		Queue: queue, Retained: retained, Users: users,
 		ArchiveConfig: archives, DeviceConfig: devices, Metrics: metricsStore,
+		DataCatalog: datacatalog,
 		Closer: db.Close,
 	}, db, nil
 }

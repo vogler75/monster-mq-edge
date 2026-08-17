@@ -56,6 +56,8 @@ func Build(ctx context.Context, cfg *config.Config) (*stores.Storage, *DB, error
 	}
 	queue := NewQueueStore(queueDB, 30*time.Second)
 
+	datacatalog := NewDataCatalogStore(db)
+
 	toEnsure := []interface{ EnsureTable(context.Context) error }{retained, users, archives, devices, sessions, queue}
 	if metrics != nil {
 		toEnsure = append(toEnsure, metrics.(interface{ EnsureTable(context.Context) error }))
@@ -65,6 +67,11 @@ func Build(ctx context.Context, cfg *config.Config) (*stores.Storage, *DB, error
 			_ = closeAll(closers)
 			return nil, nil, err
 		}
+	}
+	
+	if err := datacatalog.Initialize(); err != nil {
+		_ = closeAll(closers)
+		return nil, nil, err
 	}
 
 	storage := &stores.Storage{
@@ -77,6 +84,7 @@ func Build(ctx context.Context, cfg *config.Config) (*stores.Storage, *DB, error
 		ArchiveConfig: archives,
 		DeviceConfig:  devices,
 		Metrics:       metrics,
+		DataCatalog:   datacatalog,
 		Closer:        func() error { return closeAll(closers) },
 	}
 	return storage, db, nil

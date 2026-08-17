@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+
+	"monstermq.io/edge/internal/stores"
 )
 
 type ACLRuleInfo struct {
@@ -226,6 +228,40 @@ type DailyCount struct {
 type DashboardFile struct {
 	Path      string `json:"path"`
 	SizeBytes int64  `json:"sizeBytes"`
+}
+
+type DataCatalogInstanceInput struct {
+	ID         string         `json:"id"`
+	TypeID     string         `json:"typeId"`
+	Name       string         `json:"name"`
+	BaseTopic  string         `json:"baseTopic"`
+	Properties map[string]any `json:"properties"`
+}
+
+type DataCatalogMutations struct {
+	SaveType       *stores.DataCatalogType         `json:"saveType"`
+	DeleteType     bool                            `json:"deleteType"`
+	SaveInstance   *stores.DataCatalogInstance     `json:"saveInstance"`
+	DeleteInstance bool                            `json:"deleteInstance"`
+	SaveRelation   *stores.DataCatalogRelation     `json:"saveRelation"`
+	DeleteRelation bool                            `json:"deleteRelation"`
+	ExportCatalog  map[string]any                  `json:"exportCatalog"`
+	ImportCatalog  *stores.ImportDataCatalogResult `json:"importCatalog"`
+}
+
+type DataCatalogRelationInput struct {
+	SourceID     string `json:"sourceId"`
+	TargetID     string `json:"targetId"`
+	RelationType string `json:"relationType"`
+}
+
+type DataCatalogTypeInput struct {
+	ID           string         `json:"id"`
+	Namespace    string         `json:"namespace"`
+	Name         string         `json:"name"`
+	Description  *string        `json:"description,omitempty"`
+	Structure    map[string]any `json:"structure"`
+	TopicPattern *string        `json:"topicPattern,omitempty"`
 }
 
 type DatabaseConnectionInfo struct {

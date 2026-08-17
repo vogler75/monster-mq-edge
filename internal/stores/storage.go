@@ -12,13 +12,14 @@ import (
 type Storage struct {
 	Backend       config.StoreType
 	Sessions      SessionStore
-	Subscriptions SessionStore // sessions and subscriptions share one backend table family
+	Subscriptions SessionStore // Typically same implementation as Sessions
 	Queue         QueueStore
 	Retained      MessageStore
 	Users         UserStore
 	ArchiveConfig ArchiveConfigStore
 	DeviceConfig  DeviceConfigStore
 	Metrics       MetricsStore
+	DataCatalog   IDataCatalogStore
 
 	// Closer is invoked on shutdown to release the underlying database handles.
 	Closer func() error
