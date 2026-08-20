@@ -116,19 +116,6 @@ type BrokerConfig struct {
 	ConfigStoreType       string `json:"configStoreType"`
 	UserManagementEnabled bool   `json:"userManagementEnabled"`
 	AnonymousEnabled      bool   `json:"anonymousEnabled"`
-	McpEnabled            bool   `json:"mcpEnabled"`
-	McpPort               int    `json:"mcpPort"`
-	PrometheusEnabled     bool   `json:"prometheusEnabled"`
-	PrometheusPort        int    `json:"prometheusPort"`
-	I3xEnabled            bool   `json:"i3xEnabled"`
-	I3xPort               int    `json:"i3xPort"`
-	GraphqlEnabled        bool   `json:"graphqlEnabled"`
-	GraphqlPort           int    `json:"graphqlPort"`
-	MetricsEnabled        bool   `json:"metricsEnabled"`
-	HmiEnabled            bool   `json:"hmiEnabled"`
-	GenAiEnabled          bool   `json:"genAiEnabled"`
-	GenAiProvider         string `json:"genAiProvider"`
-	GenAiModel            string `json:"genAiModel"`
 	PostgresURL           string `json:"postgresUrl"`
 	PostgresUser          string `json:"postgresUser"`
 	CrateDbURL            string `json:"crateDbUrl"`

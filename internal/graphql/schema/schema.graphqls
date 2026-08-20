@@ -87,19 +87,6 @@ type BrokerConfig {
     configStoreType: String!
     userManagementEnabled: Boolean!
     anonymousEnabled: Boolean!
-    mcpEnabled: Boolean!
-    mcpPort: Int!
-    prometheusEnabled: Boolean!
-    prometheusPort: Int!
-    i3xEnabled: Boolean!
-    i3xPort: Int!
-    graphqlEnabled: Boolean!
-    graphqlPort: Int!
-    metricsEnabled: Boolean!
-    hmiEnabled: Boolean!
-    genAiEnabled: Boolean!
-    genAiProvider: String!
-    genAiModel: String!
     postgresUrl: String!
     postgresUser: String!
     crateDbUrl: String!
