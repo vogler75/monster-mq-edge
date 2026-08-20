@@ -1566,17 +1566,19 @@ const (
 	WinCCUaMessageFormatJSONIso  WinCCUaMessageFormat = "JSON_ISO"
 	WinCCUaMessageFormatJSONMs   WinCCUaMessageFormat = "JSON_MS"
 	WinCCUaMessageFormatRawValue WinCCUaMessageFormat = "RAW_VALUE"
+	WinCCUaMessageFormatRawJSON  WinCCUaMessageFormat = "RAW_JSON"
 )
 
 var AllWinCCUaMessageFormat = []WinCCUaMessageFormat{
 	WinCCUaMessageFormatJSONIso,
 	WinCCUaMessageFormatJSONMs,
 	WinCCUaMessageFormatRawValue,
+	WinCCUaMessageFormatRawJSON,
 }
 
 func (e WinCCUaMessageFormat) IsValid() bool {
 	switch e {
-	case WinCCUaMessageFormatJSONIso, WinCCUaMessageFormatJSONMs, WinCCUaMessageFormatRawValue:
+	case WinCCUaMessageFormatJSONIso, WinCCUaMessageFormatJSONMs, WinCCUaMessageFormatRawValue, WinCCUaMessageFormatRawJSON:
 		return true
 	}
 	return false

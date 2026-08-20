@@ -52,11 +52,26 @@ func (p *publisher) resolveAlarmTopic(addressTopic, alarmName string) string {
 
 // formatTagPayload builds the published MQTT payload for one tag value.
 //
-//   FORMAT_JSON_ISO  → {"value":<v>,"time":"<ISO>",[ "quality":<q> ]}
-//   FORMAT_JSON_MS   → {"value":<v>,"time":<ms>,[ "quality":<q> ]}
+//   FORMAT_JSON_ISO  → {"value":<v>,"time":"<ISO>",[ "quality":<q>, "qualityCode":<qc> ]}
+//   FORMAT_JSON_MS   → {"value":<v>,"time":<ms>,[ "quality":<q>, "qualityCode":<qc> ]}
 //   FORMAT_RAW_VALUE → string(value)
-func (p *publisher) formatTagPayload(value any, timestamp string, quality map[string]any) []byte {
+//   FORMAT_RAW_JSON  → raw tag object from WinCC (1:1)
+func (p *publisher) formatTagPayload(value any, timestamp string, quality map[string]any, rawTag map[string]any) []byte {
 	switch p.messageFormat {
+	case FormatRawJSON:
+		if rawTag != nil {
+			out, _ := json.Marshal(rawTag)
+			return out
+		}
+		obj := map[string]any{"value": value}
+		if timestamp != "" {
+			obj["time"] = timestamp
+		}
+		for k, v := range quality {
+			obj[k] = v
+		}
+		out, _ := json.Marshal(obj)
+		return out
 	case FormatJSONMS:
 		ms := time.Now().UnixMilli()
 		if timestamp != "" {
@@ -65,8 +80,8 @@ func (p *publisher) formatTagPayload(value any, timestamp string, quality map[st
 			}
 		}
 		obj := map[string]any{"value": value, "time": ms}
-		if quality != nil {
-			obj["quality"] = quality
+		for k, v := range quality {
+			obj[k] = v
 		}
 		out, _ := json.Marshal(obj)
 		return out
@@ -78,8 +93,8 @@ func (p *publisher) formatTagPayload(value any, timestamp string, quality map[st
 		if timestamp != "" {
 			obj["time"] = timestamp
 		}
-		if quality != nil {
-			obj["quality"] = quality
+		for k, v := range quality {
+			obj[k] = v
 		}
 		out, _ := json.Marshal(obj)
 		return out
@@ -110,11 +125,19 @@ func joinTopic(parts ...string) string {
 	return strings.Join(out, "/")
 }
 
-// parseTimestamp parses an ISO 8601 timestamp. The Java broker uses
-// Instant.parse, which accepts RFC3339 with optional fractional seconds and Z.
+// parseTimestamp parses an ISO 8601 or WinCC format timestamp.
 func parseTimestamp(s string) (time.Time, error) {
 	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
 		return t, nil
 	}
-	return time.Parse(time.RFC3339, s)
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t, nil
+	}
+	if t, err := time.Parse("2006-01-02 15:04:05.999999999", s); err == nil {
+		return t, nil
+	}
+	if t, err := time.Parse("2006-01-02 15:04:05", s); err == nil {
+		return t, nil
+	}
+	return time.Time{}, fmt.Errorf("unknown timestamp format: %s", s)
 }

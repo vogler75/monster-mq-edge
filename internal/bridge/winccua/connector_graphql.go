@@ -463,7 +463,7 @@ func (g *graphqlConnector) handleTagValuesData(data map[string]any, addr Address
 	if q, ok := valueObj["quality"].(map[string]any); ok {
 		quality = q
 	}
-	g.publishTagValue(addr, tagName, value, timestamp, quality)
+	g.publishTagValue(addr, tagName, value, timestamp, quality, tv)
 }
 
 func (g *graphqlConnector) handleActiveAlarmsData(data map[string]any, addr Address) {
@@ -474,12 +474,12 @@ func (g *graphqlConnector) handleActiveAlarmsData(data map[string]any, addr Addr
 	g.publishAlarm(addr, alarm)
 }
 
-func (g *graphqlConnector) publishTagValue(addr Address, tagName string, value any, timestamp string, quality map[string]any) {
+func (g *graphqlConnector) publishTagValue(addr Address, tagName string, value any, timestamp string, quality map[string]any, rawTag map[string]any) {
 	if !addr.IncludeQuality {
 		quality = nil
 	}
 	topic := g.pub.resolveTagTopic(addr.Topic, tagName)
-	payload := g.pub.formatTagPayload(value, timestamp, quality)
+	payload := g.pub.formatTagPayload(value, timestamp, quality, rawTag)
 	if err := g.publish(topic, payload, addr.Retained, 0); err != nil {
 		g.logger.Warn("winccua publish failed", "topic", topic, "err", err)
 		return
