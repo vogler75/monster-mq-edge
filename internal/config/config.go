@@ -131,6 +131,16 @@ type HMIConfig struct {
 	MountPath string `yaml:"MountPath"`
 }
 
+type RedfishConfig struct {
+	Enabled          bool   `yaml:"Enabled"`
+	Port             int    `yaml:"Port"`
+	MountPath        string `yaml:"MountPath"`
+	DefaultChassisId string `yaml:"DefaultChassisId"`
+	DefaultSystemId  string `yaml:"DefaultSystemId"`
+	DefaultManagerId string `yaml:"DefaultManagerId"`
+	AnonymousEnabled bool   `yaml:"AnonymousEnabled"`
+}
+
 // FeaturesConfig is a flat set of feature toggles, mirroring the Features
 // section in the Java monster-mq broker. Each field enables/disables a
 // subsystem at startup. Add new flags here as they come online.
@@ -141,6 +151,7 @@ type FeaturesConfig struct {
 	DeviceImportExport bool `yaml:"DeviceImportExport"`
 	Mcp                bool `yaml:"Mcp"`
 	Hmi                bool `yaml:"Hmi"`
+	Redfish            bool `yaml:"Redfish"`
 }
 
 type Config struct {
@@ -169,6 +180,7 @@ type Config struct {
 	Features       FeaturesConfig       `yaml:"Features"`
 	HostMonitoring HostMonitoringConfig `yaml:"HostMonitoring"`
 	HMI            HMIConfig            `yaml:"HMI"`
+	Redfish        RedfishConfig        `yaml:"Redfish"`
 
 	// QueuedMessagesEnabled selects how messages for offline persistent (clean=false)
 	// sessions are held until the client reconnects.
@@ -202,7 +214,7 @@ func Default() *Config {
 		Logging:               LoggingConfig{Level: "INFO", MqttSyslogEnabled: false, RingBufferSize: 1000},
 		GraphQL:               GraphQLConfig{Enabled: true, Port: 4000},
 		MCP:                   MCPConfig{Enabled: false, Port: 3000},
-		Features:              FeaturesConfig{MqttClient: false, WinCCUa: false, WinCCOa: false, DeviceImportExport: false, Mcp: false, Hmi: false},
+		Features:              FeaturesConfig{MqttClient: false, WinCCUa: false, WinCCOa: false, DeviceImportExport: false, Mcp: false, Hmi: false, Redfish: false},
 		HostMonitoring: HostMonitoringConfig{
 			Enabled:         false,
 			BaseTopic:       "nodes/{NodeId}/host",
@@ -213,6 +225,15 @@ func Default() *Config {
 			Enabled:   false,
 			Path:      "./data/hmi",
 			MountPath: "/hmi",
+		},
+		Redfish: RedfishConfig{
+			Enabled:          false,
+			Port:             8000,
+			MountPath:        "/redfish/v1",
+			DefaultChassisId: "EdgeNode",
+			DefaultSystemId:  "edge-node",
+			DefaultManagerId: "monstermq-edge",
+			AnonymousEnabled: true,
 		},
 		QueuedMessagesEnabled: true,
 		MaxQueueMessages:      nil,

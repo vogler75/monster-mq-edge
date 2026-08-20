@@ -65,6 +65,16 @@ Features:
   DeviceImportExport: true
   Mcp: false
   Hmi: false
+  Redfish: false
+
+Redfish:
+  Enabled: false
+  Port: 8000
+  MountPath: "/redfish/v1"
+  DefaultChassisId: "EdgeNode"
+  DefaultSystemId: "edge-node"
+  DefaultManagerId: "monstermq-edge"
+  AnonymousEnabled: true
 
 HostMonitoring:
   Enabled: false

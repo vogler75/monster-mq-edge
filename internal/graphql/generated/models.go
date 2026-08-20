@@ -509,6 +509,69 @@ type PurgeResult struct {
 type Query struct {
 }
 
+type RedfishMapping struct {
+	Name            string                `json:"name"`
+	NodeID          string                `json:"nodeId"`
+	Enabled         bool                  `json:"enabled"`
+	Config          *RedfishMappingConfig `json:"config"`
+	CreatedAt       string                `json:"createdAt"`
+	UpdatedAt       string                `json:"updatedAt"`
+	IsOnCurrentNode bool                  `json:"isOnCurrentNode"`
+}
+
+type RedfishMappingConfig struct {
+	TopicPrefix         string             `json:"topicPrefix"`
+	TopicFilters        []string           `json:"topicFilters"`
+	ChassisID           *string            `json:"chassisId,omitempty"`
+	DefaultReadingType  *string            `json:"defaultReadingType,omitempty"`
+	DefaultReadingUnits *string            `json:"defaultReadingUnits,omitempty"`
+	Thresholds          *RedfishThresholds `json:"thresholds,omitempty"`
+	JSONSchema          map[string]any     `json:"jsonSchema"`
+}
+
+type RedfishMappingConfigInput struct {
+	TopicPrefix         *string                 `json:"topicPrefix,omitempty"`
+	TopicFilters        []string                `json:"topicFilters"`
+	ChassisID           *string                 `json:"chassisId,omitempty"`
+	DefaultReadingType  *string                 `json:"defaultReadingType,omitempty"`
+	DefaultReadingUnits *string                 `json:"defaultReadingUnits,omitempty"`
+	Thresholds          *RedfishThresholdsInput `json:"thresholds,omitempty"`
+	JSONSchema          map[string]any          `json:"jsonSchema"`
+}
+
+type RedfishResult struct {
+	Redfish *RedfishMapping `json:"redfish,omitempty"`
+	Success bool            `json:"success"`
+	Message *string         `json:"message,omitempty"`
+}
+
+type RedfishSensorStatus struct {
+	ID           string  `json:"id"`
+	Name         string  `json:"name"`
+	ChassisID    string  `json:"chassisId"`
+	Topic        string  `json:"topic"`
+	Reading      float64 `json:"reading"`
+	ReadingType  string  `json:"readingType"`
+	ReadingUnits string  `json:"readingUnits"`
+	Health       string  `json:"health"`
+	State        string  `json:"state"`
+	LastUpdated  string  `json:"lastUpdated"`
+}
+
+type RedfishThresholds struct {
+	UpperCaution  *float64 `json:"upperCaution,omitempty"`
+	UpperCritical *float64 `json:"upperCritical,omitempty"`
+	LowerCaution  *float64 `json:"lowerCaution,omitempty"`
+	LowerCritical *float64 `json:"lowerCritical,omitempty"`
+}
+
+type RedfishThresholdsInput struct {
+	UpperCaution  *float64 `json:"upperCaution,omitempty"`
+	UpperCritical *float64 `json:"upperCritical,omitempty"`
+	LowerCaution  *float64 `json:"lowerCaution,omitempty"`
+	LowerCritical *float64 `json:"lowerCritical,omitempty"`
+}
+
 type RetainedMessage struct {
 	Topic                  string          `json:"topic"`
 	Payload                string          `json:"payload"`

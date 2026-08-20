@@ -24,6 +24,7 @@ import (
 	"monstermq.io/edge/internal/mcp"
 	"monstermq.io/edge/internal/metrics"
 	"monstermq.io/edge/internal/pubsub"
+	"monstermq.io/edge/internal/redfish"
 	"monstermq.io/edge/internal/stores"
 	storememory "monstermq.io/edge/internal/stores/memory"
 	storemongo "monstermq.io/edge/internal/stores/mongodb"
@@ -48,6 +49,7 @@ type Server struct {
 	winCCOa     *winccoa.Manager
 	gqlSrv      *gql.Server
 	mcpSrv      *mcp.Server
+	redfishMgr  *redfish.Manager
 	hostMonitor *hostinfo.Collector
 	metricsCtx  context.Context
 	metricsStop context.CancelFunc
@@ -252,11 +254,24 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 		}
 	}
 
+	// 7e. Redfish Manager
+	var redfishMgr *redfish.Manager
+	var lastVal stores.MessageStore
+	if defGroup := archives.Get("Default"); defGroup != nil {
+		lastVal = defGroup.LastValue()
+	}
+	if lastVal == nil && storage.Retained != nil {
+		lastVal = storage.Retained
+	}
+	if cfg.Redfish.Enabled || cfg.Features.Redfish {
+		redfishMgr = redfish.NewManager(cfg, storage.DeviceConfig, bus, lastVal, publishFn, cfg.NodeID, logger)
+	}
+
 	// 8. GraphQL server (HTTP + WebSocket)
 	var gqlSrv *gql.Server
 	if cfg.GraphQL.Enabled {
-		resolver := resolvers.New(cfg, storage, bus, archives, bridges, winCCUa, winCCOa, authCache, collector, logBus, logger, server, publishFn, hmiMgr)
-		gqlSrv = gql.NewServer(cfg, resolver, hmiMgr, logger)
+		resolver := resolvers.New(cfg, storage, bus, archives, bridges, winCCUa, winCCOa, authCache, collector, logBus, logger, server, publishFn, hmiMgr, redfishMgr)
+		gqlSrv = gql.NewServer(cfg, resolver, hmiMgr, redfishMgr, logger)
 	}
 
 	// 9. MCP server (Streamable HTTP / SSE)
@@ -269,7 +284,7 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 		cfg: cfg, logger: logger, mochi: server,
 		storage: storage, bus: bus, subs: subs, archives: archives, authCache: authCache,
 		collector: collector, bridges: bridges, winCCUa: winCCUa, winCCOa: winCCOa, gqlSrv: gqlSrv,
-		mcpSrv: mcpSrv, hostMonitor: hostMonitor,
+		mcpSrv: mcpSrv, redfishMgr: redfishMgr, hostMonitor: hostMonitor,
 	}, nil
 }
 
@@ -395,6 +410,11 @@ func (s *Server) Serve() error {
 	if s.hostMonitor != nil {
 		s.hostMonitor.Start(context.Background())
 	}
+	if s.redfishMgr != nil {
+		if err := s.redfishMgr.Start(context.Background()); err != nil {
+			s.logger.Warn("redfish start error", "err", err)
+		}
+	}
 	if s.gqlSrv != nil {
 		go func() {
 			if err := s.gqlSrv.Start(); err != nil {
@@ -424,6 +444,11 @@ func (s *Server) Close() error {
 	}
 	if s.hostMonitor != nil {
 		s.hostMonitor.Stop()
+	}
+	if s.redfishMgr != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = s.redfishMgr.Stop(ctx)
 	}
 	if s.metricsStop != nil {
 		s.metricsStop()

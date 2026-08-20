@@ -109,6 +109,9 @@ type MutationResolver interface {
 	ArchiveGroup(ctx context.Context) (*ArchiveGroupMutations, error)
 	MqttClient(ctx context.Context) (*MqttClientMutations, error)
 	Hmi(ctx context.Context) (*HmiMutations, error)
+	SaveRedfishMapping(ctx context.Context, name string, config RedfishMappingConfigInput, enabled *bool) (*RedfishResult, error)
+	DeleteRedfishMapping(ctx context.Context, name string) (bool, error)
+	ToggleRedfishMapping(ctx context.Context, name string, enabled bool) (*RedfishResult, error)
 	WinCCOaDevice(ctx context.Context) (*WinCCOaDeviceMutations, error)
 	WinCCUaDevice(ctx context.Context) (*WinCCUaDeviceMutations, error)
 }
@@ -141,6 +144,9 @@ type QueryResolver interface {
 	Hmi(ctx context.Context, name string) (*Hmi, error)
 	HmiFiles(ctx context.Context, name string) ([]*DashboardFile, error)
 	ExportHmiZip(ctx context.Context, name string) (string, error)
+	RedfishMappings(ctx context.Context) ([]*RedfishMapping, error)
+	RedfishMapping(ctx context.Context, name string) (*RedfishMapping, error)
+	RedfishLiveSensors(ctx context.Context, chassisID *string) ([]*RedfishSensorStatus, error)
 	WinCCOaClients(ctx context.Context, name *string, node *string) ([]*WinCCOaClient, error)
 	WinCCUaClients(ctx context.Context, name *string, node *string) ([]*WinCCUaClient, error)
 }
@@ -238,6 +244,8 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 		ec.unmarshalInputMqttClientConnectionConfigInput,
 		ec.unmarshalInputMqttClientInput,
 		ec.unmarshalInputPublishInput,
+		ec.unmarshalInputRedfishMappingConfigInput,
+		ec.unmarshalInputRedfishThresholdsInput,
 		ec.unmarshalInputSetPasswordInput,
 		ec.unmarshalInputUpdateAclRuleInput,
 		ec.unmarshalInputUpdateArchiveGroupInput,
@@ -344,6 +352,83 @@ func newExecutionContext(
 }
 
 var sources = []*ast.Source{
+	{Name: "../schema/redfish.graphqls", Input: `# Redfish API Gateway Configuration & Status Schema
+
+type RedfishThresholds {
+    upperCaution: Float
+    upperCritical: Float
+    lowerCaution: Float
+    lowerCritical: Float
+}
+
+type RedfishMappingConfig {
+    topicPrefix: String!
+    topicFilters: [String!]!
+    chassisId: String
+    defaultReadingType: String
+    defaultReadingUnits: String
+    thresholds: RedfishThresholds
+    jsonSchema: JSON!
+}
+
+type RedfishMapping {
+    name: String!
+    nodeId: String!
+    enabled: Boolean!
+    config: RedfishMappingConfig!
+    createdAt: String!
+    updatedAt: String!
+    isOnCurrentNode: Boolean!
+}
+
+type RedfishSensorStatus {
+    id: String!
+    name: String!
+    chassisId: String!
+    topic: String!
+    reading: Float!
+    readingType: String!
+    readingUnits: String!
+    health: String!
+    state: String!
+    lastUpdated: String!
+}
+
+type RedfishResult {
+    redfish: RedfishMapping
+    success: Boolean!
+    message: String
+}
+
+input RedfishThresholdsInput {
+    upperCaution: Float
+    upperCritical: Float
+    lowerCaution: Float
+    lowerCritical: Float
+}
+
+input RedfishMappingConfigInput {
+    topicPrefix: String
+    topicFilters: [String!]!
+    chassisId: String
+    defaultReadingType: String
+    defaultReadingUnits: String
+    thresholds: RedfishThresholdsInput
+    jsonSchema: JSON!
+}
+
+extend type Query {
+    redfishMappings: [RedfishMapping!]!
+    redfishMapping(name: String!): RedfishMapping
+    redfishLiveSensors(chassisId: String): [RedfishSensorStatus!]!
+}
+
+extend type Mutation {
+    saveRedfishMapping(name: String!, config: RedfishMappingConfigInput!, enabled: Boolean): RedfishResult!
+    deleteRedfishMapping(name: String!): Boolean!
+    toggleRedfishMapping(name: String!, enabled: Boolean!): RedfishResult!
+}
+`, BuiltIn: false},
 	{Name: "../schema/schema.graphqls", Input: `scalar Long
 scalar JSON
 
@@ -1903,6 +1988,17 @@ func (ec *executionContext) field_MqttClient_metricsHistory_args(ctx context.Con
 	return args, nil
 }
 
+func (ec *executionContext) field_Mutation_deleteRedfishMapping_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["name"] = arg0
+	return args, nil
+}
+
 func (ec *executionContext) field_Mutation_importDevices_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
@@ -1960,6 +2056,43 @@ func (ec *executionContext) field_Mutation_purgeQueuedMessages_args(ctx context.
 		return nil, err
 	}
 	args["clientId"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_saveRedfishMapping_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["name"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "config", ec.unmarshalNRedfishMappingConfigInput2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRedfishMappingConfigInput)
+	if err != nil {
+		return nil, err
+	}
+	args["config"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "enabled", ec.unmarshalOBoolean2ᚖbool)
+	if err != nil {
+		return nil, err
+	}
+	args["enabled"] = arg2
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_toggleRedfishMapping_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["name"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "enabled", ec.unmarshalNBoolean2bool)
+	if err != nil {
+		return nil, err
+	}
+	args["enabled"] = arg1
 	return args, nil
 }
 
@@ -2289,6 +2422,28 @@ func (ec *executionContext) field_Query_mqttClients_args(ctx context.Context, ra
 		return nil, err
 	}
 	args["node"] = arg1
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_redfishLiveSensors_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "chassisId", ec.unmarshalOString2ᚖstring)
+	if err != nil {
+		return nil, err
+	}
+	args["chassisId"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_redfishMapping_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["name"] = arg0
 	return args, nil
 }
 
@@ -12082,6 +12237,145 @@ func (ec *executionContext) fieldContext_Mutation_hmi(_ context.Context, field g
 	return fc, nil
 }
 
+func (ec *executionContext) _Mutation_saveRedfishMapping(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Mutation_saveRedfishMapping,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().SaveRedfishMapping(ctx, fc.Args["name"].(string), fc.Args["config"].(RedfishMappingConfigInput), fc.Args["enabled"].(*bool))
+		},
+		nil,
+		ec.marshalNRedfishResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRedfishResult,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Mutation_saveRedfishMapping(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "redfish":
+				return ec.fieldContext_RedfishResult_redfish(ctx, field)
+			case "success":
+				return ec.fieldContext_RedfishResult_success(ctx, field)
+			case "message":
+				return ec.fieldContext_RedfishResult_message(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type RedfishResult", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_saveRedfishMapping_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_deleteRedfishMapping(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Mutation_deleteRedfishMapping,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().DeleteRedfishMapping(ctx, fc.Args["name"].(string))
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Mutation_deleteRedfishMapping(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_deleteRedfishMapping_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_toggleRedfishMapping(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Mutation_toggleRedfishMapping,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().ToggleRedfishMapping(ctx, fc.Args["name"].(string), fc.Args["enabled"].(bool))
+		},
+		nil,
+		ec.marshalNRedfishResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRedfishResult,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Mutation_toggleRedfishMapping(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "redfish":
+				return ec.fieldContext_RedfishResult_redfish(ctx, field)
+			case "success":
+				return ec.fieldContext_RedfishResult_success(ctx, field)
+			case "message":
+				return ec.fieldContext_RedfishResult_message(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type RedfishResult", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_toggleRedfishMapping_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Mutation_winCCOaDevice(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -14269,6 +14563,171 @@ func (ec *executionContext) fieldContext_Query_exportHmiZip(ctx context.Context,
 	return fc, nil
 }
 
+func (ec *executionContext) _Query_redfishMappings(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Query_redfishMappings,
+		func(ctx context.Context) (any, error) {
+			return ec.Resolvers.Query().RedfishMappings(ctx)
+		},
+		nil,
+		ec.marshalNRedfishMapping2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRedfishMappingᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Query_redfishMappings(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "name":
+				return ec.fieldContext_RedfishMapping_name(ctx, field)
+			case "nodeId":
+				return ec.fieldContext_RedfishMapping_nodeId(ctx, field)
+			case "enabled":
+				return ec.fieldContext_RedfishMapping_enabled(ctx, field)
+			case "config":
+				return ec.fieldContext_RedfishMapping_config(ctx, field)
+			case "createdAt":
+				return ec.fieldContext_RedfishMapping_createdAt(ctx, field)
+			case "updatedAt":
+				return ec.fieldContext_RedfishMapping_updatedAt(ctx, field)
+			case "isOnCurrentNode":
+				return ec.fieldContext_RedfishMapping_isOnCurrentNode(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type RedfishMapping", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_redfishMapping(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Query_redfishMapping,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().RedfishMapping(ctx, fc.Args["name"].(string))
+		},
+		nil,
+		ec.marshalORedfishMapping2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRedfishMapping,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Query_redfishMapping(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "name":
+				return ec.fieldContext_RedfishMapping_name(ctx, field)
+			case "nodeId":
+				return ec.fieldContext_RedfishMapping_nodeId(ctx, field)
+			case "enabled":
+				return ec.fieldContext_RedfishMapping_enabled(ctx, field)
+			case "config":
+				return ec.fieldContext_RedfishMapping_config(ctx, field)
+			case "createdAt":
+				return ec.fieldContext_RedfishMapping_createdAt(ctx, field)
+			case "updatedAt":
+				return ec.fieldContext_RedfishMapping_updatedAt(ctx, field)
+			case "isOnCurrentNode":
+				return ec.fieldContext_RedfishMapping_isOnCurrentNode(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type RedfishMapping", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_redfishMapping_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_redfishLiveSensors(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Query_redfishLiveSensors,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().RedfishLiveSensors(ctx, fc.Args["chassisId"].(*string))
+		},
+		nil,
+		ec.marshalNRedfishSensorStatus2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRedfishSensorStatusᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Query_redfishLiveSensors(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "id":
+				return ec.fieldContext_RedfishSensorStatus_id(ctx, field)
+			case "name":
+				return ec.fieldContext_RedfishSensorStatus_name(ctx, field)
+			case "chassisId":
+				return ec.fieldContext_RedfishSensorStatus_chassisId(ctx, field)
+			case "topic":
+				return ec.fieldContext_RedfishSensorStatus_topic(ctx, field)
+			case "reading":
+				return ec.fieldContext_RedfishSensorStatus_reading(ctx, field)
+			case "readingType":
+				return ec.fieldContext_RedfishSensorStatus_readingType(ctx, field)
+			case "readingUnits":
+				return ec.fieldContext_RedfishSensorStatus_readingUnits(ctx, field)
+			case "health":
+				return ec.fieldContext_RedfishSensorStatus_health(ctx, field)
+			case "state":
+				return ec.fieldContext_RedfishSensorStatus_state(ctx, field)
+			case "lastUpdated":
+				return ec.fieldContext_RedfishSensorStatus_lastUpdated(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type RedfishSensorStatus", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_redfishLiveSensors_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Query_winCCOaClients(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -14498,6 +14957,947 @@ func (ec *executionContext) fieldContext_Query___schema(_ context.Context, field
 				return ec.fieldContext___Schema_directives(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type __Schema", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RedfishMapping_name(ctx context.Context, field graphql.CollectedField, obj *RedfishMapping) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RedfishMapping_name,
+		func(ctx context.Context) (any, error) {
+			return obj.Name, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RedfishMapping_name(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RedfishMapping",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RedfishMapping_nodeId(ctx context.Context, field graphql.CollectedField, obj *RedfishMapping) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RedfishMapping_nodeId,
+		func(ctx context.Context) (any, error) {
+			return obj.NodeID, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RedfishMapping_nodeId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RedfishMapping",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RedfishMapping_enabled(ctx context.Context, field graphql.CollectedField, obj *RedfishMapping) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RedfishMapping_enabled,
+		func(ctx context.Context) (any, error) {
+			return obj.Enabled, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RedfishMapping_enabled(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RedfishMapping",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RedfishMapping_config(ctx context.Context, field graphql.CollectedField, obj *RedfishMapping) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RedfishMapping_config,
+		func(ctx context.Context) (any, error) {
+			return obj.Config, nil
+		},
+		nil,
+		ec.marshalNRedfishMappingConfig2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRedfishMappingConfig,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RedfishMapping_config(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RedfishMapping",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "topicPrefix":
+				return ec.fieldContext_RedfishMappingConfig_topicPrefix(ctx, field)
+			case "topicFilters":
+				return ec.fieldContext_RedfishMappingConfig_topicFilters(ctx, field)
+			case "chassisId":
+				return ec.fieldContext_RedfishMappingConfig_chassisId(ctx, field)
+			case "defaultReadingType":
+				return ec.fieldContext_RedfishMappingConfig_defaultReadingType(ctx, field)
+			case "defaultReadingUnits":
+				return ec.fieldContext_RedfishMappingConfig_defaultReadingUnits(ctx, field)
+			case "thresholds":
+				return ec.fieldContext_RedfishMappingConfig_thresholds(ctx, field)
+			case "jsonSchema":
+				return ec.fieldContext_RedfishMappingConfig_jsonSchema(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type RedfishMappingConfig", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RedfishMapping_createdAt(ctx context.Context, field graphql.CollectedField, obj *RedfishMapping) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RedfishMapping_createdAt,
+		func(ctx context.Context) (any, error) {
+			return obj.CreatedAt, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RedfishMapping_createdAt(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RedfishMapping",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RedfishMapping_updatedAt(ctx context.Context, field graphql.CollectedField, obj *RedfishMapping) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RedfishMapping_updatedAt,
+		func(ctx context.Context) (any, error) {
+			return obj.UpdatedAt, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RedfishMapping_updatedAt(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RedfishMapping",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RedfishMapping_isOnCurrentNode(ctx context.Context, field graphql.CollectedField, obj *RedfishMapping) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RedfishMapping_isOnCurrentNode,
+		func(ctx context.Context) (any, error) {
+			return obj.IsOnCurrentNode, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RedfishMapping_isOnCurrentNode(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RedfishMapping",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RedfishMappingConfig_topicPrefix(ctx context.Context, field graphql.CollectedField, obj *RedfishMappingConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RedfishMappingConfig_topicPrefix,
+		func(ctx context.Context) (any, error) {
+			return obj.TopicPrefix, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RedfishMappingConfig_topicPrefix(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RedfishMappingConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RedfishMappingConfig_topicFilters(ctx context.Context, field graphql.CollectedField, obj *RedfishMappingConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RedfishMappingConfig_topicFilters,
+		func(ctx context.Context) (any, error) {
+			return obj.TopicFilters, nil
+		},
+		nil,
+		ec.marshalNString2ᚕstringᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RedfishMappingConfig_topicFilters(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RedfishMappingConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RedfishMappingConfig_chassisId(ctx context.Context, field graphql.CollectedField, obj *RedfishMappingConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RedfishMappingConfig_chassisId,
+		func(ctx context.Context) (any, error) {
+			return obj.ChassisID, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_RedfishMappingConfig_chassisId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RedfishMappingConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RedfishMappingConfig_defaultReadingType(ctx context.Context, field graphql.CollectedField, obj *RedfishMappingConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RedfishMappingConfig_defaultReadingType,
+		func(ctx context.Context) (any, error) {
+			return obj.DefaultReadingType, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_RedfishMappingConfig_defaultReadingType(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RedfishMappingConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RedfishMappingConfig_defaultReadingUnits(ctx context.Context, field graphql.CollectedField, obj *RedfishMappingConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RedfishMappingConfig_defaultReadingUnits,
+		func(ctx context.Context) (any, error) {
+			return obj.DefaultReadingUnits, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_RedfishMappingConfig_defaultReadingUnits(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RedfishMappingConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RedfishMappingConfig_thresholds(ctx context.Context, field graphql.CollectedField, obj *RedfishMappingConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RedfishMappingConfig_thresholds,
+		func(ctx context.Context) (any, error) {
+			return obj.Thresholds, nil
+		},
+		nil,
+		ec.marshalORedfishThresholds2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRedfishThresholds,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_RedfishMappingConfig_thresholds(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RedfishMappingConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "upperCaution":
+				return ec.fieldContext_RedfishThresholds_upperCaution(ctx, field)
+			case "upperCritical":
+				return ec.fieldContext_RedfishThresholds_upperCritical(ctx, field)
+			case "lowerCaution":
+				return ec.fieldContext_RedfishThresholds_lowerCaution(ctx, field)
+			case "lowerCritical":
+				return ec.fieldContext_RedfishThresholds_lowerCritical(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type RedfishThresholds", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RedfishMappingConfig_jsonSchema(ctx context.Context, field graphql.CollectedField, obj *RedfishMappingConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RedfishMappingConfig_jsonSchema,
+		func(ctx context.Context) (any, error) {
+			return obj.JSONSchema, nil
+		},
+		nil,
+		ec.marshalNJSON2map,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RedfishMappingConfig_jsonSchema(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RedfishMappingConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type JSON does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RedfishResult_redfish(ctx context.Context, field graphql.CollectedField, obj *RedfishResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RedfishResult_redfish,
+		func(ctx context.Context) (any, error) {
+			return obj.Redfish, nil
+		},
+		nil,
+		ec.marshalORedfishMapping2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRedfishMapping,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_RedfishResult_redfish(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RedfishResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "name":
+				return ec.fieldContext_RedfishMapping_name(ctx, field)
+			case "nodeId":
+				return ec.fieldContext_RedfishMapping_nodeId(ctx, field)
+			case "enabled":
+				return ec.fieldContext_RedfishMapping_enabled(ctx, field)
+			case "config":
+				return ec.fieldContext_RedfishMapping_config(ctx, field)
+			case "createdAt":
+				return ec.fieldContext_RedfishMapping_createdAt(ctx, field)
+			case "updatedAt":
+				return ec.fieldContext_RedfishMapping_updatedAt(ctx, field)
+			case "isOnCurrentNode":
+				return ec.fieldContext_RedfishMapping_isOnCurrentNode(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type RedfishMapping", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RedfishResult_success(ctx context.Context, field graphql.CollectedField, obj *RedfishResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RedfishResult_success,
+		func(ctx context.Context) (any, error) {
+			return obj.Success, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RedfishResult_success(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RedfishResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RedfishResult_message(ctx context.Context, field graphql.CollectedField, obj *RedfishResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RedfishResult_message,
+		func(ctx context.Context) (any, error) {
+			return obj.Message, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_RedfishResult_message(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RedfishResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RedfishSensorStatus_id(ctx context.Context, field graphql.CollectedField, obj *RedfishSensorStatus) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RedfishSensorStatus_id,
+		func(ctx context.Context) (any, error) {
+			return obj.ID, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RedfishSensorStatus_id(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RedfishSensorStatus",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RedfishSensorStatus_name(ctx context.Context, field graphql.CollectedField, obj *RedfishSensorStatus) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RedfishSensorStatus_name,
+		func(ctx context.Context) (any, error) {
+			return obj.Name, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RedfishSensorStatus_name(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RedfishSensorStatus",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RedfishSensorStatus_chassisId(ctx context.Context, field graphql.CollectedField, obj *RedfishSensorStatus) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RedfishSensorStatus_chassisId,
+		func(ctx context.Context) (any, error) {
+			return obj.ChassisID, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RedfishSensorStatus_chassisId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RedfishSensorStatus",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RedfishSensorStatus_topic(ctx context.Context, field graphql.CollectedField, obj *RedfishSensorStatus) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RedfishSensorStatus_topic,
+		func(ctx context.Context) (any, error) {
+			return obj.Topic, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RedfishSensorStatus_topic(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RedfishSensorStatus",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RedfishSensorStatus_reading(ctx context.Context, field graphql.CollectedField, obj *RedfishSensorStatus) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RedfishSensorStatus_reading,
+		func(ctx context.Context) (any, error) {
+			return obj.Reading, nil
+		},
+		nil,
+		ec.marshalNFloat2float64,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RedfishSensorStatus_reading(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RedfishSensorStatus",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Float does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RedfishSensorStatus_readingType(ctx context.Context, field graphql.CollectedField, obj *RedfishSensorStatus) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RedfishSensorStatus_readingType,
+		func(ctx context.Context) (any, error) {
+			return obj.ReadingType, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RedfishSensorStatus_readingType(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RedfishSensorStatus",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RedfishSensorStatus_readingUnits(ctx context.Context, field graphql.CollectedField, obj *RedfishSensorStatus) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RedfishSensorStatus_readingUnits,
+		func(ctx context.Context) (any, error) {
+			return obj.ReadingUnits, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RedfishSensorStatus_readingUnits(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RedfishSensorStatus",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RedfishSensorStatus_health(ctx context.Context, field graphql.CollectedField, obj *RedfishSensorStatus) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RedfishSensorStatus_health,
+		func(ctx context.Context) (any, error) {
+			return obj.Health, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RedfishSensorStatus_health(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RedfishSensorStatus",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RedfishSensorStatus_state(ctx context.Context, field graphql.CollectedField, obj *RedfishSensorStatus) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RedfishSensorStatus_state,
+		func(ctx context.Context) (any, error) {
+			return obj.State, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RedfishSensorStatus_state(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RedfishSensorStatus",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RedfishSensorStatus_lastUpdated(ctx context.Context, field graphql.CollectedField, obj *RedfishSensorStatus) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RedfishSensorStatus_lastUpdated,
+		func(ctx context.Context) (any, error) {
+			return obj.LastUpdated, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RedfishSensorStatus_lastUpdated(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RedfishSensorStatus",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RedfishThresholds_upperCaution(ctx context.Context, field graphql.CollectedField, obj *RedfishThresholds) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RedfishThresholds_upperCaution,
+		func(ctx context.Context) (any, error) {
+			return obj.UpperCaution, nil
+		},
+		nil,
+		ec.marshalOFloat2ᚖfloat64,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_RedfishThresholds_upperCaution(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RedfishThresholds",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Float does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RedfishThresholds_upperCritical(ctx context.Context, field graphql.CollectedField, obj *RedfishThresholds) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RedfishThresholds_upperCritical,
+		func(ctx context.Context) (any, error) {
+			return obj.UpperCritical, nil
+		},
+		nil,
+		ec.marshalOFloat2ᚖfloat64,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_RedfishThresholds_upperCritical(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RedfishThresholds",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Float does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RedfishThresholds_lowerCaution(ctx context.Context, field graphql.CollectedField, obj *RedfishThresholds) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RedfishThresholds_lowerCaution,
+		func(ctx context.Context) (any, error) {
+			return obj.LowerCaution, nil
+		},
+		nil,
+		ec.marshalOFloat2ᚖfloat64,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_RedfishThresholds_lowerCaution(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RedfishThresholds",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Float does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RedfishThresholds_lowerCritical(ctx context.Context, field graphql.CollectedField, obj *RedfishThresholds) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RedfishThresholds_lowerCritical,
+		func(ctx context.Context) (any, error) {
+			return obj.LowerCritical, nil
+		},
+		nil,
+		ec.marshalOFloat2ᚖfloat64,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_RedfishThresholds_lowerCritical(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RedfishThresholds",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Float does not have child fields")
 		},
 	}
 	return fc, nil
@@ -23588,6 +24988,129 @@ func (ec *executionContext) unmarshalInputPublishInput(ctx context.Context, obj 
 	return it, nil
 }
 
+func (ec *executionContext) unmarshalInputRedfishMappingConfigInput(ctx context.Context, obj any) (RedfishMappingConfigInput, error) {
+	var it RedfishMappingConfigInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"topicPrefix", "topicFilters", "chassisId", "defaultReadingType", "defaultReadingUnits", "thresholds", "jsonSchema"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "topicPrefix":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("topicPrefix"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.TopicPrefix = data
+		case "topicFilters":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("topicFilters"))
+			data, err := ec.unmarshalNString2ᚕstringᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.TopicFilters = data
+		case "chassisId":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("chassisId"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ChassisID = data
+		case "defaultReadingType":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("defaultReadingType"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.DefaultReadingType = data
+		case "defaultReadingUnits":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("defaultReadingUnits"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.DefaultReadingUnits = data
+		case "thresholds":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("thresholds"))
+			data, err := ec.unmarshalORedfishThresholdsInput2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRedfishThresholdsInput(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Thresholds = data
+		case "jsonSchema":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("jsonSchema"))
+			data, err := ec.unmarshalNJSON2map(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.JSONSchema = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputRedfishThresholdsInput(ctx context.Context, obj any) (RedfishThresholdsInput, error) {
+	var it RedfishThresholdsInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"upperCaution", "upperCritical", "lowerCaution", "lowerCritical"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "upperCaution":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("upperCaution"))
+			data, err := ec.unmarshalOFloat2ᚖfloat64(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.UpperCaution = data
+		case "upperCritical":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("upperCritical"))
+			data, err := ec.unmarshalOFloat2ᚖfloat64(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.UpperCritical = data
+		case "lowerCaution":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("lowerCaution"))
+			data, err := ec.unmarshalOFloat2ᚖfloat64(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.LowerCaution = data
+		case "lowerCritical":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("lowerCritical"))
+			data, err := ec.unmarshalOFloat2ᚖfloat64(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.LowerCritical = data
+		}
+	}
+	return it, nil
+}
+
 func (ec *executionContext) unmarshalInputSetPasswordInput(ctx context.Context, obj any) (SetPasswordInput, error) {
 	var it SetPasswordInput
 	if obj == nil {
@@ -27940,6 +29463,27 @@ func (ec *executionContext) _Mutation(ctx context.Context, sel ast.SelectionSet)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
+		case "saveRedfishMapping":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_saveRedfishMapping(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "deleteRedfishMapping":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_deleteRedfishMapping(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "toggleRedfishMapping":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_toggleRedfishMapping(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
 		case "winCCOaDevice":
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Mutation_winCCOaDevice(ctx, field)
@@ -28737,6 +30281,69 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 			}
 
 			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "redfishMappings":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_redfishMappings(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "redfishMapping":
+			field := field
+
+			innerFunc := func(ctx context.Context, _ *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_redfishMapping(ctx, field)
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "redfishLiveSensors":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_redfishLiveSensors(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
 		case "winCCOaClients":
 			field := field
 
@@ -28789,6 +30396,301 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Query___schema(ctx, field)
 			})
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var redfishMappingImplementors = []string{"RedfishMapping"}
+
+func (ec *executionContext) _RedfishMapping(ctx context.Context, sel ast.SelectionSet, obj *RedfishMapping) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, redfishMappingImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("RedfishMapping")
+		case "name":
+			out.Values[i] = ec._RedfishMapping_name(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "nodeId":
+			out.Values[i] = ec._RedfishMapping_nodeId(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "enabled":
+			out.Values[i] = ec._RedfishMapping_enabled(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "config":
+			out.Values[i] = ec._RedfishMapping_config(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "createdAt":
+			out.Values[i] = ec._RedfishMapping_createdAt(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "updatedAt":
+			out.Values[i] = ec._RedfishMapping_updatedAt(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "isOnCurrentNode":
+			out.Values[i] = ec._RedfishMapping_isOnCurrentNode(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var redfishMappingConfigImplementors = []string{"RedfishMappingConfig"}
+
+func (ec *executionContext) _RedfishMappingConfig(ctx context.Context, sel ast.SelectionSet, obj *RedfishMappingConfig) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, redfishMappingConfigImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("RedfishMappingConfig")
+		case "topicPrefix":
+			out.Values[i] = ec._RedfishMappingConfig_topicPrefix(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "topicFilters":
+			out.Values[i] = ec._RedfishMappingConfig_topicFilters(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "chassisId":
+			out.Values[i] = ec._RedfishMappingConfig_chassisId(ctx, field, obj)
+		case "defaultReadingType":
+			out.Values[i] = ec._RedfishMappingConfig_defaultReadingType(ctx, field, obj)
+		case "defaultReadingUnits":
+			out.Values[i] = ec._RedfishMappingConfig_defaultReadingUnits(ctx, field, obj)
+		case "thresholds":
+			out.Values[i] = ec._RedfishMappingConfig_thresholds(ctx, field, obj)
+		case "jsonSchema":
+			out.Values[i] = ec._RedfishMappingConfig_jsonSchema(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var redfishResultImplementors = []string{"RedfishResult"}
+
+func (ec *executionContext) _RedfishResult(ctx context.Context, sel ast.SelectionSet, obj *RedfishResult) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, redfishResultImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("RedfishResult")
+		case "redfish":
+			out.Values[i] = ec._RedfishResult_redfish(ctx, field, obj)
+		case "success":
+			out.Values[i] = ec._RedfishResult_success(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "message":
+			out.Values[i] = ec._RedfishResult_message(ctx, field, obj)
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var redfishSensorStatusImplementors = []string{"RedfishSensorStatus"}
+
+func (ec *executionContext) _RedfishSensorStatus(ctx context.Context, sel ast.SelectionSet, obj *RedfishSensorStatus) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, redfishSensorStatusImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("RedfishSensorStatus")
+		case "id":
+			out.Values[i] = ec._RedfishSensorStatus_id(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "name":
+			out.Values[i] = ec._RedfishSensorStatus_name(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "chassisId":
+			out.Values[i] = ec._RedfishSensorStatus_chassisId(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "topic":
+			out.Values[i] = ec._RedfishSensorStatus_topic(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "reading":
+			out.Values[i] = ec._RedfishSensorStatus_reading(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "readingType":
+			out.Values[i] = ec._RedfishSensorStatus_readingType(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "readingUnits":
+			out.Values[i] = ec._RedfishSensorStatus_readingUnits(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "health":
+			out.Values[i] = ec._RedfishSensorStatus_health(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "state":
+			out.Values[i] = ec._RedfishSensorStatus_state(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "lastUpdated":
+			out.Values[i] = ec._RedfishSensorStatus_lastUpdated(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var redfishThresholdsImplementors = []string{"RedfishThresholds"}
+
+func (ec *executionContext) _RedfishThresholds(ctx context.Context, sel ast.SelectionSet, obj *RedfishThresholds) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, redfishThresholdsImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("RedfishThresholds")
+		case "upperCaution":
+			out.Values[i] = ec._RedfishThresholds_upperCaution(ctx, field, obj)
+		case "upperCritical":
+			out.Values[i] = ec._RedfishThresholds_upperCritical(ctx, field, obj)
+		case "lowerCaution":
+			out.Values[i] = ec._RedfishThresholds_lowerCaution(ctx, field, obj)
+		case "lowerCritical":
+			out.Values[i] = ec._RedfishThresholds_lowerCritical(ctx, field, obj)
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}
@@ -32669,6 +34571,28 @@ func (ec *executionContext) marshalNInt2int(ctx context.Context, sel ast.Selecti
 	return res
 }
 
+func (ec *executionContext) unmarshalNJSON2map(ctx context.Context, v any) (map[string]any, error) {
+	res, err := graphql.UnmarshalMap(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNJSON2map(ctx context.Context, sel ast.SelectionSet, v map[string]any) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	_ = sel
+	res := graphql.MarshalMap(v)
+	if res == graphql.Null {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+	}
+	return res
+}
+
 func (ec *executionContext) unmarshalNJSON2ᚕinterface(ctx context.Context, v any) ([]any, error) {
 	var vSlice []any
 	vSlice = graphql.CoerceList(v)
@@ -33024,6 +34948,87 @@ func (ec *executionContext) marshalNPurgeResult2ᚖmonstermqᚗioᚋedgeᚋinter
 		return graphql.Null
 	}
 	return ec._PurgeResult(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNRedfishMapping2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRedfishMappingᚄ(ctx context.Context, sel ast.SelectionSet, v []*RedfishMapping) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNRedfishMapping2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRedfishMapping(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNRedfishMapping2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRedfishMapping(ctx context.Context, sel ast.SelectionSet, v *RedfishMapping) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._RedfishMapping(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNRedfishMappingConfig2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRedfishMappingConfig(ctx context.Context, sel ast.SelectionSet, v *RedfishMappingConfig) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._RedfishMappingConfig(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalNRedfishMappingConfigInput2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRedfishMappingConfigInput(ctx context.Context, v any) (RedfishMappingConfigInput, error) {
+	res, err := ec.unmarshalInputRedfishMappingConfigInput(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNRedfishResult2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRedfishResult(ctx context.Context, sel ast.SelectionSet, v RedfishResult) graphql.Marshaler {
+	return ec._RedfishResult(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNRedfishResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRedfishResult(ctx context.Context, sel ast.SelectionSet, v *RedfishResult) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._RedfishResult(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNRedfishSensorStatus2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRedfishSensorStatusᚄ(ctx context.Context, sel ast.SelectionSet, v []*RedfishSensorStatus) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNRedfishSensorStatus2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRedfishSensorStatus(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNRedfishSensorStatus2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRedfishSensorStatus(ctx context.Context, sel ast.SelectionSet, v *RedfishSensorStatus) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._RedfishSensorStatus(ctx, sel, v)
 }
 
 func (ec *executionContext) marshalNRetainedMessage2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRetainedMessageᚄ(ctx context.Context, sel ast.SelectionSet, v []*RetainedMessage) graphql.Marshaler {
@@ -34040,6 +36045,23 @@ func (ec *executionContext) marshalOExceptionInfo2ᚖmonstermqᚗioᚋedgeᚋint
 	return ec._ExceptionInfo(ctx, sel, v)
 }
 
+func (ec *executionContext) unmarshalOFloat2ᚖfloat64(ctx context.Context, v any) (*float64, error) {
+	if v == nil {
+		return nil, nil
+	}
+	res, err := graphql.UnmarshalFloatContext(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalOFloat2ᚖfloat64(ctx context.Context, sel ast.SelectionSet, v *float64) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	_ = sel
+	res := graphql.MarshalFloatContext(*v)
+	return graphql.WrapContextMarshaler(ctx, res)
+}
+
 func (ec *executionContext) marshalOHmi2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐHmi(ctx context.Context, sel ast.SelectionSet, v *Hmi) graphql.Marshaler {
 	if v == nil {
 		return graphql.Null
@@ -34213,6 +36235,28 @@ func (ec *executionContext) marshalOPayloadFormat2ᚖmonstermqᚗioᚋedgeᚋint
 		return graphql.Null
 	}
 	return v
+}
+
+func (ec *executionContext) marshalORedfishMapping2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRedfishMapping(ctx context.Context, sel ast.SelectionSet, v *RedfishMapping) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._RedfishMapping(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalORedfishThresholds2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRedfishThresholds(ctx context.Context, sel ast.SelectionSet, v *RedfishThresholds) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._RedfishThresholds(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalORedfishThresholdsInput2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRedfishThresholdsInput(ctx context.Context, v any) (*RedfishThresholdsInput, error) {
+	if v == nil {
+		return nil, nil
+	}
+	res, err := ec.unmarshalInputRedfishThresholdsInput(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
 }
 
 func (ec *executionContext) marshalORetainedMessage2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRetainedMessage(ctx context.Context, sel ast.SelectionSet, v *RetainedMessage) graphql.Marshaler {

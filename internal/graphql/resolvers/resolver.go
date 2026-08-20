@@ -27,6 +27,7 @@ import (
 	mlog "monstermq.io/edge/internal/log"
 	"monstermq.io/edge/internal/metrics"
 	"monstermq.io/edge/internal/pubsub"
+	"monstermq.io/edge/internal/redfish"
 	"monstermq.io/edge/internal/stores"
 	"monstermq.io/edge/internal/version"
 )
@@ -49,6 +50,7 @@ type Resolver struct {
 	Version   string
 	Mochi     *mqtt.Server
 	HmiMgr    *hmi.Manager
+	Redfish   *redfish.Manager
 
 	// Publish injects a message into the local broker (used by the publish mutation).
 	Publish func(topic string, payload []byte, retain bool, qos byte) error
@@ -60,7 +62,8 @@ func New(cfg *config.Config, storage *stores.Storage, bus *pubsub.Bus, archives 
 	logBus *mlog.Bus, logger *slog.Logger,
 	mochi *mqtt.Server,
 	publish func(string, []byte, bool, byte) error,
-	hmiMgr *hmi.Manager) *Resolver {
+	hmiMgr *hmi.Manager,
+	redfishMgr *redfish.Manager) *Resolver {
 	return &Resolver{
 		Cfg:       cfg,
 		Storage:   storage,
@@ -78,6 +81,7 @@ func New(cfg *config.Config, storage *stores.Storage, bus *pubsub.Bus, archives 
 		Mochi:     mochi,
 		Publish:   publish,
 		HmiMgr:    hmiMgr,
+		Redfish:   redfishMgr,
 	}
 }
 
@@ -103,6 +107,9 @@ func (r *Resolver) enabledFeatures() []string {
 	}
 	if r.Cfg.Features.Hmi || r.Cfg.HMI.Enabled {
 		out = append(out, "Hmi")
+	}
+	if r.Cfg.Features.Redfish || r.Cfg.Redfish.Enabled {
+		out = append(out, "Redfish")
 	}
 	return out
 }

@@ -25,9 +25,10 @@ import (
 	"monstermq.io/edge/internal/graphql/generated"
 	"monstermq.io/edge/internal/graphql/resolvers"
 	"monstermq.io/edge/internal/hmi"
+	"monstermq.io/edge/internal/redfish"
 )
 
-// Server hosts the GraphQL HTTP and WebSocket endpoints and HMI dashboards.
+// Server hosts the GraphQL HTTP and WebSocket endpoints, HMI dashboards, and Redfish API.
 type Server struct {
 	cfg     *config.Config
 	logger  *slog.Logger
@@ -35,7 +36,7 @@ type Server struct {
 	httpSrv *http.Server
 }
 
-func NewServer(cfg *config.Config, resolver *resolvers.Resolver, hmiMgr *hmi.Manager, logger *slog.Logger) *Server {
+func NewServer(cfg *config.Config, resolver *resolvers.Resolver, hmiMgr *hmi.Manager, redfishMgr *redfish.Manager, logger *slog.Logger) *Server {
 	es := generated.NewExecutableSchema(generated.Config{Resolvers: resolver})
 	gql := handler.New(es)
 	gql.AddTransport(transport.Options{})
@@ -116,6 +117,15 @@ func NewServer(cfg *config.Config, resolver *resolvers.Resolver, hmiMgr *hmi.Man
 
 		r.Handle(mountPath+"/*", hmiHandler)
 		r.Handle(mountPath, hmiHandler)
+	}
+
+	if redfishMgr != nil {
+		mountPath := cfg.Redfish.MountPath
+		if mountPath == "" {
+			mountPath = "/redfish/v1"
+		}
+		mountPath = strings.TrimSuffix(mountPath, "/")
+		r.Mount(mountPath, redfishMgr.Handler())
 	}
 
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {

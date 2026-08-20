@@ -119,7 +119,21 @@
         "WinCCOa":            { "type": "boolean", "description": "Enable the WinCC Open Architecture bridge (GraphQL/WebSocket transport)." },
         "DeviceImportExport": { "type": "boolean", "description": "Enable generic device configuration export/import GraphQL operations." },
         "Mcp":                { "type": "boolean", "description": "Enable the MCP server feature toggle." },
-        "Hmi":                { "type": "boolean", "description": "Enable HTML/JS HMI hosting feature toggle." }
+        "Hmi":                { "type": "boolean", "description": "Enable HTML/JS HMI hosting feature toggle." },
+        "Redfish":            { "type": "boolean", "description": "Enable DMTF Redfish REST API feature toggle." }
+      }
+    },
+    "Redfish": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "Enabled":          { "type": "boolean", "description": "Enable DMTF Redfish REST API." },
+        "Port":             { "type": "integer", "minimum": 0, "maximum": 65535, "default": 8000, "description": "Port for standalone Redfish REST server. Set to 0 to mount on main GraphQL port." },
+        "MountPath":        { "type": "string", "default": "/redfish/v1", "description": "HTTP URL prefix for Redfish REST API." },
+        "DefaultChassisId": { "type": "string", "default": "EdgeNode" },
+        "DefaultSystemId":  { "type": "string", "default": "edge-node" },
+        "DefaultManagerId": { "type": "string", "default": "monstermq-edge" },
+        "AnonymousEnabled": { "type": "boolean", "default": true, "description": "Allow anonymous read access to Redfish endpoints." }
       }
     },
     "HostMonitoring": {
