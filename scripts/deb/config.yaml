@@ -57,6 +57,16 @@ Features:
   WinCCOa: false
   DeviceImportExport: true
   Hmi: true
+  Redfish: false
+
+Redfish:
+  Enabled: false
+  Port: 8000
+  MountPath: "/redfish/v1"
+  DefaultChassisId: "EdgeNode"
+  DefaultSystemId: "edge-node"
+  DefaultManagerId: "monstermq-edge"
+  AnonymousEnabled: true
 
 # QueuedMessagesEnabled: true  -> use QueueStoreType for offline persistent
 # (clean=false) sessions. With QueueStoreType: MEMORY, queued messages are
