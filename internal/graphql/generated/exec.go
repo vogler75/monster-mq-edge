@@ -1425,6 +1425,7 @@ enum WinCCUaMessageFormat {
     JSON_ISO
     JSON_MS
     RAW_VALUE
+    RAW_JSON
 }
 
 enum WinCCUaDataAccessMode {

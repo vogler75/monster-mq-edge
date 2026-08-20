@@ -13,7 +13,7 @@ RestartSec=5
 NoNewPrivileges=true
 ProtectSystem=full
 ProtectHome=true
-PrivateTmp=true
+PrivateTmp=false
 LimitNOFILE=65536
 
 [Install]

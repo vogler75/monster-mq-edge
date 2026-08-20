@@ -541,7 +541,7 @@ func (p *pipeConnector) handleTagNotification(msg map[string]any) {
 		value := tag["Value"]
 		ts, _ := tag["TimeStamp"].(string)
 		quality := pipeQualityFromTag(tag)
-		p.publishTagValue(addr, name, value, ts, quality)
+		p.publishTagValue(addr, name, value, ts, quality, tag)
 	}
 }
 
@@ -604,12 +604,12 @@ func (p *pipeConnector) handleErrorMessage(msg map[string]any, t string) {
 	}
 }
 
-func (p *pipeConnector) publishTagValue(addr Address, tagName string, value any, timestamp string, quality map[string]any) {
+func (p *pipeConnector) publishTagValue(addr Address, tagName string, value any, timestamp string, quality map[string]any, rawTag map[string]any) {
 	if !addr.IncludeQuality {
 		quality = nil
 	}
 	topic := p.pub.resolveTagTopic(addr.Topic, tagName)
-	payload := p.pub.formatTagPayload(value, timestamp, quality)
+	payload := p.pub.formatTagPayload(value, timestamp, quality, rawTag)
 	if err := p.publish(topic, payload, addr.Retained, 0); err != nil {
 		p.logger.Warn("winccua pipe publish failed", "topic", topic, "err", err)
 		return
@@ -651,16 +651,22 @@ func tagErrorIsZero(v any) bool {
 }
 
 func pipeQualityFromTag(tag map[string]any) map[string]any {
-	q, qok := tag["Quality"].(string)
-	c, cok := tag["QualityCode"].(string)
-	if !qok && !cok {
+	var q string
+	if v, ok := tag["Quality"]; ok && v != nil {
+		q = fmt.Sprintf("%v", v)
+	}
+	var c string
+	if v, ok := tag["QualityCode"]; ok && v != nil {
+		c = fmt.Sprintf("%v", v)
+	}
+	if q == "" && c == "" {
 		return nil
 	}
 	out := map[string]any{}
-	if qok {
+	if q != "" {
 		out["quality"] = q
 	}
-	if cok {
+	if c != "" {
 		out["qualityCode"] = c
 	}
 	return out

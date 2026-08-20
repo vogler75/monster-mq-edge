@@ -26,6 +26,7 @@ const (
 	FormatJSONISO  = "JSON_ISO"
 	FormatJSONMS   = "JSON_MS"
 	FormatRawValue = "RAW_VALUE"
+	FormatRawJSON  = "RAW_JSON"
 
 	ModeGraphQL  = "GRAPHQL"
 	ModeOpenPipe = "OPENPIPE"
@@ -209,9 +210,9 @@ func (c *ConnectionConfig) Validate() []string {
 	}
 
 	switch c.MessageFormat {
-	case FormatJSONISO, FormatJSONMS, FormatRawValue:
+	case FormatJSONISO, FormatJSONMS, FormatRawValue, FormatRawJSON:
 	default:
-		errs = append(errs, fmt.Sprintf("messageFormat must be one of: %s, %s, %s", FormatJSONISO, FormatJSONMS, FormatRawValue))
+		errs = append(errs, fmt.Sprintf("messageFormat must be one of: %s, %s, %s, %s", FormatJSONISO, FormatJSONMS, FormatRawValue, FormatRawJSON))
 	}
 
 	for i, a := range c.Addresses {
