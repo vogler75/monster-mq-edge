@@ -22,7 +22,7 @@ func NewDataCatalogStore(db *DB) *DataCatalogStore {
 func (s *DataCatalogStore) Initialize() error {
 	ctx := context.Background()
 	queries := []string{
-		`CREATE TABLE IF NOT EXISTS data_catalog_types (
+		`CREATE TABLE IF NOT EXISTS datacatalogtypes (
 			id TEXT PRIMARY KEY,
 			namespace TEXT NOT NULL,
 			name TEXT NOT NULL,
@@ -32,7 +32,7 @@ func (s *DataCatalogStore) Initialize() error {
 			created_at TIMESTAMPTZ DEFAULT NOW(),
 			updated_at TIMESTAMPTZ DEFAULT NOW()
 		)`,
-		`CREATE TABLE IF NOT EXISTS data_catalog_instances (
+		`CREATE TABLE IF NOT EXISTS datacataloginstances (
 			id TEXT PRIMARY KEY,
 			type_id TEXT NOT NULL,
 			name TEXT NOT NULL,
@@ -40,15 +40,15 @@ func (s *DataCatalogStore) Initialize() error {
 			properties JSONB,
 			created_at TIMESTAMPTZ DEFAULT NOW(),
 			updated_at TIMESTAMPTZ DEFAULT NOW(),
-			FOREIGN KEY (type_id) REFERENCES data_catalog_types (id) ON DELETE CASCADE
+			FOREIGN KEY (type_id) REFERENCES datacatalogtypes (id) ON DELETE CASCADE
 		)`,
-		`CREATE TABLE IF NOT EXISTS data_catalog_relations (
+		`CREATE TABLE IF NOT EXISTS datacatalogrelations (
 			source_id TEXT NOT NULL,
 			target_id TEXT NOT NULL,
 			relation_type TEXT NOT NULL,
 			PRIMARY KEY (source_id, target_id, relation_type),
-			FOREIGN KEY (source_id) REFERENCES data_catalog_instances (id) ON DELETE CASCADE,
-			FOREIGN KEY (target_id) REFERENCES data_catalog_instances (id) ON DELETE CASCADE
+			FOREIGN KEY (source_id) REFERENCES datacataloginstances (id) ON DELETE CASCADE,
+			FOREIGN KEY (target_id) REFERENCES datacataloginstances (id) ON DELETE CASCADE
 		)`,
 	}
 	for _, q := range queries {
@@ -66,7 +66,7 @@ func (s *DataCatalogStore) Close() error {
 // Types
 func (s *DataCatalogStore) GetTypes(namespace *string) ([]stores.DataCatalogType, error) {
 	ctx := context.Background()
-	query := `SELECT id, namespace, name, description, structure, topic_pattern, created_at, updated_at FROM data_catalog_types`
+	query := `SELECT id, namespace, name, description, structure, topic_pattern, created_at, updated_at FROM datacatalogtypes`
 	var rows pgx.Rows
 	var err error
 
@@ -104,7 +104,7 @@ func (s *DataCatalogStore) GetTypes(namespace *string) ([]stores.DataCatalogType
 
 func (s *DataCatalogStore) GetType(id string) (*stores.DataCatalogType, error) {
 	ctx := context.Background()
-	query := `SELECT id, namespace, name, description, structure, topic_pattern, created_at, updated_at FROM data_catalog_types WHERE id = $1`
+	query := `SELECT id, namespace, name, description, structure, topic_pattern, created_at, updated_at FROM datacatalogtypes WHERE id = $1`
 	var t stores.DataCatalogType
 	var structStr []byte
 	err := s.db.pool.QueryRow(ctx, query, id).Scan(&t.ID, &t.Namespace, &t.Name, &t.Description, &structStr, &t.TopicPattern, &t.CreatedAt, &t.UpdatedAt)
@@ -133,7 +133,7 @@ func (s *DataCatalogStore) SaveType(t stores.DataCatalogType) (*stores.DataCatal
 
 	structJson := t.GetStructureJSON()
 
-	query := `INSERT INTO data_catalog_types (id, namespace, name, description, structure, topic_pattern, created_at, updated_at)
+	query := `INSERT INTO datacatalogtypes (id, namespace, name, description, structure, topic_pattern, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT (id) DO UPDATE SET
 			namespace = EXCLUDED.namespace,
@@ -157,7 +157,7 @@ func (s *DataCatalogStore) SaveType(t stores.DataCatalogType) (*stores.DataCatal
 
 func (s *DataCatalogStore) DeleteType(id string) (bool, error) {
 	ctx := context.Background()
-	res, err := s.db.pool.Exec(ctx, `DELETE FROM data_catalog_types WHERE id = $1`, id)
+	res, err := s.db.pool.Exec(ctx, `DELETE FROM datacatalogtypes WHERE id = $1`, id)
 	if err != nil {
 		return false, err
 	}
@@ -167,7 +167,7 @@ func (s *DataCatalogStore) DeleteType(id string) (bool, error) {
 // Instances
 func (s *DataCatalogStore) GetInstances(typeID *string) ([]stores.DataCatalogInstance, error) {
 	ctx := context.Background()
-	query := `SELECT id, type_id, name, base_topic, properties, created_at, updated_at FROM data_catalog_instances`
+	query := `SELECT id, type_id, name, base_topic, properties, created_at, updated_at FROM datacataloginstances`
 	var rows pgx.Rows
 	var err error
 
@@ -205,7 +205,7 @@ func (s *DataCatalogStore) GetInstances(typeID *string) ([]stores.DataCatalogIns
 
 func (s *DataCatalogStore) GetInstance(id string) (*stores.DataCatalogInstance, error) {
 	ctx := context.Background()
-	query := `SELECT id, type_id, name, base_topic, properties, created_at, updated_at FROM data_catalog_instances WHERE id = $1`
+	query := `SELECT id, type_id, name, base_topic, properties, created_at, updated_at FROM datacataloginstances WHERE id = $1`
 	var i stores.DataCatalogInstance
 	var propStr []byte
 	err := s.db.pool.QueryRow(ctx, query, id).Scan(&i.ID, &i.TypeID, &i.Name, &i.BaseTopic, &propStr, &i.CreatedAt, &i.UpdatedAt)
@@ -234,7 +234,7 @@ func (s *DataCatalogStore) SaveInstance(i stores.DataCatalogInstance) (*stores.D
 
 	propJson := i.GetPropertiesJSON()
 
-	query := `INSERT INTO data_catalog_instances (id, type_id, name, base_topic, properties, created_at, updated_at)
+	query := `INSERT INTO datacataloginstances (id, type_id, name, base_topic, properties, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT (id) DO UPDATE SET
 			type_id = EXCLUDED.type_id,
@@ -257,7 +257,7 @@ func (s *DataCatalogStore) SaveInstance(i stores.DataCatalogInstance) (*stores.D
 
 func (s *DataCatalogStore) DeleteInstance(id string) (bool, error) {
 	ctx := context.Background()
-	res, err := s.db.pool.Exec(ctx, `DELETE FROM data_catalog_instances WHERE id = $1`, id)
+	res, err := s.db.pool.Exec(ctx, `DELETE FROM datacataloginstances WHERE id = $1`, id)
 	if err != nil {
 		return false, err
 	}
@@ -267,7 +267,7 @@ func (s *DataCatalogStore) DeleteInstance(id string) (bool, error) {
 // Relations
 func (s *DataCatalogStore) GetRelations(sourceID *string, targetID *string, relationType *string) ([]stores.DataCatalogRelation, error) {
 	ctx := context.Background()
-	query := `SELECT source_id, target_id, relation_type FROM data_catalog_relations WHERE 1=1`
+	query := `SELECT source_id, target_id, relation_type FROM datacatalogrelations WHERE 1=1`
 	var args []interface{}
 	idx := 1
 	if sourceID != nil && *sourceID != "" {
@@ -308,7 +308,7 @@ func (s *DataCatalogStore) GetRelations(sourceID *string, targetID *string, rela
 
 func (s *DataCatalogStore) SaveRelation(r stores.DataCatalogRelation) (*stores.DataCatalogRelation, error) {
 	ctx := context.Background()
-	query := `INSERT INTO data_catalog_relations (source_id, target_id, relation_type)
+	query := `INSERT INTO datacatalogrelations (source_id, target_id, relation_type)
 		VALUES ($1, $2, $3)
 		ON CONFLICT (source_id, target_id, relation_type) DO NOTHING`
 
@@ -321,7 +321,7 @@ func (s *DataCatalogStore) SaveRelation(r stores.DataCatalogRelation) (*stores.D
 
 func (s *DataCatalogStore) DeleteRelation(sourceID string, targetID string, relationType string) (bool, error) {
 	ctx := context.Background()
-	res, err := s.db.pool.Exec(ctx, `DELETE FROM data_catalog_relations WHERE source_id = $1 AND target_id = $2 AND relation_type = $3`, sourceID, targetID, relationType)
+	res, err := s.db.pool.Exec(ctx, `DELETE FROM datacatalogrelations WHERE source_id = $1 AND target_id = $2 AND relation_type = $3`, sourceID, targetID, relationType)
 	if err != nil {
 		return false, err
 	}

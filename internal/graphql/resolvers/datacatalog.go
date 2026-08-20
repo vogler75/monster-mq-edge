@@ -51,6 +51,15 @@ func (r *queryResolver) DataCatalogRelations(ctx context.Context, sourceID *stri
 	return out, nil
 }
 
+func (r *queryResolver) InferDataCatalog(ctx context.Context, topicPattern string, archiveGroup *string) (*generated.DataCatalogProposal, error) {
+	return &generated.DataCatalogProposal{
+		Types:          []*stores.DataCatalogType{},
+		Instances:      []*stores.DataCatalogInstance{},
+		Relations:      []*stores.DataCatalogRelation{},
+		TopicsAnalyzed: 0,
+	}, nil
+}
+
 func (r *mutationResolver) DataCatalog(ctx context.Context) (*generated.DataCatalogMutations, error) {
 	return &generated.DataCatalogMutations{}, nil
 }

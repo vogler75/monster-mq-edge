@@ -249,6 +249,15 @@ type DataCatalogMutations struct {
 	ImportCatalog  *stores.ImportDataCatalogResult `json:"importCatalog"`
 }
 
+type DataCatalogProposal struct {
+	Types          []*stores.DataCatalogType     `json:"types"`
+	Instances      []*stores.DataCatalogInstance `json:"instances"`
+	Relations      []*stores.DataCatalogRelation `json:"relations"`
+	TopicsAnalyzed int                           `json:"topicsAnalyzed"`
+	Summary        *string                       `json:"summary,omitempty"`
+	Error          *string                       `json:"error,omitempty"`
+}
+
 type DataCatalogRelationInput struct {
 	SourceID     string `json:"sourceId"`
 	TargetID     string `json:"targetId"`

@@ -10,9 +10,9 @@ import (
 )
 
 const (
-	dcTypesTable     = "data_catalog_types"
-	dcInstancesTable = "data_catalog_instances"
-	dcRelationsTable = "data_catalog_relations"
+	dcTypesTable     = "datacatalogtypes"
+	dcInstancesTable = "datacataloginstances"
+	dcRelationsTable = "datacatalogrelations"
 )
 
 type DataCatalogStore struct {
