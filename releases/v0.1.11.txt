@@ -1,0 +1,11 @@
+Release v0.1.11
+Built from commit: 1a79980
+Date: 2026-08-22 12:15:47
+
+Changes since v0.1.10:
+---
+1a79980 chore(config): add Redfish configuration to deb and docker example configs
+8f4441b feat(graphql): remove legacy feature fields from BrokerConfig for schema parity
+f98f9d5 Merge remote-tracking branch 'origin/main' into redfish
+83d2290 feat(redfish): implement DMTF Redfish REST API, LastValue registry, and GraphQL management
+c703c9a feat(winccua): add RAW_JSON message format, flat quality payload, and update service PrivateTmp
