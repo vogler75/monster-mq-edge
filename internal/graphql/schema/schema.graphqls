@@ -10,7 +10,7 @@ enum DataFormat { JSON TEXT BINARY }
 enum OrderDirection { ASC DESC }
 enum AggregationInterval { ONE_MINUTE FIVE_MINUTES FIFTEEN_MINUTES ONE_HOUR ONE_DAY }
 enum AggregationFunction { AVG MIN MAX COUNT }
-enum DatabaseConnectionType { POSTGRES MONGODB SQLITE }
+enum DatabaseConnectionType { POSTGRES MONGODB SQLITE CRATEDB }
 
 enum MessageStoreType { NONE MEMORY HAZELCAST POSTGRES CRATEDB MONGODB SQLITE }
 enum MessageArchiveType { NONE POSTGRES CRATEDB MONGODB SQLITE }
