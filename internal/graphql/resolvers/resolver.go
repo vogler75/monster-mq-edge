@@ -308,6 +308,10 @@ func toMessageArchiveType(s stores.MessageArchiveType) generated.MessageArchiveT
 		return generated.MessageArchiveTypeSQLIte
 	case stores.ArchivePostgres:
 		return generated.MessageArchiveTypePostgres
+	case stores.ArchiveCrateDB:
+		return generated.MessageArchiveTypeCratedb
+	case stores.ArchiveQuestDB:
+		return generated.MessageArchiveTypeQuestdb
 	case stores.ArchiveMongoDB:
 		return generated.MessageArchiveTypeMongodb
 	}
@@ -334,6 +338,10 @@ func fromMessageArchiveType(t generated.MessageArchiveType) stores.MessageArchiv
 		return stores.ArchiveSQLite
 	case generated.MessageArchiveTypePostgres:
 		return stores.ArchivePostgres
+	case generated.MessageArchiveTypeCratedb:
+		return stores.ArchiveCrateDB
+	case generated.MessageArchiveTypeQuestdb:
+		return stores.ArchiveQuestDB
 	case generated.MessageArchiveTypeMongodb:
 		return stores.ArchiveMongoDB
 	}
@@ -346,6 +354,10 @@ func toDatabaseConnectionType(t stores.DatabaseConnectionType) generated.Databas
 		return generated.DatabaseConnectionTypeMongodb
 	case stores.DatabaseConnectionSQLite:
 		return generated.DatabaseConnectionTypeSQLIte
+	case stores.DatabaseConnectionCrateDB:
+		return generated.DatabaseConnectionTypeCratedb
+	case stores.DatabaseConnectionQuestDB:
+		return generated.DatabaseConnectionTypeQuestdb
 	}
 	return generated.DatabaseConnectionTypePostgres
 }
@@ -356,6 +368,10 @@ func fromDatabaseConnectionType(t generated.DatabaseConnectionType) stores.Datab
 		return stores.DatabaseConnectionMongoDB
 	case generated.DatabaseConnectionTypeSQLIte:
 		return stores.DatabaseConnectionSQLite
+	case generated.DatabaseConnectionTypeCratedb:
+		return stores.DatabaseConnectionCrateDB
+	case generated.DatabaseConnectionTypeQuestdb:
+		return stores.DatabaseConnectionQuestDB
 	}
 	return stores.DatabaseConnectionPostgres
 }
@@ -659,6 +675,7 @@ func (r *queryResolver) BrokerConfig(ctx context.Context) (*generated.BrokerConf
 		UserManagementEnabled: c.UserManagement.Enabled, AnonymousEnabled: c.UserManagement.AnonymousEnabled,
 		PostgresURL: c.Postgres.URL, PostgresUser: c.Postgres.User,
 		CrateDbURL: "", CrateDbUser: "",
+		QuestDbURL: c.QuestDB.URL, QuestDbUser: c.QuestDB.User,
 		MongoDbURL: c.MongoDB.URL, MongoDbDatabase: c.MongoDB.Database,
 		SqlitePath: c.SQLite.Path, KafkaServers: "",
 	}, nil

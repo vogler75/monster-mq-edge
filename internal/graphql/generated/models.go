@@ -120,6 +120,8 @@ type BrokerConfig struct {
 	PostgresUser          string `json:"postgresUser"`
 	CrateDbURL            string `json:"crateDbUrl"`
 	CrateDbUser           string `json:"crateDbUser"`
+	QuestDbURL            string `json:"questDbUrl"`
+	QuestDbUser           string `json:"questDbUser"`
 	MongoDbURL            string `json:"mongoDbUrl"`
 	MongoDbDatabase       string `json:"mongoDbDatabase"`
 	SqlitePath            string `json:"sqlitePath"`
@@ -1156,17 +1158,21 @@ const (
 	DatabaseConnectionTypePostgres DatabaseConnectionType = "POSTGRES"
 	DatabaseConnectionTypeMongodb  DatabaseConnectionType = "MONGODB"
 	DatabaseConnectionTypeSQLIte   DatabaseConnectionType = "SQLITE"
+	DatabaseConnectionTypeCratedb  DatabaseConnectionType = "CRATEDB"
+	DatabaseConnectionTypeQuestdb  DatabaseConnectionType = "QUESTDB"
 )
 
 var AllDatabaseConnectionType = []DatabaseConnectionType{
 	DatabaseConnectionTypePostgres,
 	DatabaseConnectionTypeMongodb,
 	DatabaseConnectionTypeSQLIte,
+	DatabaseConnectionTypeCratedb,
+	DatabaseConnectionTypeQuestdb,
 }
 
 func (e DatabaseConnectionType) IsValid() bool {
 	switch e {
-	case DatabaseConnectionTypePostgres, DatabaseConnectionTypeMongodb, DatabaseConnectionTypeSQLIte:
+	case DatabaseConnectionTypePostgres, DatabaseConnectionTypeMongodb, DatabaseConnectionTypeSQLIte, DatabaseConnectionTypeCratedb, DatabaseConnectionTypeQuestdb:
 		return true
 	}
 	return false
@@ -1213,6 +1219,7 @@ const (
 	MessageArchiveTypeNone     MessageArchiveType = "NONE"
 	MessageArchiveTypePostgres MessageArchiveType = "POSTGRES"
 	MessageArchiveTypeCratedb  MessageArchiveType = "CRATEDB"
+	MessageArchiveTypeQuestdb  MessageArchiveType = "QUESTDB"
 	MessageArchiveTypeMongodb  MessageArchiveType = "MONGODB"
 	MessageArchiveTypeSQLIte   MessageArchiveType = "SQLITE"
 )
@@ -1221,13 +1228,14 @@ var AllMessageArchiveType = []MessageArchiveType{
 	MessageArchiveTypeNone,
 	MessageArchiveTypePostgres,
 	MessageArchiveTypeCratedb,
+	MessageArchiveTypeQuestdb,
 	MessageArchiveTypeMongodb,
 	MessageArchiveTypeSQLIte,
 }
 
 func (e MessageArchiveType) IsValid() bool {
 	switch e {
-	case MessageArchiveTypeNone, MessageArchiveTypePostgres, MessageArchiveTypeCratedb, MessageArchiveTypeMongodb, MessageArchiveTypeSQLIte:
+	case MessageArchiveTypeNone, MessageArchiveTypePostgres, MessageArchiveTypeCratedb, MessageArchiveTypeQuestdb, MessageArchiveTypeMongodb, MessageArchiveTypeSQLIte:
 		return true
 	}
 	return false

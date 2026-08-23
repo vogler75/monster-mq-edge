@@ -44,6 +44,16 @@
       },
       "required": ["Url"]
     },
+    "QuestDB": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "Url":  { "type": "string", "description": "QuestDB connection URL (ws::addr=host:9000; or http://host:9000)." },
+        "User": { "type": "string" },
+        "Pass": { "type": "string" }
+      },
+      "required": ["Url"]
+    },
     "MongoDB": {
       "type": "object",
       "additionalProperties": false,

@@ -441,10 +441,10 @@ enum DataFormat { JSON TEXT BINARY }
 enum OrderDirection { ASC DESC }
 enum AggregationInterval { ONE_MINUTE FIVE_MINUTES FIFTEEN_MINUTES ONE_HOUR ONE_DAY }
 enum AggregationFunction { AVG MIN MAX COUNT }
-enum DatabaseConnectionType { POSTGRES MONGODB SQLITE }
+enum DatabaseConnectionType { POSTGRES MONGODB SQLITE CRATEDB QUESTDB }
 
 enum MessageStoreType { NONE MEMORY HAZELCAST POSTGRES CRATEDB MONGODB SQLITE }
-enum MessageArchiveType { NONE POSTGRES CRATEDB MONGODB SQLITE }
+enum MessageArchiveType { NONE POSTGRES CRATEDB QUESTDB MONGODB SQLITE }
 enum PayloadFormat { DEFAULT JSON }
 
 # -----------------------------------------------------------------------------
@@ -522,6 +522,8 @@ type BrokerConfig {
     postgresUser: String!
     crateDbUrl: String!
     crateDbUser: String!
+    questDbUrl: String!
+    questDbUser: String!
     mongoDbUrl: String!
     mongoDbDatabase: String!
     sqlitePath: String!
@@ -6331,6 +6333,64 @@ func (ec *executionContext) _BrokerConfig_crateDbUser(ctx context.Context, field
 }
 
 func (ec *executionContext) fieldContext_BrokerConfig_crateDbUser(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "BrokerConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _BrokerConfig_questDbUrl(ctx context.Context, field graphql.CollectedField, obj *BrokerConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_BrokerConfig_questDbUrl,
+		func(ctx context.Context) (any, error) {
+			return obj.QuestDbURL, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_BrokerConfig_questDbUrl(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "BrokerConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _BrokerConfig_questDbUser(ctx context.Context, field graphql.CollectedField, obj *BrokerConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_BrokerConfig_questDbUser,
+		func(ctx context.Context) (any, error) {
+			return obj.QuestDbUser, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_BrokerConfig_questDbUser(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "BrokerConfig",
 		Field:      field,
@@ -13133,6 +13193,10 @@ func (ec *executionContext) fieldContext_Query_brokerConfig(_ context.Context, f
 				return ec.fieldContext_BrokerConfig_crateDbUrl(ctx, field)
 			case "crateDbUser":
 				return ec.fieldContext_BrokerConfig_crateDbUser(ctx, field)
+			case "questDbUrl":
+				return ec.fieldContext_BrokerConfig_questDbUrl(ctx, field)
+			case "questDbUser":
+				return ec.fieldContext_BrokerConfig_questDbUser(ctx, field)
 			case "mongoDbUrl":
 				return ec.fieldContext_BrokerConfig_mongoDbUrl(ctx, field)
 			case "mongoDbDatabase":
@@ -26882,6 +26946,16 @@ func (ec *executionContext) _BrokerConfig(ctx context.Context, sel ast.Selection
 			}
 		case "crateDbUser":
 			out.Values[i] = ec._BrokerConfig_crateDbUser(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "questDbUrl":
+			out.Values[i] = ec._BrokerConfig_questDbUrl(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "questDbUser":
+			out.Values[i] = ec._BrokerConfig_questDbUser(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}

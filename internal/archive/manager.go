@@ -17,6 +17,7 @@ import (
 	storememory "monstermq.io/edge/internal/stores/memory"
 	storemongo "monstermq.io/edge/internal/stores/mongodb"
 	storepg "monstermq.io/edge/internal/stores/postgres"
+	storequestdb "monstermq.io/edge/internal/stores/questdb"
 	storesqlite "monstermq.io/edge/internal/stores/sqlite"
 )
 
@@ -215,10 +216,11 @@ func ValidateGroupName(name string) error {
 }
 
 type groupDatabaseHandles struct {
-	sqliteDB *storesqlite.DB
-	pgDB     *storepg.DB
-	mongoDB  *storemongo.DB
-	owned    []func() error
+	sqliteDB  *storesqlite.DB
+	pgDB      *storepg.DB
+	questdbDB *storequestdb.DB
+	mongoDB   *storemongo.DB
+	owned     []func() error
 }
 
 func (h groupDatabaseHandles) close(logger *slog.Logger, group string) {
@@ -250,7 +252,7 @@ func (m *Manager) openGroupDatabaseHandles(ctx context.Context, c stores.Archive
 		return handles, nil
 	}
 	if len(required) == 0 {
-		return handles, fmt.Errorf("group %s: databaseConnectionName can only be used with SQLite, Postgres, or MongoDB stores", c.Name)
+		return handles, fmt.Errorf("group %s: databaseConnectionName can only be used with SQLite, Postgres, QuestDB, or MongoDB stores", c.Name)
 	}
 	if len(required) > 1 {
 		if IsDefaultDatabaseConnectionName(selectedName) {
@@ -268,6 +270,16 @@ func (m *Manager) openGroupDatabaseHandles(ctx context.Context, c stores.Archive
 			if m.pgDB == nil {
 				return handles, fmt.Errorf("group %s: default Postgres database connection is not configured", c.Name)
 			}
+		case stores.DatabaseConnectionQuestDB:
+			if m.cfg.QuestDB.URL == "" {
+				return handles, fmt.Errorf("group %s: default QuestDB database connection is not configured", c.Name)
+			}
+			db, err := storequestdb.Open(ctx, m.cfg.QuestDB.URL, m.cfg.QuestDB.User, m.cfg.QuestDB.Pass)
+			if err != nil {
+				return handles, fmt.Errorf("group %s: open default QuestDB connection: %w", c.Name, err)
+			}
+			handles.questdbDB = db
+			handles.owned = append(handles.owned, db.Close)
 		case stores.DatabaseConnectionMongoDB:
 			if m.mongoDB == nil {
 				return handles, fmt.Errorf("group %s: default MongoDB database connection is not configured", c.Name)
@@ -299,6 +311,13 @@ func (m *Manager) openGroupDatabaseHandles(ctx context.Context, c stores.Archive
 			return handles, err
 		}
 		handles.pgDB = db
+		handles.owned = append(handles.owned, db.Close)
+	case stores.DatabaseConnectionQuestDB:
+		db, err := storequestdb.Open(ctx, conn.URL, conn.Username, conn.Password)
+		if err != nil {
+			return handles, err
+		}
+		handles.questdbDB = db
 		handles.owned = append(handles.owned, db.Close)
 	case stores.DatabaseConnectionMongoDB:
 		dbName := conn.Database
@@ -395,6 +414,24 @@ func (m *Manager) buildArchiveStore(ctx context.Context, c stores.ArchiveGroupCo
 		a := storepg.NewMessageArchive(name, handles.pgDB, c.PayloadFormat)
 		if err := a.EnsureTable(ctx); err != nil {
 			return nil, fmt.Errorf("ensure %s on postgres: %w", name, err)
+		}
+		return a, nil
+	case stores.ArchiveQuestDB:
+		if handles.questdbDB == nil {
+			if m.cfg.QuestDB.URL != "" {
+				db, err := storequestdb.Open(ctx, m.cfg.QuestDB.URL, m.cfg.QuestDB.User, m.cfg.QuestDB.Pass)
+				if err != nil {
+					return nil, fmt.Errorf("group %s: open default QuestDB: %w", c.Name, err)
+				}
+				handles.questdbDB = db
+				handles.owned = append(handles.owned, db.Close)
+			} else {
+				return nil, fmt.Errorf("group %s: archiveType=QUESTDB but no QuestDB connection configured", c.Name)
+			}
+		}
+		a := storequestdb.NewMessageArchive(name, handles.questdbDB, c.PayloadFormat)
+		if err := a.EnsureTable(ctx); err != nil {
+			return nil, fmt.Errorf("ensure %s on questdb: %w", name, err)
 		}
 		return a, nil
 	case stores.ArchiveMongoDB:

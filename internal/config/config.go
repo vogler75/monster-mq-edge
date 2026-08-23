@@ -73,6 +73,12 @@ type PostgresConfig struct {
 	Pass string `yaml:"Pass"`
 }
 
+type QuestDBConfig struct {
+	URL  string `yaml:"Url"`
+	User string `yaml:"User"`
+	Pass string `yaml:"Pass"`
+}
+
 type MongoDBConfig struct {
 	URL      string `yaml:"Url"`
 	Database string `yaml:"Database"`
@@ -170,6 +176,7 @@ type Config struct {
 
 	SQLite   SQLiteConfig   `yaml:"SQLite"`
 	Postgres PostgresConfig `yaml:"Postgres"`
+	QuestDB  QuestDBConfig  `yaml:"QuestDB"`
 	MongoDB  MongoDBConfig  `yaml:"MongoDB"`
 
 	UserManagement UserManagementConfig `yaml:"UserManagement"`
