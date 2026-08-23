@@ -1,0 +1,8 @@
+Release v0.1.12
+Built from commit: 0afed4f
+Date: 2026-08-23 15:49:02
+
+Changes since v0.1.11:
+---
+0afed4f feat(archive): add QuestDB message archive destination in Go edge broker
+2912645 Add CrateDB to database connection types in GraphQL schema
