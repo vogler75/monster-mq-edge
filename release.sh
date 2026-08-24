@@ -86,6 +86,11 @@ echo -e "${YELLOW}Creating tag v${NEW_VERSION}...${NC}"
 git tag -a "v${NEW_VERSION}" -m "Release version ${NEW_VERSION}"
 echo -e "${GREEN}✓ Created tag v${NEW_VERSION}${NC}"
 
+echo -e "${YELLOW}Pushing commits and tags...${NC}"
+git push
+git push --tags
+echo -e "${GREEN}✓ Pushed commits and tags${NC}"
+
 echo ""
 echo -e "${GREEN}=== Release Tag Complete ===${NC}"
 echo -e "${GREEN}Version ${NEW_VERSION} tagged successfully.${NC}"
@@ -94,6 +99,4 @@ echo -e "${YELLOW}Next steps:${NC}"
 echo "  1. Build artifacts locally : ./build.sh"
 echo "  2. Publish release assets  : ./publish.sh"
 echo "  3. Or build & publish      : ./build.sh --publish"
-PARENT_BRANCH=$(git branch --show-current)
-echo "  4. Push commits & tag      : git push origin ${PARENT_BRANCH} && git push origin v${NEW_VERSION}"
 
