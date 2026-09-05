@@ -1,0 +1,9 @@
+Release v0.1.13
+Built from commit: a50f5da
+Date: 2026-09-05 18:19:18
+
+Changes since v0.1.12:
+---
+a50f5da Add mTLS support and certificate-based auth
+c362a7e Check CLI compatibility on GraphQL schema changes
+625a6d7 Update release.sh
