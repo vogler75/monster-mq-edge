@@ -127,7 +127,14 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 	server := mqtt.New(&mqtt.Options{InlineClient: true, Logger: logger})
 
 	if cfg.UserManagement.Enabled {
-		if err := server.AddHook(NewAuthHook(authCache), nil); err != nil {
+		authHook := NewAuthHook(
+			authCache,
+			storage.Users,
+			cfg.EffectiveUseIdentityAsUsername(),
+			cfg.EffectiveAutoCreateUser(),
+			logger,
+		)
+		if err := server.AddHook(authHook, nil); err != nil {
 			return nil, fmt.Errorf("add monstermq auth hook: %w", err)
 		}
 	} else {
@@ -192,18 +199,31 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 		logger.Info("mqtt listener", "type", "ws", "port", cfg.WS.Port)
 	}
 	if cfg.TCPS.Enabled {
-		tlsCfg, err := loadTLS(cfg.TCPS.KeyStorePath, cfg.TCPS.KeyStorePassword)
+		tlsCfg, err := loadTLS(TLSParams{
+			CertPath:           cfg.EffectiveTCPSKeyStorePath(),
+			KeyPath:            cfg.EffectiveTCPSKeyPath(),
+			Password:           cfg.EffectiveTCPSKeyStorePassword(),
+			ClientAuth:         cfg.EffectiveTCPSClientAuth(),
+			TrustStorePath:     cfg.EffectiveTCPSTrustStorePath(),
+			TrustStorePassword: cfg.EffectiveTCPSTrustStorePassword(),
+			TrustStoreType:     cfg.EffectiveTCPSTrustStoreType(),
+		})
 		if err != nil {
-			return nil, fmt.Errorf("tls config: %w", err)
+			return nil, fmt.Errorf("tcps tls config: %w", err)
 		}
 		l := listeners.NewTCP(listeners.Config{ID: "tcps", Address: fmt.Sprintf("%s:%d", cfg.TCPS.ListenAddress(), cfg.TCPS.Port), TLSConfig: tlsCfg})
 		if err := server.AddListener(l); err != nil {
 			return nil, fmt.Errorf("add tcps listener: %w", err)
 		}
-		logger.Info("mqtt listener", "type", "tcps", "port", cfg.TCPS.Port)
+		logger.Info("mqtt listener", "type", "tcps", "port", cfg.TCPS.Port, "client_auth", cfg.EffectiveTCPSClientAuth(), "identity_as_username", cfg.EffectiveUseIdentityAsUsername())
 	}
 	if cfg.WSS.Enabled {
-		tlsCfg, err := loadTLS(cfg.WSS.KeyStorePath, cfg.WSS.KeyStorePassword)
+		tlsCfg, err := loadTLS(TLSParams{
+			CertPath:           cfg.EffectiveWSSKeyStorePath(),
+			KeyPath:            cfg.EffectiveWSSKeyPath(),
+			Password:           cfg.EffectiveWSSKeyStorePassword(),
+			ClientAuth:         config.ClientAuthNone,
+		})
 		if err != nil {
 			return nil, fmt.Errorf("wss tls config: %w", err)
 		}
@@ -483,4 +503,5 @@ func (s *Server) Storage() *stores.Storage                { return s.storage }
 func (s *Server) Bus() *pubsub.Bus                        { return s.bus }
 func (s *Server) Subscriptions() *topic.SubscriptionIndex { return s.subs }
 func (s *Server) Archives() *archive.Manager              { return s.archives }
+func (s *Server) AuthCache() *mauth.Cache                 { return s.authCache }
 func (s *Server) Mochi() *mqtt.Server                     { return s.mochi }

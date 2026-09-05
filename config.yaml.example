@@ -4,6 +4,17 @@ TCP:  { Enabled: true,  Port: 1883, Address: "0.0.0.0" }  # use "::" for IPv6
 TCPS: { Enabled: false, Port: 8883, Address: "0.0.0.0", KeyStorePath: "data/keystore", KeyStorePassword: "" }
 WS:   { Enabled: true,  Port: 1884, Address: "0.0.0.0" }
 WSS:  { Enabled: false, Port: 8884, Address: "0.0.0.0", KeyStorePath: "data/keystore", KeyStorePassword: "" }
+
+# SSL:
+#   KeyStoreType: PEM
+#   KeyStorePath: data/server.crt
+#   KeyPath: data/server.key
+#   ClientAuth: REQUEST               # NONE, REQUEST, or REQUIRED
+#   TrustStoreType: PEM
+#   TrustStorePath: data/ca.crt
+#   UseIdentityAsUsername: true       # Use client certificate Common Name as username
+#   AutoCreateUser: false             # Auto-create user account on first connect
+
 MaxMessageSize: 1048576
 
 DefaultStoreType: SQLITE

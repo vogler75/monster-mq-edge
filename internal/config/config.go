@@ -46,12 +46,26 @@ func (s StoreType) isValidVolatileBackend() bool {
 	return s == StoreMemory || s.isValidBackend()
 }
 
+type ClientAuthType string
+
+const (
+	ClientAuthNone     ClientAuthType = "NONE"
+	ClientAuthRequest  ClientAuthType = "REQUEST"
+	ClientAuthRequired ClientAuthType = "REQUIRED"
+)
+
 type Listener struct {
-	Enabled          bool   `yaml:"Enabled"`
-	Address          string `yaml:"Address,omitempty"`
-	Port             int    `yaml:"Port"`
-	KeyStorePath     string `yaml:"KeyStorePath,omitempty"`
-	KeyStorePassword string `yaml:"KeyStorePassword,omitempty"`
+	Enabled               bool           `yaml:"Enabled"`
+	Address               string         `yaml:"Address,omitempty"`
+	Port                  int            `yaml:"Port"`
+	KeyStorePath          string         `yaml:"KeyStorePath,omitempty"`
+	KeyStorePassword      string         `yaml:"KeyStorePassword,omitempty"`
+	ClientAuth            ClientAuthType `yaml:"ClientAuth,omitempty"`
+	TrustStorePath        string         `yaml:"TrustStorePath,omitempty"`
+	TrustStorePassword    string         `yaml:"TrustStorePassword,omitempty"`
+	TrustStoreType        string         `yaml:"TrustStoreType,omitempty"`
+	UseIdentityAsUsername *bool          `yaml:"UseIdentityAsUsername,omitempty"`
+	AutoCreateUser        *bool          `yaml:"AutoCreateUser,omitempty"`
 }
 
 // ListenAddress returns the address to bind, defaulting to 0.0.0.0 when unset.
@@ -160,13 +174,34 @@ type FeaturesConfig struct {
 	Redfish            bool `yaml:"Redfish"`
 }
 
+type WSSOverrideConfig struct {
+	KeyStorePath     string `yaml:"KeyStorePath,omitempty"`
+	KeyStorePassword string `yaml:"KeyStorePassword,omitempty"`
+	KeyPath          string `yaml:"KeyPath,omitempty"`
+}
+
+type SSLConfig struct {
+	KeyStorePath          string            `yaml:"KeyStorePath,omitempty"`
+	KeyStorePassword      string            `yaml:"KeyStorePassword,omitempty"`
+	KeyStoreType          string            `yaml:"KeyStoreType,omitempty"`
+	KeyPath               string            `yaml:"KeyPath,omitempty"`
+	ClientAuth            ClientAuthType    `yaml:"ClientAuth,omitempty"`
+	TrustStorePath        string            `yaml:"TrustStorePath,omitempty"`
+	TrustStorePassword    string            `yaml:"TrustStorePassword,omitempty"`
+	TrustStoreType        string            `yaml:"TrustStoreType,omitempty"`
+	UseIdentityAsUsername bool              `yaml:"UseIdentityAsUsername"`
+	AutoCreateUser        bool              `yaml:"AutoCreateUser"`
+	WSS                   WSSOverrideConfig `yaml:"WSS,omitempty"`
+}
+
 type Config struct {
-	NodeID         string   `yaml:"NodeId"`
-	TCP            Listener `yaml:"TCP"`
-	TCPS           Listener `yaml:"TCPS"`
-	WS             Listener `yaml:"WS"`
-	WSS            Listener `yaml:"WSS"`
-	MaxMessageSize int      `yaml:"MaxMessageSize"`
+	NodeID         string    `yaml:"NodeId"`
+	TCP            Listener  `yaml:"TCP"`
+	TCPS           Listener  `yaml:"TCPS"`
+	WS             Listener  `yaml:"WS"`
+	WSS            Listener  `yaml:"WSS"`
+	SSL            SSLConfig `yaml:"SSL"`
+	MaxMessageSize int       `yaml:"MaxMessageSize"`
 
 	DefaultStoreType  StoreType `yaml:"DefaultStoreType"`
 	SessionStoreType  StoreType `yaml:"SessionStoreType"`
@@ -343,7 +378,106 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("HostMonitoring.BaseTopic cannot be empty when enabled")
 		}
 	}
+	switch c.EffectiveTCPSClientAuth() {
+	case "", ClientAuthNone, ClientAuthRequest, ClientAuthRequired:
+	default:
+		return fmt.Errorf("invalid ClientAuth %q (must be one of NONE, REQUEST, REQUIRED)", c.EffectiveTCPSClientAuth())
+	}
 	return nil
+}
+
+// EffectiveTCPSClientAuth returns the client certificate verification mode for TCPS.
+func (c *Config) EffectiveTCPSClientAuth() ClientAuthType {
+	if c.TCPS.ClientAuth != "" {
+		return c.TCPS.ClientAuth
+	}
+	if c.SSL.ClientAuth != "" {
+		return c.SSL.ClientAuth
+	}
+	return ClientAuthNone
+}
+
+func (c *Config) EffectiveTCPSTrustStorePath() string {
+	if c.TCPS.TrustStorePath != "" {
+		return c.TCPS.TrustStorePath
+	}
+	return c.SSL.TrustStorePath
+}
+
+func (c *Config) EffectiveTCPSTrustStorePassword() string {
+	if c.TCPS.TrustStorePassword != "" {
+		return c.TCPS.TrustStorePassword
+	}
+	return c.SSL.TrustStorePassword
+}
+
+func (c *Config) EffectiveTCPSTrustStoreType() string {
+	if c.TCPS.TrustStoreType != "" {
+		return c.TCPS.TrustStoreType
+	}
+	if c.SSL.TrustStoreType != "" {
+		return c.SSL.TrustStoreType
+	}
+	return "PEM"
+}
+
+func (c *Config) EffectiveUseIdentityAsUsername() bool {
+	if c.TCPS.UseIdentityAsUsername != nil {
+		return *c.TCPS.UseIdentityAsUsername
+	}
+	return c.SSL.UseIdentityAsUsername
+}
+
+func (c *Config) EffectiveAutoCreateUser() bool {
+	if c.TCPS.AutoCreateUser != nil {
+		return *c.TCPS.AutoCreateUser
+	}
+	return c.SSL.AutoCreateUser
+}
+
+func (c *Config) EffectiveTCPSKeyStorePath() string {
+	if c.TCPS.KeyStorePath != "" {
+		return c.TCPS.KeyStorePath
+	}
+	return c.SSL.KeyStorePath
+}
+
+func (c *Config) EffectiveTCPSKeyStorePassword() string {
+	if c.TCPS.KeyStorePassword != "" {
+		return c.TCPS.KeyStorePassword
+	}
+	return c.SSL.KeyStorePassword
+}
+
+func (c *Config) EffectiveTCPSKeyPath() string {
+	return c.SSL.KeyPath
+}
+
+func (c *Config) EffectiveWSSKeyStorePath() string {
+	if c.WSS.KeyStorePath != "" {
+		return c.WSS.KeyStorePath
+	}
+	if c.SSL.WSS.KeyStorePath != "" {
+		return c.SSL.WSS.KeyStorePath
+	}
+	return c.SSL.KeyStorePath
+}
+
+func (c *Config) EffectiveWSSKeyStorePassword() string {
+	if c.WSS.KeyStorePassword != "" {
+		return c.WSS.KeyStorePassword
+	}
+	if c.SSL.WSS.KeyStorePassword != "" {
+		return c.SSL.WSS.KeyStorePassword
+	}
+	return c.SSL.KeyStorePassword
+}
+
+func (c *Config) EffectiveWSSKeyPath() string {
+	if c.SSL.WSS.KeyPath != "" {
+		return c.SSL.WSS.KeyPath
+	}
+	return c.SSL.KeyPath
 }
 
 // GetMaxQueueMessages returns the effective max queue size for offline sessions.

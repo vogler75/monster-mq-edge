@@ -84,11 +84,16 @@ func (c *Cache) Validate(username, password string) bool {
 	return err == nil && res != nil
 }
 
-func (c *Cache) lookup(username string) (stores.User, bool) {
+// Lookup returns the user from cache if present.
+func (c *Cache) Lookup(username string) (stores.User, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	u, ok := c.users[username]
 	return u, ok
+}
+
+func (c *Cache) lookup(username string) (stores.User, bool) {
+	return c.Lookup(username)
 }
 
 // Allow returns true if the user is permitted to publish (write=true) or subscribe
