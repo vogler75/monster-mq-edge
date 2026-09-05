@@ -1,0 +1,39 @@
+name: GraphQL CLI compatibility
+on:
+  pull_request:
+    paths:
+      - 'internal/graphql/**'
+      - 'gqlgen.yml'
+      - '.github/workflows/graphql-contract.yml'
+  push:
+    paths:
+      - 'internal/graphql/**'
+      - 'gqlgen.yml'
+      - '.github/workflows/graphql-contract.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  cli-consumer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: edge
+      - uses: actions/checkout@v4
+        with:
+          repository: vogler75/monster-mq
+          path: main
+      - uses: actions/checkout@v4
+        with:
+          repository: vogler75/monster-mq-tools
+          path: tools
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: tools/cli/go.mod
+          cache-dependency-path: |
+            tools/cli/go.sum
+            tools/scripts/graphql-contract/go.sum
+      - run: tools/scripts/graphql-contract.sh --main-root main --edge-root edge --cli-root tools
+      - run: go test ./...
+        working-directory: tools/cli
