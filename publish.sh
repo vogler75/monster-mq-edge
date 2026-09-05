@@ -106,14 +106,18 @@ if [ "$PUBLISH_GITHUB" = true ]; then
         exit 1
     fi
 
-    # Verify Debian packages exist (build them if missing)
+    # Verify Debian packages exist
     DEB_ARM64="bin/monstermq-edge_${VERSION}_arm64.deb"
     DEB_ARMHF="bin/monstermq-edge_${VERSION}_armhf.deb"
     DEB_AMD64="bin/monstermq-edge_${VERSION}_amd64.deb"
 
     if [ ! -f "$DEB_ARM64" ] || [ ! -f "$DEB_ARMHF" ] || [ ! -f "$DEB_AMD64" ]; then
-        echo -e "${YELLOW}Debian packages missing in bin/. Building them now...${NC}"
-        make deb-all
+        echo -e "${RED}Error: Debian packages missing in bin/:${NC}"
+        [ ! -f "$DEB_ARM64" ] && echo -e "  - missing: $DEB_ARM64"
+        [ ! -f "$DEB_ARMHF" ] && echo -e "  - missing: $DEB_ARMHF"
+        [ ! -f "$DEB_AMD64" ] && echo -e "  - missing: $DEB_AMD64"
+        echo -e "${YELLOW}Please build Debian packages first with: ./build.sh --deb (or ./build.sh --all)${NC}"
+        exit 1
     fi
 
     # Verify tag on remote
