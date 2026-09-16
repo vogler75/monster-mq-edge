@@ -10,6 +10,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"monstermq.io/edge/internal/archive"
+	"monstermq.io/edge/internal/auth"
 	"monstermq.io/edge/internal/stores"
 )
 
@@ -23,6 +24,34 @@ func textResult(text string) *mcp.CallToolResult {
 			},
 		},
 	}
+}
+
+func errorResult(message string) *mcp.CallToolResult {
+	result := textResult(message)
+	result.IsError = true
+	return result
+}
+
+func (s *Server) allowTopic(ctx context.Context, topic string, write bool) bool {
+	if !s.cfg.UserManagement.Enabled {
+		return true
+	}
+	username := ""
+	if user, ok := auth.Principal(ctx); ok {
+		username = user.Username
+	}
+	return s.authCache.Allow(username, topic, write)
+}
+
+func (s *Server) requireTopic(ctx context.Context, topic string, write bool) *mcp.CallToolResult {
+	if s.allowTopic(ctx, topic, write) {
+		return nil
+	}
+	action := "read"
+	if write {
+		action = "publish to"
+	}
+	return errorResult(fmt.Sprintf("Permission denied: cannot %s topic '%s'", action, topic))
 }
 
 func (s *Server) getArchiveGroup(name string) *archive.Group {
@@ -119,7 +148,7 @@ func (s *Server) registerTools() {
 		}
 
 		yieldCandidate := func(topic string) bool {
-			if matchTopicName(topic) && !topicMap[topic] {
+			if matchTopicName(topic) && s.allowTopic(ctx, topic, false) && !topicMap[topic] {
 				topicMap[topic] = true
 				topics = append(topics, topic)
 			}
@@ -183,6 +212,9 @@ func (s *Server) registerTools() {
 					return true
 				}
 				cleanTopic := strings.TrimSuffix(msg.TopicName, "/<config>")
+				if !s.allowTopic(ctx, cleanTopic, false) {
+					return true
+				}
 				if args.Namespace != "" && !strings.HasPrefix(cleanTopic, args.Namespace) {
 					return true
 				}
@@ -211,6 +243,9 @@ func (s *Server) registerTools() {
 		table = append(table, []string{"topic", "value"})
 
 		for _, topic := range args.Topics {
+			if denied := s.requireTopic(ctx, topic, false); denied != nil {
+				return denied, nil, nil
+			}
 			val := s.getTopicPayload(ctx, topic, group)
 			table = append(table, []string{topic, val})
 		}
@@ -231,6 +266,9 @@ func (s *Server) registerTools() {
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args SetTopicValueParams) (*mcp.CallToolResult, any, error) {
 		if args.Topic == "" {
 			return textResult("Topic parameter required"), nil, nil
+		}
+		if denied := s.requireTopic(ctx, args.Topic, true); denied != nil {
+			return denied, nil, nil
 		}
 		retained := args.Retained != nil && *args.Retained
 		qos := byte(0)
@@ -264,6 +302,9 @@ func (s *Server) registerTools() {
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args QueryMessageArchiveParams) (*mcp.CallToolResult, any, error) {
 		if args.Topic == "" {
 			return textResult("Topic parameter required"), nil, nil
+		}
+		if denied := s.requireTopic(ctx, args.Topic, false); denied != nil {
+			return denied, nil, nil
 		}
 
 		group := s.getArchiveGroup(args.ArchiveGroup)
@@ -303,6 +344,9 @@ func (s *Server) registerTools() {
 		var table [][]string
 		table = append(table, []string{"topic", "timestamp", "payload", "qos", "client_id"})
 		for _, m := range msgs {
+			if !s.allowTopic(ctx, m.Topic, false) {
+				continue
+			}
 			table = append(table, []string{
 				m.Topic,
 				m.Timestamp.Format(time.RFC3339),
@@ -358,6 +402,11 @@ func (s *Server) registerTools() {
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args QueryAggregatedMessagesParams) (*mcp.CallToolResult, any, error) {
 		if len(args.Topics) == 0 {
 			return textResult("topics parameter required"), nil, nil
+		}
+		for _, topic := range args.Topics {
+			if denied := s.requireTopic(ctx, topic, false); denied != nil {
+				return denied, nil, nil
+			}
 		}
 		if args.Interval == "" {
 			return textResult("interval parameter required"), nil, nil

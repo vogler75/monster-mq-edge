@@ -2347,6 +2347,7 @@ func (r *userManagementMutationsResolver) SetPassword(ctx context.Context, _ *ge
 	if err := r.Storage.Users.UpdateUser(ctx, *existing); err != nil {
 		return &generated.UserManagementResult{Success: false, Message: ptr(err.Error())}, nil
 	}
+	_ = r.AuthCache.Refresh(ctx)
 	return &generated.UserManagementResult{Success: true, User: userToGraphQL(*existing)}, nil
 }
 func (r *userManagementMutationsResolver) CreateACLRule(ctx context.Context, _ *generated.UserManagementMutations, input generated.CreateACLRuleInput) (*generated.UserManagementResult, error) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -24,8 +25,9 @@ type Cache struct {
 }
 
 type session struct {
-	username  string
-	expiresAt time.Time
+	username     string
+	passwordHash string
+	expiresAt    time.Time
 }
 
 func NewCache(store stores.UserStore, anonymousAllow bool, aclCheckOnSubscribe bool) *Cache {
@@ -54,13 +56,17 @@ func (c *Cache) Authenticate(ctx context.Context, username, password string) (*s
 // CreateSession creates an opaque, process-local bearer token. Sessions expire
 // after 24 hours and are revalidated against the user cache on every request.
 func (c *Cache) CreateSession(username string) (string, error) {
+	u, ok := c.Lookup(username)
+	if !ok || !u.Enabled {
+		return "", fmt.Errorf("user is not enabled")
+	}
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return "", err
 	}
 	token := base64.RawURLEncoding.EncodeToString(raw)
 	c.mu.Lock()
-	c.sessions[token] = session{username: username, expiresAt: time.Now().Add(24 * time.Hour)}
+	c.sessions[token] = session{username: username, passwordHash: u.PasswordHash, expiresAt: time.Now().Add(24 * time.Hour)}
 	c.mu.Unlock()
 	return token, nil
 }
@@ -71,7 +77,7 @@ func (c *Cache) ValidateSession(token string) (stores.User, bool) {
 	s, ok := c.sessions[token]
 	u, userOK := c.users[s.username]
 	c.mu.RUnlock()
-	if !ok || !userOK || !u.Enabled {
+	if !ok || !userOK || !u.Enabled || u.PasswordHash != s.passwordHash {
 		return stores.User{}, false
 	}
 	if time.Now().After(s.expiresAt) {

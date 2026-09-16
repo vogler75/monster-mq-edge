@@ -101,23 +101,18 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		if strings.HasPrefix(authHeader, "Bearer ") {
-			token := strings.TrimPrefix(authHeader, "Bearer ")
-			if token != "" {
-				next.ServeHTTP(w, r)
+		parts := strings.Fields(authHeader)
+		if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
+			if user, ok := s.authCache.ValidateSession(parts[1]); ok {
+				next.ServeHTTP(w, r.WithContext(auth.WithPrincipal(r.Context(), user)))
 				return
 			}
-		} else if strings.HasPrefix(authHeader, "Basic ") {
+		} else if len(parts) == 2 && strings.EqualFold(parts[0], "Basic") {
 			username, password, ok := r.BasicAuth()
-			if ok && s.authCache.Validate(username, password) {
-				next.ServeHTTP(w, r)
+			if user, valid := s.authCache.Authenticate(r.Context(), username, password); ok && valid {
+				next.ServeHTTP(w, r.WithContext(auth.WithPrincipal(r.Context(), *user)))
 				return
 			}
-		}
-
-		if s.cfg.UserManagement.AnonymousEnabled {
-			next.ServeHTTP(w, r)
-			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")

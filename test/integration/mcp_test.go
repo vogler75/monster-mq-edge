@@ -46,13 +46,108 @@ func startWithMCP(t *testing.T, mqttPort, gqlPort, mcpPort int, cfgFns ...func(*
 		resp, err := http.DefaultClient.Do(req)
 		if err == nil {
 			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusUnsupportedMediaType || resp.StatusCode == http.StatusBadRequest {
-				break
-			}
+			break
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
 	return srv, mcpURL
+}
+
+func mcpRequest(t *testing.T, url, body, authorization string) (int, string) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("create MCP request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	if authorization != "" {
+		req.Header.Set("Authorization", authorization)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("MCP request: %v", err)
+	}
+	defer resp.Body.Close()
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read MCP response: %v", err)
+	}
+	return resp.StatusCode, string(bodyBytes)
+}
+
+func TestMCPBearerAuthenticationAndACL(t *testing.T) {
+	srv, mcpURL := startWithMCP(t, 23051, 28051, 23001, func(c *config.Config) {
+		c.UserManagement.Enabled = true
+		c.UserManagement.AnonymousEnabled = false
+	})
+	defer srv.Close()
+	gqlURL := "http://localhost:28051/graphql"
+	initialize := "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{},\"clientInfo\":{\"name\":\"test\",\"version\":\"1\"}}}"
+
+	for name, authorization := range map[string]string{
+		"missing":   "",
+		"unknown":   "Bearer definitely-not-a-valid-token",
+		"empty":     "Bearer ",
+		"malformed": "Bearer one two",
+	} {
+		t.Run(name, func(t *testing.T) {
+			status, _ := mcpRequest(t, mcpURL, initialize, authorization)
+			if status != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want 401", status)
+			}
+		})
+	}
+
+	adminToken := loginToken(t, gqlURL, "Admin", "Admin")
+	status, body := mcpRequest(t, mcpURL, initialize, "Bearer "+adminToken)
+	if status != http.StatusOK || !strings.Contains(body, "serverInfo") {
+		t.Fatalf("valid bearer initialize failed: status=%d body=%s", status, body)
+	}
+
+	gqlQueryAuth(t, gqlURL, "mutation { user { createUser(input: { username: \"mcp-user\", password: \"pw\", canSubscribe: true, canPublish: true }) { success } } }", nil, adminToken)
+	gqlQueryAuth(t, gqlURL, "mutation { user { createAclRule(input: { username: \"mcp-user\", topicPattern: \"private/#\", canSubscribe: false, canPublish: false, priority: 100 }) { success } } }", nil, adminToken)
+	gqlQueryAuth(t, gqlURL, "mutation { user { createAclRule(input: { username: \"mcp-user\", topicPattern: \"#\", canSubscribe: true, canPublish: true, priority: 1 }) { success } } }", nil, adminToken)
+	userToken := loginToken(t, gqlURL, "mcp-user", "pw")
+
+	callTool := func(topic string) string {
+		body := fmt.Sprintf("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"set-topic-value\",\"arguments\":{\"topic\":%q,\"payload\":\"value\"}}}", topic)
+		status, response := mcpRequest(t, mcpURL, body, "Bearer "+userToken)
+		if status != http.StatusOK {
+			t.Fatalf("tool status = %d: %s", status, response)
+		}
+		return response
+	}
+	if response := callTool("public/value"); !strings.Contains(response, "Published to topic") {
+		t.Fatalf("allowed publish failed: %s", response)
+	}
+	if response := callTool("private/value"); !strings.Contains(response, "Permission denied") || !strings.Contains(response, "\"isError\":true") {
+		t.Fatalf("denied publish was not rejected: %s", response)
+	}
+
+	gqlQueryAuth(t, gqlURL, "mutation { user { setPassword(input: { username: \"mcp-user\", password: \"changed\" }) { success } } }", nil, adminToken)
+	status, _ = mcpRequest(t, mcpURL, initialize, "Bearer "+userToken)
+	if status != http.StatusUnauthorized {
+		t.Fatalf("revoked bearer status = %d, want 401", status)
+	}
+}
+
+func TestMCPInvalidBearerRejectedWhenAnonymousEnabled(t *testing.T) {
+	srv, mcpURL := startWithMCP(t, 23052, 28052, 23002, func(c *config.Config) {
+		c.UserManagement.Enabled = true
+		c.UserManagement.AnonymousEnabled = true
+	})
+	defer srv.Close()
+	initialize := "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{},\"clientInfo\":{\"name\":\"test\",\"version\":\"1\"}}}"
+
+	status, _ := mcpRequest(t, mcpURL, initialize, "Bearer invalid")
+	if status != http.StatusUnauthorized {
+		t.Fatalf("invalid bearer status = %d, want 401", status)
+	}
+	status, body := mcpRequest(t, mcpURL, initialize, "")
+	if status != http.StatusOK || !strings.Contains(body, "serverInfo") {
+		t.Fatalf("anonymous initialize failed: status=%d body=%s", status, body)
+	}
 }
 
 func TestMCPServerTools(t *testing.T) {
