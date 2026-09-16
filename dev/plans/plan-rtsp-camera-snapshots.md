@@ -39,6 +39,7 @@ The bridge connects to RTSP camera streams, extracts Motion JPEG (MJPEG) frames 
      }
      ```
    - Downstream consumers (HMI panels, Node-RED, AI/vision workers) can subscribe to `<topicPrefix>/capture/latest` or `<topicPrefix>/capture/+/meta` without needing to pull high-bandwidth binary pictures until desired.
+   - Every capture also updates `<topicPrefix>/capture/latest/pic` and `<topicPrefix>/capture/latest/meta`. A capture initiated by the MQTT trigger topic additionally updates `<topicPrefix>/capture/snapshot/pic` and `<topicPrefix>/capture/snapshot/meta`.
 5. **Dashboard Management**:
    - Full configuration UI in `monster-mq-dashboard`: list view, detail editor with slot preview, connection status, manual "Trigger Snapshot" testing, and live preview.
 

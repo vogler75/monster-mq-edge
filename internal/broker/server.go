@@ -13,6 +13,7 @@ import (
 	"monstermq.io/edge/internal/archive"
 	mauth "monstermq.io/edge/internal/auth"
 	"monstermq.io/edge/internal/bridge/mqttclient"
+	"monstermq.io/edge/internal/bridge/rtspcamera"
 	"monstermq.io/edge/internal/bridge/winccoa"
 	"monstermq.io/edge/internal/bridge/winccua"
 	"monstermq.io/edge/internal/config"
@@ -47,6 +48,7 @@ type Server struct {
 	bridges     *mqttclient.Manager
 	winCCUa     *winccua.Manager
 	winCCOa     *winccoa.Manager
+	rtspCameras *rtspcamera.Manager
 	gqlSrv      *gql.Server
 	mcpSrv      *mcp.Server
 	redfishMgr  *redfish.Manager
@@ -287,10 +289,16 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 		redfishMgr = redfish.NewManager(cfg, storage.DeviceConfig, bus, lastVal, publishFn, cfg.NodeID, logger)
 	}
 
+	// 7f. RTSP Camera manager
+	var rtspCameras *rtspcamera.Manager
+	if cfg.Features.RtspCamera {
+		rtspCameras = rtspcamera.NewManager(storage.DeviceConfig, publishFn, &rtspcamera.BusAdapter{Bus: bus}, cfg.NodeID, logger)
+	}
+
 	// 8. GraphQL server (HTTP + WebSocket)
 	var gqlSrv *gql.Server
 	if cfg.GraphQL.Enabled {
-		resolver := resolvers.New(cfg, storage, bus, archives, bridges, winCCUa, winCCOa, authCache, collector, logBus, logger, server, publishFn, hmiMgr, redfishMgr)
+		resolver := resolvers.New(cfg, storage, bus, archives, bridges, winCCUa, winCCOa, authCache, collector, logBus, logger, server, publishFn, hmiMgr, redfishMgr, rtspCameras)
 		gqlSrv = gql.NewServer(cfg, resolver, hmiMgr, redfishMgr, logger)
 	}
 
@@ -303,7 +311,7 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 	return &Server{
 		cfg: cfg, logger: logger, mochi: server,
 		storage: storage, bus: bus, subs: subs, archives: archives, authCache: authCache,
-		collector: collector, bridges: bridges, winCCUa: winCCUa, winCCOa: winCCOa, gqlSrv: gqlSrv,
+		collector: collector, bridges: bridges, winCCUa: winCCUa, winCCOa: winCCOa, rtspCameras: rtspCameras, gqlSrv: gqlSrv,
 		mcpSrv: mcpSrv, redfishMgr: redfishMgr, hostMonitor: hostMonitor,
 	}, nil
 }
@@ -427,6 +435,11 @@ func (s *Server) Serve() error {
 			s.logger.Warn("winccoa start error", "err", err)
 		}
 	}
+	if s.rtspCameras != nil {
+		if err := s.rtspCameras.Start(context.Background()); err != nil {
+			s.logger.Warn("rtsp cameras start error", "err", err)
+		}
+	}
 	if s.hostMonitor != nil {
 		s.hostMonitor.Start(context.Background())
 	}
@@ -461,6 +474,9 @@ func (s *Server) Close() error {
 	}
 	if s.winCCOa != nil {
 		s.winCCOa.Stop()
+	}
+	if s.rtspCameras != nil {
+		s.rtspCameras.Stop()
 	}
 	if s.hostMonitor != nil {
 		s.hostMonitor.Stop()

@@ -574,6 +574,77 @@ type RetainedMessage struct {
 	UserProperties         []*UserProperty `json:"userProperties,omitempty"`
 }
 
+type RtspCamera struct {
+	Name            string               `json:"name"`
+	NodeID          string               `json:"nodeId"`
+	Enabled         bool                 `json:"enabled"`
+	Config          *RtspCameraConfig    `json:"config"`
+	CreatedAt       string               `json:"createdAt"`
+	UpdatedAt       string               `json:"updatedAt"`
+	IsOnCurrentNode bool                 `json:"isOnCurrentNode"`
+	Metrics         []*RtspCameraMetrics `json:"metrics"`
+	MetricsHistory  []*RtspCameraMetrics `json:"metricsHistory"`
+}
+
+type RtspCameraConfig struct {
+	URL             string          `json:"url"`
+	Transport       RtspTransport   `json:"transport"`
+	TopicPrefix     string          `json:"topicPrefix"`
+	Mode            RtspCaptureMode `json:"mode"`
+	IntervalMs      int             `json:"intervalMs"`
+	Slots           int             `json:"slots"`
+	TriggerTopic    *string         `json:"triggerTopic,omitempty"`
+	Retain          bool            `json:"retain"`
+	Qos             int             `json:"qos"`
+	PublishMetadata bool            `json:"publishMetadata"`
+}
+
+type RtspCameraConfigInput struct {
+	URL             string           `json:"url"`
+	Transport       *RtspTransport   `json:"transport,omitempty"`
+	TopicPrefix     string           `json:"topicPrefix"`
+	Mode            *RtspCaptureMode `json:"mode,omitempty"`
+	IntervalMs      *int             `json:"intervalMs,omitempty"`
+	Slots           *int             `json:"slots,omitempty"`
+	TriggerTopic    *string          `json:"triggerTopic,omitempty"`
+	Retain          *bool            `json:"retain,omitempty"`
+	Qos             *int             `json:"qos,omitempty"`
+	PublishMetadata *bool            `json:"publishMetadata,omitempty"`
+}
+
+type RtspCameraDeviceMutations struct {
+	Create          *RtspCameraResult `json:"create"`
+	Update          *RtspCameraResult `json:"update"`
+	Delete          bool              `json:"delete"`
+	Start           *RtspCameraResult `json:"start"`
+	Stop            *RtspCameraResult `json:"stop"`
+	Toggle          *RtspCameraResult `json:"toggle"`
+	TriggerSnapshot *RtspCameraResult `json:"triggerSnapshot"`
+}
+
+type RtspCameraInput struct {
+	Name    string                 `json:"name"`
+	NodeID  string                 `json:"nodeId"`
+	Enabled *bool                  `json:"enabled,omitempty"`
+	Config  *RtspCameraConfigInput `json:"config"`
+}
+
+type RtspCameraMetrics struct {
+	Connected          bool    `json:"connected"`
+	FramesReceived     float64 `json:"framesReceived"`
+	SnapshotsPublished float64 `json:"snapshotsPublished"`
+	CurrentSlot        int     `json:"currentSlot"`
+	LastSnapshotAt     *string `json:"lastSnapshotAt,omitempty"`
+	LastError          *string `json:"lastError,omitempty"`
+	Timestamp          string  `json:"timestamp"`
+}
+
+type RtspCameraResult struct {
+	Success bool        `json:"success"`
+	Camera  *RtspCamera `json:"camera,omitempty"`
+	Errors  []string    `json:"errors"`
+}
+
 type Session struct {
 	ClientID              string              `json:"clientId"`
 	NodeID                string              `json:"nodeId"`
@@ -1446,6 +1517,118 @@ func (e *PayloadFormat) UnmarshalJSON(b []byte) error {
 }
 
 func (e PayloadFormat) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type RtspCaptureMode string
+
+const (
+	RtspCaptureModeContinuous RtspCaptureMode = "CONTINUOUS"
+	RtspCaptureModeTriggered  RtspCaptureMode = "TRIGGERED"
+	RtspCaptureModeBoth       RtspCaptureMode = "BOTH"
+)
+
+var AllRtspCaptureMode = []RtspCaptureMode{
+	RtspCaptureModeContinuous,
+	RtspCaptureModeTriggered,
+	RtspCaptureModeBoth,
+}
+
+func (e RtspCaptureMode) IsValid() bool {
+	switch e {
+	case RtspCaptureModeContinuous, RtspCaptureModeTriggered, RtspCaptureModeBoth:
+		return true
+	}
+	return false
+}
+
+func (e RtspCaptureMode) String() string {
+	return string(e)
+}
+
+func (e *RtspCaptureMode) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = RtspCaptureMode(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid RtspCaptureMode", str)
+	}
+	return nil
+}
+
+func (e RtspCaptureMode) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *RtspCaptureMode) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e RtspCaptureMode) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type RtspTransport string
+
+const (
+	RtspTransportTCP RtspTransport = "TCP"
+	RtspTransportUDP RtspTransport = "UDP"
+)
+
+var AllRtspTransport = []RtspTransport{
+	RtspTransportTCP,
+	RtspTransportUDP,
+}
+
+func (e RtspTransport) IsValid() bool {
+	switch e {
+	case RtspTransportTCP, RtspTransportUDP:
+		return true
+	}
+	return false
+}
+
+func (e RtspTransport) String() string {
+	return string(e)
+}
+
+func (e *RtspTransport) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = RtspTransport(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid RtspTransport", str)
+	}
+	return nil
+}
+
+func (e RtspTransport) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *RtspTransport) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e RtspTransport) MarshalJSON() ([]byte, error) {
 	var buf bytes.Buffer
 	e.MarshalGQL(&buf)
 	return buf.Bytes(), nil

@@ -172,6 +172,7 @@ type FeaturesConfig struct {
 	Mcp                bool `yaml:"Mcp"`
 	Hmi                bool `yaml:"Hmi"`
 	Redfish            bool `yaml:"Redfish"`
+	RtspCamera         bool `yaml:"RtspCamera"`
 }
 
 type WSSOverrideConfig struct {
@@ -256,7 +257,7 @@ func Default() *Config {
 		Logging:               LoggingConfig{Level: "INFO", MqttSyslogEnabled: false, RingBufferSize: 1000},
 		GraphQL:               GraphQLConfig{Enabled: true, Port: 4000},
 		MCP:                   MCPConfig{Enabled: false, Port: 3000},
-		Features:              FeaturesConfig{MqttClient: false, WinCCUa: false, WinCCOa: false, DeviceImportExport: false, Mcp: false, Hmi: false, Redfish: false},
+		Features:              FeaturesConfig{MqttClient: false, WinCCUa: false, WinCCOa: false, DeviceImportExport: false, Mcp: false, Hmi: false, Redfish: false, RtspCamera: false},
 		HostMonitoring: HostMonitoringConfig{
 			Enabled:         false,
 			BaseTopic:       "nodes/{NodeId}/host",

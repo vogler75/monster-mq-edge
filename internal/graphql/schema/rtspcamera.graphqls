@@ -1,0 +1,92 @@
+# RTSP Camera Stream & Snapshot Bridge Schema
+
+enum RtspTransport {
+    TCP
+    UDP
+}
+
+enum RtspCaptureMode {
+    CONTINUOUS
+    TRIGGERED
+    BOTH
+}
+
+type RtspCameraConfig {
+    url: String!
+    transport: RtspTransport!
+    topicPrefix: String!
+    mode: RtspCaptureMode!
+    intervalMs: Int!
+    slots: Int!
+    triggerTopic: String
+    retain: Boolean!
+    qos: Int!
+    publishMetadata: Boolean!
+}
+
+type RtspCameraMetrics {
+    connected: Boolean!
+    framesReceived: Float!
+    snapshotsPublished: Float!
+    currentSlot: Int!
+    lastSnapshotAt: String
+    lastError: String
+    timestamp: String!
+}
+
+type RtspCamera {
+    name: String!
+    nodeId: String!
+    enabled: Boolean!
+    config: RtspCameraConfig!
+    createdAt: String!
+    updatedAt: String!
+    isOnCurrentNode: Boolean!
+    metrics: [RtspCameraMetrics!]!
+    metricsHistory(from: String, to: String, lastMinutes: Int): [RtspCameraMetrics!]!
+}
+
+type RtspCameraResult {
+    success: Boolean!
+    camera: RtspCamera
+    errors: [String!]!
+}
+
+input RtspCameraConfigInput {
+    url: String!
+    transport: RtspTransport = TCP
+    topicPrefix: String!
+    mode: RtspCaptureMode = CONTINUOUS
+    intervalMs: Int = 1000
+    slots: Int = 5
+    triggerTopic: String
+    retain: Boolean = true
+    qos: Int = 0
+    publishMetadata: Boolean = true
+}
+
+input RtspCameraInput {
+    name: String!
+    nodeId: String!
+    enabled: Boolean = true
+    config: RtspCameraConfigInput!
+}
+
+type RtspCameraDeviceMutations {
+    create(input: RtspCameraInput!): RtspCameraResult!
+    update(name: String!, input: RtspCameraInput!): RtspCameraResult!
+    delete(name: String!): Boolean!
+    start(name: String!): RtspCameraResult!
+    stop(name: String!): RtspCameraResult!
+    toggle(name: String!, enabled: Boolean!): RtspCameraResult!
+    triggerSnapshot(name: String!): RtspCameraResult!
+}
+
+extend type Query {
+    rtspCameras(name: String, node: String): [RtspCamera!]!
+    rtspCamera(name: String!): RtspCamera
+}
+
+extend type Mutation {
+    rtspCamera: RtspCameraDeviceMutations!
+}

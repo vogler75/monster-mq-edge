@@ -34,6 +34,8 @@ type ResolverRoot interface {
 	MqttClientMutations() MqttClientMutationsResolver
 	Mutation() MutationResolver
 	Query() QueryResolver
+	RtspCamera() RtspCameraResolver
+	RtspCameraDeviceMutations() RtspCameraDeviceMutationsResolver
 	Session() SessionResolver
 	SessionMutations() SessionMutationsResolver
 	Subscription() SubscriptionResolver
@@ -112,6 +114,7 @@ type MutationResolver interface {
 	SaveRedfishMapping(ctx context.Context, name string, config RedfishMappingConfigInput, enabled *bool) (*RedfishResult, error)
 	DeleteRedfishMapping(ctx context.Context, name string) (bool, error)
 	ToggleRedfishMapping(ctx context.Context, name string, enabled bool) (*RedfishResult, error)
+	RtspCamera(ctx context.Context) (*RtspCameraDeviceMutations, error)
 	WinCCOaDevice(ctx context.Context) (*WinCCOaDeviceMutations, error)
 	WinCCUaDevice(ctx context.Context) (*WinCCUaDeviceMutations, error)
 }
@@ -147,8 +150,23 @@ type QueryResolver interface {
 	RedfishMappings(ctx context.Context) ([]*RedfishMapping, error)
 	RedfishMapping(ctx context.Context, name string) (*RedfishMapping, error)
 	RedfishLiveSensors(ctx context.Context, chassisID *string) ([]*RedfishSensorStatus, error)
+	RtspCameras(ctx context.Context, name *string, node *string) ([]*RtspCamera, error)
+	RtspCamera(ctx context.Context, name string) (*RtspCamera, error)
 	WinCCOaClients(ctx context.Context, name *string, node *string) ([]*WinCCOaClient, error)
 	WinCCUaClients(ctx context.Context, name *string, node *string) ([]*WinCCUaClient, error)
+}
+type RtspCameraResolver interface {
+	Metrics(ctx context.Context, obj *RtspCamera) ([]*RtspCameraMetrics, error)
+	MetricsHistory(ctx context.Context, obj *RtspCamera, from *string, to *string, lastMinutes *int) ([]*RtspCameraMetrics, error)
+}
+type RtspCameraDeviceMutationsResolver interface {
+	Create(ctx context.Context, obj *RtspCameraDeviceMutations, input RtspCameraInput) (*RtspCameraResult, error)
+	Update(ctx context.Context, obj *RtspCameraDeviceMutations, name string, input RtspCameraInput) (*RtspCameraResult, error)
+	Delete(ctx context.Context, obj *RtspCameraDeviceMutations, name string) (bool, error)
+	Start(ctx context.Context, obj *RtspCameraDeviceMutations, name string) (*RtspCameraResult, error)
+	Stop(ctx context.Context, obj *RtspCameraDeviceMutations, name string) (*RtspCameraResult, error)
+	Toggle(ctx context.Context, obj *RtspCameraDeviceMutations, name string, enabled bool) (*RtspCameraResult, error)
+	TriggerSnapshot(ctx context.Context, obj *RtspCameraDeviceMutations, name string) (*RtspCameraResult, error)
 }
 type SessionResolver interface {
 	Metrics(ctx context.Context, obj *Session) ([]*SessionMetrics, error)
@@ -246,6 +264,8 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 		ec.unmarshalInputPublishInput,
 		ec.unmarshalInputRedfishMappingConfigInput,
 		ec.unmarshalInputRedfishThresholdsInput,
+		ec.unmarshalInputRtspCameraConfigInput,
+		ec.unmarshalInputRtspCameraInput,
 		ec.unmarshalInputSetPasswordInput,
 		ec.unmarshalInputUpdateAclRuleInput,
 		ec.unmarshalInputUpdateArchiveGroupInput,
@@ -427,6 +447,99 @@ extend type Mutation {
     saveRedfishMapping(name: String!, config: RedfishMappingConfigInput!, enabled: Boolean): RedfishResult!
     deleteRedfishMapping(name: String!): Boolean!
     toggleRedfishMapping(name: String!, enabled: Boolean!): RedfishResult!
+}
+`, BuiltIn: false},
+	{Name: "../schema/rtspcamera.graphqls", Input: `# RTSP Camera Stream & Snapshot Bridge Schema
+
+enum RtspTransport {
+    TCP
+    UDP
+}
+
+enum RtspCaptureMode {
+    CONTINUOUS
+    TRIGGERED
+    BOTH
+}
+
+type RtspCameraConfig {
+    url: String!
+    transport: RtspTransport!
+    topicPrefix: String!
+    mode: RtspCaptureMode!
+    intervalMs: Int!
+    slots: Int!
+    triggerTopic: String
+    retain: Boolean!
+    qos: Int!
+    publishMetadata: Boolean!
+}
+
+type RtspCameraMetrics {
+    connected: Boolean!
+    framesReceived: Float!
+    snapshotsPublished: Float!
+    currentSlot: Int!
+    lastSnapshotAt: String
+    lastError: String
+    timestamp: String!
+}
+
+type RtspCamera {
+    name: String!
+    nodeId: String!
+    enabled: Boolean!
+    config: RtspCameraConfig!
+    createdAt: String!
+    updatedAt: String!
+    isOnCurrentNode: Boolean!
+    metrics: [RtspCameraMetrics!]!
+    metricsHistory(from: String, to: String, lastMinutes: Int): [RtspCameraMetrics!]!
+}
+
+type RtspCameraResult {
+    success: Boolean!
+    camera: RtspCamera
+    errors: [String!]!
+}
+
+input RtspCameraConfigInput {
+    url: String!
+    transport: RtspTransport = TCP
+    topicPrefix: String!
+    mode: RtspCaptureMode = CONTINUOUS
+    intervalMs: Int = 1000
+    slots: Int = 5
+    triggerTopic: String
+    retain: Boolean = true
+    qos: Int = 0
+    publishMetadata: Boolean = true
+}
+
+input RtspCameraInput {
+    name: String!
+    nodeId: String!
+    enabled: Boolean = true
+    config: RtspCameraConfigInput!
+}
+
+type RtspCameraDeviceMutations {
+    create(input: RtspCameraInput!): RtspCameraResult!
+    update(name: String!, input: RtspCameraInput!): RtspCameraResult!
+    delete(name: String!): Boolean!
+    start(name: String!): RtspCameraResult!
+    stop(name: String!): RtspCameraResult!
+    toggle(name: String!, enabled: Boolean!): RtspCameraResult!
+    triggerSnapshot(name: String!): RtspCameraResult!
+}
+
+extend type Query {
+    rtspCameras(name: String, node: String): [RtspCamera!]!
+    rtspCamera(name: String!): RtspCamera
+}
+
+extend type Mutation {
+    rtspCamera: RtspCameraDeviceMutations!
 }
 `, BuiltIn: false},
 	{Name: "../schema/schema.graphqls", Input: `scalar Long
@@ -2474,6 +2587,33 @@ func (ec *executionContext) field_Query_retainedMessages_args(ctx context.Contex
 	return args, nil
 }
 
+func (ec *executionContext) field_Query_rtspCamera_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["name"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_rtspCameras_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name", ec.unmarshalOString2ᚖstring)
+	if err != nil {
+		return nil, err
+	}
+	args["name"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "node", ec.unmarshalOString2ᚖstring)
+	if err != nil {
+		return nil, err
+	}
+	args["node"] = arg1
+	return args, nil
+}
+
 func (ec *executionContext) field_Query_searchTopics_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
@@ -2638,6 +2778,114 @@ func (ec *executionContext) field_Query_winCCUaClients_args(ctx context.Context,
 		return nil, err
 	}
 	args["node"] = arg1
+	return args, nil
+}
+
+func (ec *executionContext) field_RtspCameraDeviceMutations_create_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input", ec.unmarshalNRtspCameraInput2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspCameraInput)
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_RtspCameraDeviceMutations_delete_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["name"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_RtspCameraDeviceMutations_start_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["name"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_RtspCameraDeviceMutations_stop_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["name"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_RtspCameraDeviceMutations_toggle_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["name"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "enabled", ec.unmarshalNBoolean2bool)
+	if err != nil {
+		return nil, err
+	}
+	args["enabled"] = arg1
+	return args, nil
+}
+
+func (ec *executionContext) field_RtspCameraDeviceMutations_triggerSnapshot_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["name"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_RtspCameraDeviceMutations_update_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["name"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "input", ec.unmarshalNRtspCameraInput2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspCameraInput)
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg1
+	return args, nil
+}
+
+func (ec *executionContext) field_RtspCamera_metricsHistory_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "from", ec.unmarshalOString2ᚖstring)
+	if err != nil {
+		return nil, err
+	}
+	args["from"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "to", ec.unmarshalOString2ᚖstring)
+	if err != nil {
+		return nil, err
+	}
+	args["to"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "lastMinutes", ec.unmarshalOInt2ᚖint)
+	if err != nil {
+		return nil, err
+	}
+	args["lastMinutes"] = arg2
 	return args, nil
 }
 
@@ -12047,6 +12295,51 @@ func (ec *executionContext) fieldContext_Mutation_toggleRedfishMapping(ctx conte
 	return fc, nil
 }
 
+func (ec *executionContext) _Mutation_rtspCamera(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Mutation_rtspCamera,
+		func(ctx context.Context) (any, error) {
+			return ec.Resolvers.Mutation().RtspCamera(ctx)
+		},
+		nil,
+		ec.marshalNRtspCameraDeviceMutations2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspCameraDeviceMutations,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Mutation_rtspCamera(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "create":
+				return ec.fieldContext_RtspCameraDeviceMutations_create(ctx, field)
+			case "update":
+				return ec.fieldContext_RtspCameraDeviceMutations_update(ctx, field)
+			case "delete":
+				return ec.fieldContext_RtspCameraDeviceMutations_delete(ctx, field)
+			case "start":
+				return ec.fieldContext_RtspCameraDeviceMutations_start(ctx, field)
+			case "stop":
+				return ec.fieldContext_RtspCameraDeviceMutations_stop(ctx, field)
+			case "toggle":
+				return ec.fieldContext_RtspCameraDeviceMutations_toggle(ctx, field)
+			case "triggerSnapshot":
+				return ec.fieldContext_RtspCameraDeviceMutations_triggerSnapshot(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type RtspCameraDeviceMutations", field.Name)
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Mutation_winCCOaDevice(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -14377,6 +14670,128 @@ func (ec *executionContext) fieldContext_Query_redfishLiveSensors(ctx context.Co
 	return fc, nil
 }
 
+func (ec *executionContext) _Query_rtspCameras(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Query_rtspCameras,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().RtspCameras(ctx, fc.Args["name"].(*string), fc.Args["node"].(*string))
+		},
+		nil,
+		ec.marshalNRtspCamera2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspCameraᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Query_rtspCameras(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "name":
+				return ec.fieldContext_RtspCamera_name(ctx, field)
+			case "nodeId":
+				return ec.fieldContext_RtspCamera_nodeId(ctx, field)
+			case "enabled":
+				return ec.fieldContext_RtspCamera_enabled(ctx, field)
+			case "config":
+				return ec.fieldContext_RtspCamera_config(ctx, field)
+			case "createdAt":
+				return ec.fieldContext_RtspCamera_createdAt(ctx, field)
+			case "updatedAt":
+				return ec.fieldContext_RtspCamera_updatedAt(ctx, field)
+			case "isOnCurrentNode":
+				return ec.fieldContext_RtspCamera_isOnCurrentNode(ctx, field)
+			case "metrics":
+				return ec.fieldContext_RtspCamera_metrics(ctx, field)
+			case "metricsHistory":
+				return ec.fieldContext_RtspCamera_metricsHistory(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type RtspCamera", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_rtspCameras_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_rtspCamera(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Query_rtspCamera,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().RtspCamera(ctx, fc.Args["name"].(string))
+		},
+		nil,
+		ec.marshalORtspCamera2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspCamera,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Query_rtspCamera(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "name":
+				return ec.fieldContext_RtspCamera_name(ctx, field)
+			case "nodeId":
+				return ec.fieldContext_RtspCamera_nodeId(ctx, field)
+			case "enabled":
+				return ec.fieldContext_RtspCamera_enabled(ctx, field)
+			case "config":
+				return ec.fieldContext_RtspCamera_config(ctx, field)
+			case "createdAt":
+				return ec.fieldContext_RtspCamera_createdAt(ctx, field)
+			case "updatedAt":
+				return ec.fieldContext_RtspCamera_updatedAt(ctx, field)
+			case "isOnCurrentNode":
+				return ec.fieldContext_RtspCamera_isOnCurrentNode(ctx, field)
+			case "metrics":
+				return ec.fieldContext_RtspCamera_metrics(ctx, field)
+			case "metricsHistory":
+				return ec.fieldContext_RtspCamera_metricsHistory(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type RtspCamera", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_rtspCamera_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Query_winCCOaClients(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -15843,6 +16258,1268 @@ func (ec *executionContext) fieldContext_RetainedMessage_userProperties(_ contex
 				return ec.fieldContext_UserProperty_value(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type UserProperty", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RtspCamera_name(ctx context.Context, field graphql.CollectedField, obj *RtspCamera) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RtspCamera_name,
+		func(ctx context.Context) (any, error) {
+			return obj.Name, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RtspCamera_name(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RtspCamera",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RtspCamera_nodeId(ctx context.Context, field graphql.CollectedField, obj *RtspCamera) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RtspCamera_nodeId,
+		func(ctx context.Context) (any, error) {
+			return obj.NodeID, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RtspCamera_nodeId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RtspCamera",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RtspCamera_enabled(ctx context.Context, field graphql.CollectedField, obj *RtspCamera) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RtspCamera_enabled,
+		func(ctx context.Context) (any, error) {
+			return obj.Enabled, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RtspCamera_enabled(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RtspCamera",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RtspCamera_config(ctx context.Context, field graphql.CollectedField, obj *RtspCamera) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RtspCamera_config,
+		func(ctx context.Context) (any, error) {
+			return obj.Config, nil
+		},
+		nil,
+		ec.marshalNRtspCameraConfig2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspCameraConfig,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RtspCamera_config(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RtspCamera",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "url":
+				return ec.fieldContext_RtspCameraConfig_url(ctx, field)
+			case "transport":
+				return ec.fieldContext_RtspCameraConfig_transport(ctx, field)
+			case "topicPrefix":
+				return ec.fieldContext_RtspCameraConfig_topicPrefix(ctx, field)
+			case "mode":
+				return ec.fieldContext_RtspCameraConfig_mode(ctx, field)
+			case "intervalMs":
+				return ec.fieldContext_RtspCameraConfig_intervalMs(ctx, field)
+			case "slots":
+				return ec.fieldContext_RtspCameraConfig_slots(ctx, field)
+			case "triggerTopic":
+				return ec.fieldContext_RtspCameraConfig_triggerTopic(ctx, field)
+			case "retain":
+				return ec.fieldContext_RtspCameraConfig_retain(ctx, field)
+			case "qos":
+				return ec.fieldContext_RtspCameraConfig_qos(ctx, field)
+			case "publishMetadata":
+				return ec.fieldContext_RtspCameraConfig_publishMetadata(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type RtspCameraConfig", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RtspCamera_createdAt(ctx context.Context, field graphql.CollectedField, obj *RtspCamera) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RtspCamera_createdAt,
+		func(ctx context.Context) (any, error) {
+			return obj.CreatedAt, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RtspCamera_createdAt(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RtspCamera",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RtspCamera_updatedAt(ctx context.Context, field graphql.CollectedField, obj *RtspCamera) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RtspCamera_updatedAt,
+		func(ctx context.Context) (any, error) {
+			return obj.UpdatedAt, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RtspCamera_updatedAt(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RtspCamera",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RtspCamera_isOnCurrentNode(ctx context.Context, field graphql.CollectedField, obj *RtspCamera) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RtspCamera_isOnCurrentNode,
+		func(ctx context.Context) (any, error) {
+			return obj.IsOnCurrentNode, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RtspCamera_isOnCurrentNode(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RtspCamera",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RtspCamera_metrics(ctx context.Context, field graphql.CollectedField, obj *RtspCamera) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RtspCamera_metrics,
+		func(ctx context.Context) (any, error) {
+			return ec.Resolvers.RtspCamera().Metrics(ctx, obj)
+		},
+		nil,
+		ec.marshalNRtspCameraMetrics2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspCameraMetricsᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RtspCamera_metrics(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RtspCamera",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "connected":
+				return ec.fieldContext_RtspCameraMetrics_connected(ctx, field)
+			case "framesReceived":
+				return ec.fieldContext_RtspCameraMetrics_framesReceived(ctx, field)
+			case "snapshotsPublished":
+				return ec.fieldContext_RtspCameraMetrics_snapshotsPublished(ctx, field)
+			case "currentSlot":
+				return ec.fieldContext_RtspCameraMetrics_currentSlot(ctx, field)
+			case "lastSnapshotAt":
+				return ec.fieldContext_RtspCameraMetrics_lastSnapshotAt(ctx, field)
+			case "lastError":
+				return ec.fieldContext_RtspCameraMetrics_lastError(ctx, field)
+			case "timestamp":
+				return ec.fieldContext_RtspCameraMetrics_timestamp(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type RtspCameraMetrics", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RtspCamera_metricsHistory(ctx context.Context, field graphql.CollectedField, obj *RtspCamera) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RtspCamera_metricsHistory,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.RtspCamera().MetricsHistory(ctx, obj, fc.Args["from"].(*string), fc.Args["to"].(*string), fc.Args["lastMinutes"].(*int))
+		},
+		nil,
+		ec.marshalNRtspCameraMetrics2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspCameraMetricsᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RtspCamera_metricsHistory(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RtspCamera",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "connected":
+				return ec.fieldContext_RtspCameraMetrics_connected(ctx, field)
+			case "framesReceived":
+				return ec.fieldContext_RtspCameraMetrics_framesReceived(ctx, field)
+			case "snapshotsPublished":
+				return ec.fieldContext_RtspCameraMetrics_snapshotsPublished(ctx, field)
+			case "currentSlot":
+				return ec.fieldContext_RtspCameraMetrics_currentSlot(ctx, field)
+			case "lastSnapshotAt":
+				return ec.fieldContext_RtspCameraMetrics_lastSnapshotAt(ctx, field)
+			case "lastError":
+				return ec.fieldContext_RtspCameraMetrics_lastError(ctx, field)
+			case "timestamp":
+				return ec.fieldContext_RtspCameraMetrics_timestamp(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type RtspCameraMetrics", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_RtspCamera_metricsHistory_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RtspCameraConfig_url(ctx context.Context, field graphql.CollectedField, obj *RtspCameraConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RtspCameraConfig_url,
+		func(ctx context.Context) (any, error) {
+			return obj.URL, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RtspCameraConfig_url(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RtspCameraConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RtspCameraConfig_transport(ctx context.Context, field graphql.CollectedField, obj *RtspCameraConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RtspCameraConfig_transport,
+		func(ctx context.Context) (any, error) {
+			return obj.Transport, nil
+		},
+		nil,
+		ec.marshalNRtspTransport2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspTransport,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RtspCameraConfig_transport(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RtspCameraConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type RtspTransport does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RtspCameraConfig_topicPrefix(ctx context.Context, field graphql.CollectedField, obj *RtspCameraConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RtspCameraConfig_topicPrefix,
+		func(ctx context.Context) (any, error) {
+			return obj.TopicPrefix, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RtspCameraConfig_topicPrefix(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RtspCameraConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RtspCameraConfig_mode(ctx context.Context, field graphql.CollectedField, obj *RtspCameraConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RtspCameraConfig_mode,
+		func(ctx context.Context) (any, error) {
+			return obj.Mode, nil
+		},
+		nil,
+		ec.marshalNRtspCaptureMode2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspCaptureMode,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RtspCameraConfig_mode(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RtspCameraConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type RtspCaptureMode does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RtspCameraConfig_intervalMs(ctx context.Context, field graphql.CollectedField, obj *RtspCameraConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RtspCameraConfig_intervalMs,
+		func(ctx context.Context) (any, error) {
+			return obj.IntervalMs, nil
+		},
+		nil,
+		ec.marshalNInt2int,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RtspCameraConfig_intervalMs(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RtspCameraConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Int does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RtspCameraConfig_slots(ctx context.Context, field graphql.CollectedField, obj *RtspCameraConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RtspCameraConfig_slots,
+		func(ctx context.Context) (any, error) {
+			return obj.Slots, nil
+		},
+		nil,
+		ec.marshalNInt2int,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RtspCameraConfig_slots(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RtspCameraConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Int does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RtspCameraConfig_triggerTopic(ctx context.Context, field graphql.CollectedField, obj *RtspCameraConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RtspCameraConfig_triggerTopic,
+		func(ctx context.Context) (any, error) {
+			return obj.TriggerTopic, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_RtspCameraConfig_triggerTopic(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RtspCameraConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RtspCameraConfig_retain(ctx context.Context, field graphql.CollectedField, obj *RtspCameraConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RtspCameraConfig_retain,
+		func(ctx context.Context) (any, error) {
+			return obj.Retain, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RtspCameraConfig_retain(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RtspCameraConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RtspCameraConfig_qos(ctx context.Context, field graphql.CollectedField, obj *RtspCameraConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RtspCameraConfig_qos,
+		func(ctx context.Context) (any, error) {
+			return obj.Qos, nil
+		},
+		nil,
+		ec.marshalNInt2int,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RtspCameraConfig_qos(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RtspCameraConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Int does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RtspCameraConfig_publishMetadata(ctx context.Context, field graphql.CollectedField, obj *RtspCameraConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RtspCameraConfig_publishMetadata,
+		func(ctx context.Context) (any, error) {
+			return obj.PublishMetadata, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RtspCameraConfig_publishMetadata(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RtspCameraConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RtspCameraDeviceMutations_create(ctx context.Context, field graphql.CollectedField, obj *RtspCameraDeviceMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RtspCameraDeviceMutations_create,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.RtspCameraDeviceMutations().Create(ctx, obj, fc.Args["input"].(RtspCameraInput))
+		},
+		nil,
+		ec.marshalNRtspCameraResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspCameraResult,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RtspCameraDeviceMutations_create(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RtspCameraDeviceMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "success":
+				return ec.fieldContext_RtspCameraResult_success(ctx, field)
+			case "camera":
+				return ec.fieldContext_RtspCameraResult_camera(ctx, field)
+			case "errors":
+				return ec.fieldContext_RtspCameraResult_errors(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type RtspCameraResult", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_RtspCameraDeviceMutations_create_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RtspCameraDeviceMutations_update(ctx context.Context, field graphql.CollectedField, obj *RtspCameraDeviceMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RtspCameraDeviceMutations_update,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.RtspCameraDeviceMutations().Update(ctx, obj, fc.Args["name"].(string), fc.Args["input"].(RtspCameraInput))
+		},
+		nil,
+		ec.marshalNRtspCameraResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspCameraResult,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RtspCameraDeviceMutations_update(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RtspCameraDeviceMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "success":
+				return ec.fieldContext_RtspCameraResult_success(ctx, field)
+			case "camera":
+				return ec.fieldContext_RtspCameraResult_camera(ctx, field)
+			case "errors":
+				return ec.fieldContext_RtspCameraResult_errors(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type RtspCameraResult", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_RtspCameraDeviceMutations_update_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RtspCameraDeviceMutations_delete(ctx context.Context, field graphql.CollectedField, obj *RtspCameraDeviceMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RtspCameraDeviceMutations_delete,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.RtspCameraDeviceMutations().Delete(ctx, obj, fc.Args["name"].(string))
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RtspCameraDeviceMutations_delete(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RtspCameraDeviceMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_RtspCameraDeviceMutations_delete_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RtspCameraDeviceMutations_start(ctx context.Context, field graphql.CollectedField, obj *RtspCameraDeviceMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RtspCameraDeviceMutations_start,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.RtspCameraDeviceMutations().Start(ctx, obj, fc.Args["name"].(string))
+		},
+		nil,
+		ec.marshalNRtspCameraResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspCameraResult,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RtspCameraDeviceMutations_start(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RtspCameraDeviceMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "success":
+				return ec.fieldContext_RtspCameraResult_success(ctx, field)
+			case "camera":
+				return ec.fieldContext_RtspCameraResult_camera(ctx, field)
+			case "errors":
+				return ec.fieldContext_RtspCameraResult_errors(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type RtspCameraResult", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_RtspCameraDeviceMutations_start_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RtspCameraDeviceMutations_stop(ctx context.Context, field graphql.CollectedField, obj *RtspCameraDeviceMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RtspCameraDeviceMutations_stop,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.RtspCameraDeviceMutations().Stop(ctx, obj, fc.Args["name"].(string))
+		},
+		nil,
+		ec.marshalNRtspCameraResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspCameraResult,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RtspCameraDeviceMutations_stop(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RtspCameraDeviceMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "success":
+				return ec.fieldContext_RtspCameraResult_success(ctx, field)
+			case "camera":
+				return ec.fieldContext_RtspCameraResult_camera(ctx, field)
+			case "errors":
+				return ec.fieldContext_RtspCameraResult_errors(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type RtspCameraResult", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_RtspCameraDeviceMutations_stop_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RtspCameraDeviceMutations_toggle(ctx context.Context, field graphql.CollectedField, obj *RtspCameraDeviceMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RtspCameraDeviceMutations_toggle,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.RtspCameraDeviceMutations().Toggle(ctx, obj, fc.Args["name"].(string), fc.Args["enabled"].(bool))
+		},
+		nil,
+		ec.marshalNRtspCameraResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspCameraResult,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RtspCameraDeviceMutations_toggle(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RtspCameraDeviceMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "success":
+				return ec.fieldContext_RtspCameraResult_success(ctx, field)
+			case "camera":
+				return ec.fieldContext_RtspCameraResult_camera(ctx, field)
+			case "errors":
+				return ec.fieldContext_RtspCameraResult_errors(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type RtspCameraResult", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_RtspCameraDeviceMutations_toggle_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RtspCameraDeviceMutations_triggerSnapshot(ctx context.Context, field graphql.CollectedField, obj *RtspCameraDeviceMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RtspCameraDeviceMutations_triggerSnapshot,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.RtspCameraDeviceMutations().TriggerSnapshot(ctx, obj, fc.Args["name"].(string))
+		},
+		nil,
+		ec.marshalNRtspCameraResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspCameraResult,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RtspCameraDeviceMutations_triggerSnapshot(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RtspCameraDeviceMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "success":
+				return ec.fieldContext_RtspCameraResult_success(ctx, field)
+			case "camera":
+				return ec.fieldContext_RtspCameraResult_camera(ctx, field)
+			case "errors":
+				return ec.fieldContext_RtspCameraResult_errors(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type RtspCameraResult", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_RtspCameraDeviceMutations_triggerSnapshot_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RtspCameraMetrics_connected(ctx context.Context, field graphql.CollectedField, obj *RtspCameraMetrics) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RtspCameraMetrics_connected,
+		func(ctx context.Context) (any, error) {
+			return obj.Connected, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RtspCameraMetrics_connected(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RtspCameraMetrics",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RtspCameraMetrics_framesReceived(ctx context.Context, field graphql.CollectedField, obj *RtspCameraMetrics) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RtspCameraMetrics_framesReceived,
+		func(ctx context.Context) (any, error) {
+			return obj.FramesReceived, nil
+		},
+		nil,
+		ec.marshalNFloat2float64,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RtspCameraMetrics_framesReceived(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RtspCameraMetrics",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Float does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RtspCameraMetrics_snapshotsPublished(ctx context.Context, field graphql.CollectedField, obj *RtspCameraMetrics) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RtspCameraMetrics_snapshotsPublished,
+		func(ctx context.Context) (any, error) {
+			return obj.SnapshotsPublished, nil
+		},
+		nil,
+		ec.marshalNFloat2float64,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RtspCameraMetrics_snapshotsPublished(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RtspCameraMetrics",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Float does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RtspCameraMetrics_currentSlot(ctx context.Context, field graphql.CollectedField, obj *RtspCameraMetrics) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RtspCameraMetrics_currentSlot,
+		func(ctx context.Context) (any, error) {
+			return obj.CurrentSlot, nil
+		},
+		nil,
+		ec.marshalNInt2int,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RtspCameraMetrics_currentSlot(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RtspCameraMetrics",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Int does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RtspCameraMetrics_lastSnapshotAt(ctx context.Context, field graphql.CollectedField, obj *RtspCameraMetrics) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RtspCameraMetrics_lastSnapshotAt,
+		func(ctx context.Context) (any, error) {
+			return obj.LastSnapshotAt, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_RtspCameraMetrics_lastSnapshotAt(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RtspCameraMetrics",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RtspCameraMetrics_lastError(ctx context.Context, field graphql.CollectedField, obj *RtspCameraMetrics) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RtspCameraMetrics_lastError,
+		func(ctx context.Context) (any, error) {
+			return obj.LastError, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_RtspCameraMetrics_lastError(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RtspCameraMetrics",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RtspCameraMetrics_timestamp(ctx context.Context, field graphql.CollectedField, obj *RtspCameraMetrics) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RtspCameraMetrics_timestamp,
+		func(ctx context.Context) (any, error) {
+			return obj.Timestamp, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RtspCameraMetrics_timestamp(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RtspCameraMetrics",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RtspCameraResult_success(ctx context.Context, field graphql.CollectedField, obj *RtspCameraResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RtspCameraResult_success,
+		func(ctx context.Context) (any, error) {
+			return obj.Success, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RtspCameraResult_success(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RtspCameraResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RtspCameraResult_camera(ctx context.Context, field graphql.CollectedField, obj *RtspCameraResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RtspCameraResult_camera,
+		func(ctx context.Context) (any, error) {
+			return obj.Camera, nil
+		},
+		nil,
+		ec.marshalORtspCamera2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspCamera,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_RtspCameraResult_camera(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RtspCameraResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "name":
+				return ec.fieldContext_RtspCamera_name(ctx, field)
+			case "nodeId":
+				return ec.fieldContext_RtspCamera_nodeId(ctx, field)
+			case "enabled":
+				return ec.fieldContext_RtspCamera_enabled(ctx, field)
+			case "config":
+				return ec.fieldContext_RtspCamera_config(ctx, field)
+			case "createdAt":
+				return ec.fieldContext_RtspCamera_createdAt(ctx, field)
+			case "updatedAt":
+				return ec.fieldContext_RtspCamera_updatedAt(ctx, field)
+			case "isOnCurrentNode":
+				return ec.fieldContext_RtspCamera_isOnCurrentNode(ctx, field)
+			case "metrics":
+				return ec.fieldContext_RtspCamera_metrics(ctx, field)
+			case "metricsHistory":
+				return ec.fieldContext_RtspCamera_metricsHistory(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type RtspCamera", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RtspCameraResult_errors(ctx context.Context, field graphql.CollectedField, obj *RtspCameraResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RtspCameraResult_errors,
+		func(ctx context.Context) (any, error) {
+			return obj.Errors, nil
+		},
+		nil,
+		ec.marshalNString2ᚕstringᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RtspCameraResult_errors(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RtspCameraResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
 		},
 	}
 	return fc, nil
@@ -24760,6 +26437,176 @@ func (ec *executionContext) unmarshalInputRedfishThresholdsInput(ctx context.Con
 	return it, nil
 }
 
+func (ec *executionContext) unmarshalInputRtspCameraConfigInput(ctx context.Context, obj any) (RtspCameraConfigInput, error) {
+	var it RtspCameraConfigInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	if _, present := asMap["transport"]; !present {
+		asMap["transport"] = "TCP"
+	}
+	if _, present := asMap["mode"]; !present {
+		asMap["mode"] = "CONTINUOUS"
+	}
+	if _, present := asMap["intervalMs"]; !present {
+		asMap["intervalMs"] = 1000
+	}
+	if _, present := asMap["slots"]; !present {
+		asMap["slots"] = 5
+	}
+	if _, present := asMap["retain"]; !present {
+		asMap["retain"] = true
+	}
+	if _, present := asMap["qos"]; !present {
+		asMap["qos"] = 0
+	}
+	if _, present := asMap["publishMetadata"]; !present {
+		asMap["publishMetadata"] = true
+	}
+
+	fieldsInOrder := [...]string{"url", "transport", "topicPrefix", "mode", "intervalMs", "slots", "triggerTopic", "retain", "qos", "publishMetadata"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "url":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("url"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.URL = data
+		case "transport":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("transport"))
+			data, err := ec.unmarshalORtspTransport2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspTransport(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Transport = data
+		case "topicPrefix":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("topicPrefix"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.TopicPrefix = data
+		case "mode":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("mode"))
+			data, err := ec.unmarshalORtspCaptureMode2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspCaptureMode(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Mode = data
+		case "intervalMs":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("intervalMs"))
+			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.IntervalMs = data
+		case "slots":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("slots"))
+			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Slots = data
+		case "triggerTopic":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("triggerTopic"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.TriggerTopic = data
+		case "retain":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("retain"))
+			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Retain = data
+		case "qos":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("qos"))
+			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Qos = data
+		case "publishMetadata":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("publishMetadata"))
+			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.PublishMetadata = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputRtspCameraInput(ctx context.Context, obj any) (RtspCameraInput, error) {
+	var it RtspCameraInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	if _, present := asMap["enabled"]; !present {
+		asMap["enabled"] = true
+	}
+
+	fieldsInOrder := [...]string{"name", "nodeId", "enabled", "config"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "name":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("name"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Name = data
+		case "nodeId":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("nodeId"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.NodeID = data
+		case "enabled":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("enabled"))
+			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Enabled = data
+		case "config":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("config"))
+			data, err := ec.unmarshalNRtspCameraConfigInput2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspCameraConfigInput(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Config = data
+		}
+	}
+	return it, nil
+}
+
 func (ec *executionContext) unmarshalInputSetPasswordInput(ctx context.Context, obj any) (SetPasswordInput, error) {
 	var it SetPasswordInput
 	if obj == nil {
@@ -29078,6 +30925,13 @@ func (ec *executionContext) _Mutation(ctx context.Context, sel ast.SelectionSet)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
+		case "rtspCamera":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_rtspCamera(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
 		case "winCCOaDevice":
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Mutation_winCCOaDevice(ctx, field)
@@ -29938,6 +31792,47 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 			}
 
 			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "rtspCameras":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_rtspCameras(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "rtspCamera":
+			field := field
+
+			innerFunc := func(ctx context.Context, _ *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_rtspCamera(ctx, field)
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
 		case "winCCOaClients":
 			field := field
 
@@ -30354,6 +32249,623 @@ func (ec *executionContext) _RetainedMessage(ctx context.Context, sel ast.Select
 			out.Values[i] = ec._RetainedMessage_payloadFormatIndicator(ctx, field, obj)
 		case "userProperties":
 			out.Values[i] = ec._RetainedMessage_userProperties(ctx, field, obj)
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var rtspCameraImplementors = []string{"RtspCamera"}
+
+func (ec *executionContext) _RtspCamera(ctx context.Context, sel ast.SelectionSet, obj *RtspCamera) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, rtspCameraImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("RtspCamera")
+		case "name":
+			out.Values[i] = ec._RtspCamera_name(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "nodeId":
+			out.Values[i] = ec._RtspCamera_nodeId(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "enabled":
+			out.Values[i] = ec._RtspCamera_enabled(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "config":
+			out.Values[i] = ec._RtspCamera_config(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "createdAt":
+			out.Values[i] = ec._RtspCamera_createdAt(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "updatedAt":
+			out.Values[i] = ec._RtspCamera_updatedAt(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "isOnCurrentNode":
+			out.Values[i] = ec._RtspCamera_isOnCurrentNode(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "metrics":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._RtspCamera_metrics(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "metricsHistory":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._RtspCamera_metricsHistory(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var rtspCameraConfigImplementors = []string{"RtspCameraConfig"}
+
+func (ec *executionContext) _RtspCameraConfig(ctx context.Context, sel ast.SelectionSet, obj *RtspCameraConfig) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, rtspCameraConfigImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("RtspCameraConfig")
+		case "url":
+			out.Values[i] = ec._RtspCameraConfig_url(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "transport":
+			out.Values[i] = ec._RtspCameraConfig_transport(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "topicPrefix":
+			out.Values[i] = ec._RtspCameraConfig_topicPrefix(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "mode":
+			out.Values[i] = ec._RtspCameraConfig_mode(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "intervalMs":
+			out.Values[i] = ec._RtspCameraConfig_intervalMs(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "slots":
+			out.Values[i] = ec._RtspCameraConfig_slots(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "triggerTopic":
+			out.Values[i] = ec._RtspCameraConfig_triggerTopic(ctx, field, obj)
+		case "retain":
+			out.Values[i] = ec._RtspCameraConfig_retain(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "qos":
+			out.Values[i] = ec._RtspCameraConfig_qos(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "publishMetadata":
+			out.Values[i] = ec._RtspCameraConfig_publishMetadata(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var rtspCameraDeviceMutationsImplementors = []string{"RtspCameraDeviceMutations"}
+
+func (ec *executionContext) _RtspCameraDeviceMutations(ctx context.Context, sel ast.SelectionSet, obj *RtspCameraDeviceMutations) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, rtspCameraDeviceMutationsImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("RtspCameraDeviceMutations")
+		case "create":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._RtspCameraDeviceMutations_create(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "update":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._RtspCameraDeviceMutations_update(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "delete":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._RtspCameraDeviceMutations_delete(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "start":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._RtspCameraDeviceMutations_start(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "stop":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._RtspCameraDeviceMutations_stop(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "toggle":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._RtspCameraDeviceMutations_toggle(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "triggerSnapshot":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._RtspCameraDeviceMutations_triggerSnapshot(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var rtspCameraMetricsImplementors = []string{"RtspCameraMetrics"}
+
+func (ec *executionContext) _RtspCameraMetrics(ctx context.Context, sel ast.SelectionSet, obj *RtspCameraMetrics) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, rtspCameraMetricsImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("RtspCameraMetrics")
+		case "connected":
+			out.Values[i] = ec._RtspCameraMetrics_connected(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "framesReceived":
+			out.Values[i] = ec._RtspCameraMetrics_framesReceived(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "snapshotsPublished":
+			out.Values[i] = ec._RtspCameraMetrics_snapshotsPublished(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "currentSlot":
+			out.Values[i] = ec._RtspCameraMetrics_currentSlot(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "lastSnapshotAt":
+			out.Values[i] = ec._RtspCameraMetrics_lastSnapshotAt(ctx, field, obj)
+		case "lastError":
+			out.Values[i] = ec._RtspCameraMetrics_lastError(ctx, field, obj)
+		case "timestamp":
+			out.Values[i] = ec._RtspCameraMetrics_timestamp(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var rtspCameraResultImplementors = []string{"RtspCameraResult"}
+
+func (ec *executionContext) _RtspCameraResult(ctx context.Context, sel ast.SelectionSet, obj *RtspCameraResult) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, rtspCameraResultImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("RtspCameraResult")
+		case "success":
+			out.Values[i] = ec._RtspCameraResult_success(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "camera":
+			out.Values[i] = ec._RtspCameraResult_camera(ctx, field, obj)
+		case "errors":
+			out.Values[i] = ec._RtspCameraResult_errors(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}
@@ -34651,6 +37163,126 @@ func (ec *executionContext) marshalNRetainedMessage2ᚖmonstermqᚗioᚋedgeᚋi
 	return ec._RetainedMessage(ctx, sel, v)
 }
 
+func (ec *executionContext) marshalNRtspCamera2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspCameraᚄ(ctx context.Context, sel ast.SelectionSet, v []*RtspCamera) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNRtspCamera2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspCamera(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNRtspCamera2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspCamera(ctx context.Context, sel ast.SelectionSet, v *RtspCamera) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._RtspCamera(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNRtspCameraConfig2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspCameraConfig(ctx context.Context, sel ast.SelectionSet, v *RtspCameraConfig) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._RtspCameraConfig(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalNRtspCameraConfigInput2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspCameraConfigInput(ctx context.Context, v any) (*RtspCameraConfigInput, error) {
+	res, err := ec.unmarshalInputRtspCameraConfigInput(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNRtspCameraDeviceMutations2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspCameraDeviceMutations(ctx context.Context, sel ast.SelectionSet, v RtspCameraDeviceMutations) graphql.Marshaler {
+	return ec._RtspCameraDeviceMutations(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNRtspCameraDeviceMutations2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspCameraDeviceMutations(ctx context.Context, sel ast.SelectionSet, v *RtspCameraDeviceMutations) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._RtspCameraDeviceMutations(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalNRtspCameraInput2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspCameraInput(ctx context.Context, v any) (RtspCameraInput, error) {
+	res, err := ec.unmarshalInputRtspCameraInput(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNRtspCameraMetrics2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspCameraMetricsᚄ(ctx context.Context, sel ast.SelectionSet, v []*RtspCameraMetrics) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNRtspCameraMetrics2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspCameraMetrics(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNRtspCameraMetrics2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspCameraMetrics(ctx context.Context, sel ast.SelectionSet, v *RtspCameraMetrics) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._RtspCameraMetrics(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNRtspCameraResult2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspCameraResult(ctx context.Context, sel ast.SelectionSet, v RtspCameraResult) graphql.Marshaler {
+	return ec._RtspCameraResult(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNRtspCameraResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspCameraResult(ctx context.Context, sel ast.SelectionSet, v *RtspCameraResult) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._RtspCameraResult(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalNRtspCaptureMode2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspCaptureMode(ctx context.Context, v any) (RtspCaptureMode, error) {
+	var res RtspCaptureMode
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNRtspCaptureMode2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspCaptureMode(ctx context.Context, sel ast.SelectionSet, v RtspCaptureMode) graphql.Marshaler {
+	return v
+}
+
+func (ec *executionContext) unmarshalNRtspTransport2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspTransport(ctx context.Context, v any) (RtspTransport, error) {
+	var res RtspTransport
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNRtspTransport2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspTransport(ctx context.Context, sel ast.SelectionSet, v RtspTransport) graphql.Marshaler {
+	return v
+}
+
 func (ec *executionContext) marshalNSession2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐSessionᚄ(ctx context.Context, sel ast.SelectionSet, v []*Session) graphql.Marshaler {
 	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
 		fc := graphql.GetFieldContext(ctx)
@@ -35858,6 +38490,45 @@ func (ec *executionContext) marshalORetainedMessage2ᚖmonstermqᚗioᚋedgeᚋi
 		return graphql.Null
 	}
 	return ec._RetainedMessage(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalORtspCamera2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspCamera(ctx context.Context, sel ast.SelectionSet, v *RtspCamera) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._RtspCamera(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalORtspCaptureMode2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspCaptureMode(ctx context.Context, v any) (*RtspCaptureMode, error) {
+	if v == nil {
+		return nil, nil
+	}
+	var res = new(RtspCaptureMode)
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalORtspCaptureMode2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspCaptureMode(ctx context.Context, sel ast.SelectionSet, v *RtspCaptureMode) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return v
+}
+
+func (ec *executionContext) unmarshalORtspTransport2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspTransport(ctx context.Context, v any) (*RtspTransport, error) {
+	if v == nil {
+		return nil, nil
+	}
+	var res = new(RtspTransport)
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalORtspTransport2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspTransport(ctx context.Context, sel ast.SelectionSet, v *RtspTransport) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return v
 }
 
 func (ec *executionContext) marshalOSession2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐSession(ctx context.Context, sel ast.SelectionSet, v *Session) graphql.Marshaler {

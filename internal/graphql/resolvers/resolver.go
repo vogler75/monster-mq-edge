@@ -19,6 +19,7 @@ import (
 	"monstermq.io/edge/internal/archive"
 	"monstermq.io/edge/internal/auth"
 	"monstermq.io/edge/internal/bridge/mqttclient"
+	"monstermq.io/edge/internal/bridge/rtspcamera"
 	"monstermq.io/edge/internal/bridge/winccoa"
 	"monstermq.io/edge/internal/bridge/winccua"
 	"monstermq.io/edge/internal/config"
@@ -49,8 +50,9 @@ type Resolver struct {
 	NodeID    string
 	Version   string
 	Mochi     *mqtt.Server
-	HmiMgr    *hmi.Manager
-	Redfish   *redfish.Manager
+	HmiMgr      *hmi.Manager
+	Redfish     *redfish.Manager
+	RtspCameras *rtspcamera.Manager
 
 	// Publish injects a message into the local broker (used by the publish mutation).
 	Publish func(topic string, payload []byte, retain bool, qos byte) error
@@ -63,25 +65,27 @@ func New(cfg *config.Config, storage *stores.Storage, bus *pubsub.Bus, archives 
 	mochi *mqtt.Server,
 	publish func(string, []byte, bool, byte) error,
 	hmiMgr *hmi.Manager,
-	redfishMgr *redfish.Manager) *Resolver {
+	redfishMgr *redfish.Manager,
+	rtspCameras *rtspcamera.Manager) *Resolver {
 	return &Resolver{
-		Cfg:       cfg,
-		Storage:   storage,
-		Bus:       bus,
-		Archives:  archives,
-		Bridges:   bridges,
-		WinCCUa:   winCCUa,
-		WinCCOa:   winCCOa,
-		AuthCache: authCache,
-		Collector: collector,
-		LogBus:    logBus,
-		Logger:    logger,
-		NodeID:    cfg.NodeID,
-		Version:   formatEdgeVersion(version.Version),
-		Mochi:     mochi,
-		Publish:   publish,
-		HmiMgr:    hmiMgr,
-		Redfish:   redfishMgr,
+		Cfg:         cfg,
+		Storage:     storage,
+		Bus:         bus,
+		Archives:    archives,
+		Bridges:     bridges,
+		WinCCUa:     winCCUa,
+		WinCCOa:     winCCOa,
+		AuthCache:   authCache,
+		Collector:   collector,
+		LogBus:      logBus,
+		Logger:      logger,
+		NodeID:      cfg.NodeID,
+		Version:     formatEdgeVersion(version.Version),
+		Mochi:       mochi,
+		Publish:     publish,
+		HmiMgr:      hmiMgr,
+		Redfish:     redfishMgr,
+		RtspCameras: rtspCameras,
 	}
 }
 
@@ -110,6 +114,9 @@ func (r *Resolver) enabledFeatures() []string {
 	}
 	if r.Cfg.Features.Redfish || r.Cfg.Redfish.Enabled {
 		out = append(out, "Redfish")
+	}
+	if r.Cfg.Features.RtspCamera {
+		out = append(out, "RtspCamera")
 	}
 	return out
 }
@@ -140,6 +147,10 @@ func (r *Resolver) MqttClientMutations() generated.MqttClientMutationsResolver {
 }
 func (r *Resolver) HmiMutations() generated.HmiMutationsResolver {
 	return &hmiMutationsResolver{r}
+}
+func (r *Resolver) RtspCamera() generated.RtspCameraResolver { return &rtspCameraResolver{r} }
+func (r *Resolver) RtspCameraDeviceMutations() generated.RtspCameraDeviceMutationsResolver {
+	return &rtspCameraDeviceMutationsResolver{r}
 }
 func (r *Resolver) WinCCUaClient() generated.WinCCUaClientResolver {
 	return &winCCUaClientResolver{r}

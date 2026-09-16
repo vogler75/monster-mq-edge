@@ -225,7 +225,8 @@
         "DeviceImportExport": { "type": "boolean", "description": "Enable generic device configuration export/import GraphQL operations." },
         "Mcp":                { "type": "boolean", "description": "Enable the MCP server feature toggle." },
         "Hmi":                { "type": "boolean", "description": "Enable HTML/JS HMI hosting feature toggle." },
-        "Redfish":            { "type": "boolean", "description": "Enable DMTF Redfish REST API feature toggle." }
+        "Redfish":            { "type": "boolean", "description": "Enable DMTF Redfish REST API feature toggle." },
+        "RtspCamera":         { "type": "boolean", "description": "Enable RTSP camera stream snapshot capture and round-robin publishing." }
       }
     },
     "Redfish": {

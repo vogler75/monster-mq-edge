@@ -131,4 +131,17 @@ models:
       toggle:    { resolver: true }
       reassign:  { resolver: true }
       uploadZip: { resolver: true }
+  RtspCameraDeviceMutations:
+    fields:
+      create:          { resolver: true }
+      update:          { resolver: true }
+      delete:          { resolver: true }
+      start:           { resolver: true }
+      stop:            { resolver: true }
+      toggle:          { resolver: true }
+      triggerSnapshot: { resolver: true }
+  RtspCamera:
+    fields:
+      metrics:        { resolver: true }
+      metricsHistory: { resolver: true }
 
