@@ -52,9 +52,30 @@ func startWithGraphQL(t *testing.T, mqttPort, gqlPort int, cfgFns ...func(*confi
 }
 
 func gqlQuery(t *testing.T, url, query string, vars map[string]any) map[string]any {
+	return gqlQueryAuth(t, url, query, vars, "")
+}
+
+func gqlQueryAuth(t *testing.T, url, query string, vars map[string]any, token string) map[string]any {
+	t.Helper()
+	result := gqlRequest(t, url, query, vars, token)
+	if errs, ok := result["errors"]; ok {
+		t.Fatalf("graphql errors: %v", errs)
+	}
+	return result["data"].(map[string]any)
+}
+
+func gqlRequest(t *testing.T, url, query string, vars map[string]any, token string) map[string]any {
 	t.Helper()
 	body, _ := json.Marshal(map[string]any{"query": query, "variables": vars})
-	resp, err := http.Post(url, "application/json", bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("post: %v", err)
 	}
@@ -64,10 +85,19 @@ func gqlQuery(t *testing.T, url, query string, vars map[string]any) map[string]a
 	if err := json.Unmarshal(out, &result); err != nil {
 		t.Fatalf("decode %s: %v", out, err)
 	}
-	if errs, ok := result["errors"]; ok {
-		t.Fatalf("graphql errors: %v\nresponse=%s", errs, out)
+	return result
+}
+
+func loginToken(t *testing.T, url, username, password string) string {
+	t.Helper()
+	data := gqlQuery(t, url, `mutation Login($username: String!, $password: String!) { login(username: $username, password: $password) { success token message } }`, map[string]any{
+		"username": username, "password": password,
+	})
+	login := data["login"].(map[string]any)
+	if login["success"] != true || login["token"] == nil {
+		t.Fatalf("login failed: %v", login)
 	}
-	return result["data"].(map[string]any)
+	return login["token"].(string)
 }
 
 func TestGraphQLBrokerConfig(t *testing.T) {
@@ -371,8 +401,9 @@ func TestGraphQLUserManagement(t *testing.T) {
 	})
 	defer srv.Close()
 
+	adminToken := loginToken(t, url, "Admin", "Admin")
 	// Create
-	gqlQuery(t, url, `mutation { user { createUser(input: { username: "bob", password: "pw", isAdmin: true }) { success user { username isAdmin } } } }`, nil)
+	gqlQueryAuth(t, url, `mutation { user { createUser(input: { username: "bob", password: "pw", isAdmin: true }) { success user { username isAdmin } } } }`, nil, adminToken)
 
 	// Login
 	data := gqlQuery(t, url, `mutation { login(username: "bob", password: "pw") { success username isAdmin token } }`, nil)
@@ -391,7 +422,7 @@ func TestGraphQLUserManagement(t *testing.T) {
 	}
 
 	// List users
-	data = gqlQuery(t, url, `{ users { username isAdmin } }`, nil)
+	data = gqlQueryAuth(t, url, `{ users { username isAdmin } }`, nil, login["token"].(string))
 	users := data["users"].([]any)
 	seen := map[string]bool{}
 	for _, raw := range users {
@@ -400,6 +431,79 @@ func TestGraphQLUserManagement(t *testing.T) {
 	if !seen["Admin"] || !seen["bob"] {
 		t.Fatalf("users %v", users)
 	}
+}
+
+func TestGraphQLAuthenticationAndAuthorization(t *testing.T) {
+	srv, url := startWithGraphQL(t, 23029, 28029, func(c *config.Config) {
+		c.UserManagement.Enabled = true
+		c.UserManagement.AnonymousEnabled = false
+	})
+	defer srv.Close()
+
+	unauthenticated := gqlRequest(t, url, `{ currentUser { username isAdmin } }`, nil, "")
+	if !graphqlErrorContains(unauthenticated, "authentication required") {
+		t.Fatalf("unauthenticated query was not rejected: %v", unauthenticated)
+	}
+	attack := gqlRequest(t, url, `mutation { user { createUser(input: { username: "attacker", password: "attacker", isAdmin: true }) { success } } }`, nil, "")
+	if !graphqlErrorContains(attack, "authentication required") {
+		t.Fatalf("unauthenticated admin creation was not rejected: %v", attack)
+	}
+
+	adminToken := loginToken(t, url, "Admin", "Admin")
+	create := gqlQueryAuth(t, url, `mutation { user {
+		createUser(input: { username: "operator", password: "pw", canSubscribe: true, canPublish: true }) { success }
+	} }`, nil, adminToken)
+	if create["user"].(map[string]any)["createUser"].(map[string]any)["success"] != true {
+		t.Fatalf("create operator failed: %v", create)
+	}
+	gqlQueryAuth(t, url, `mutation { user {
+		createAclRule(input: { username: "operator", topicPattern: "private/#", canSubscribe: false, canPublish: false, priority: 100 }) { success }
+	} }`, nil, adminToken)
+	gqlQueryAuth(t, url, `mutation { user {
+		createAclRule(input: { username: "operator", topicPattern: "#", canSubscribe: true, canPublish: true, priority: 1 }) { success }
+	} }`, nil, adminToken)
+
+	operatorToken := loginToken(t, url, "operator", "pw")
+	current := gqlQueryAuth(t, url, `{ currentUser { username isAdmin } }`, nil, operatorToken)["currentUser"].(map[string]any)
+	if current["username"] != "operator" || current["isAdmin"] != false {
+		t.Fatalf("wrong current user: %v", current)
+	}
+	nonAdminMutation := gqlRequest(t, url, `mutation { user { createUser(input: { username: "second", password: "pw" }) { success } } }`, nil, operatorToken)
+	if !graphqlErrorContains(nonAdminMutation, "administrator access required") {
+		t.Fatalf("non-admin mutation was not rejected: %v", nonAdminMutation)
+	}
+	allowedPublish := gqlQueryAuth(t, url, `mutation { publish(input: { topic: "public/value", payload: "ok" }) { success } }`, nil, operatorToken)
+	if allowedPublish["publish"].(map[string]any)["success"] != true {
+		t.Fatalf("allowed publish failed: %v", allowedPublish)
+	}
+	deniedPublish := gqlRequest(t, url, `mutation { publish(input: { topic: "private/value", payload: "no" }) { success } }`, nil, operatorToken)
+	if !graphqlErrorContains(deniedPublish, "permission denied") {
+		t.Fatalf("ACL publish was not rejected: %v", deniedPublish)
+	}
+	deniedRead := gqlRequest(t, url, `{ currentValue(topic: "private/value") { topic } }`, nil, operatorToken)
+	if !graphqlErrorContains(deniedRead, "permission denied") {
+		t.Fatalf("ACL read was not rejected: %v", deniedRead)
+	}
+
+	gqlQueryAuth(t, url, `mutation { user { updateUser(input: { username: "operator", enabled: false }) { success } } }`, nil, adminToken)
+	disabled := gqlRequest(t, url, `{ currentUser { username } }`, nil, operatorToken)
+	if !graphqlErrorContains(disabled, "invalid credentials") {
+		t.Fatalf("disabled user's session remained valid: %v", disabled)
+	}
+}
+
+func graphqlErrorContains(result map[string]any, text string) bool {
+	errors, ok := result["errors"].([]any)
+	if !ok {
+		return false
+	}
+	for _, raw := range errors {
+		err, ok := raw.(map[string]any)
+		if ok && strings.Contains(fmt.Sprint(err["message"]), text) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestGraphQLDeviceImportExport(t *testing.T) {
@@ -498,8 +602,9 @@ func TestGraphQLDeviceImportExportWithUserManagement(t *testing.T) {
 		c.Features.MqttClient = true
 	})
 	defer srv.Close()
+	adminToken := loginToken(t, url, "Admin", "Admin")
 
-	data := gqlQuery(t, url, `mutation Import($configs: [DeviceInput!]!) {
+	data := gqlQueryAuth(t, url, `mutation Import($configs: [DeviceInput!]!) {
         importDevices(configs: $configs) { success imported failed total errors }
     }`, map[string]any{"configs": []any{
 		map[string]any{
@@ -522,7 +627,7 @@ func TestGraphQLDeviceImportExportWithUserManagement(t *testing.T) {
 				},
 			},
 		},
-	}})
+	}}, adminToken)
 	result := data["importDevices"].(map[string]any)
 	if result["success"] != true || int(result["imported"].(float64)) != 1 || int(result["failed"].(float64)) != 0 {
 		t.Fatalf("importDevices with UserManagement failed: %v", result)
@@ -586,5 +691,3 @@ func TestGraphQLRetainedMessageInArchiveAcrossRestart(t *testing.T) {
 		t.Fatalf("browseTopics after restart empty: %+v", dataBrowse)
 	}
 }
-
-

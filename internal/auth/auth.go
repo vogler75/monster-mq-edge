@@ -2,6 +2,8 @@ package auth
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"sort"
 	"strings"
 	"sync"
@@ -12,22 +14,73 @@ import (
 
 // Cache holds users and ACL rules in memory and refreshes from the UserStore.
 type Cache struct {
-	store              stores.UserStore
-	mu                 sync.RWMutex
-	users              map[string]stores.User
-	rulesByUser        map[string][]stores.AclRule
-	anonymousAllow     bool
+	store               stores.UserStore
+	mu                  sync.RWMutex
+	users               map[string]stores.User
+	rulesByUser         map[string][]stores.AclRule
+	anonymousAllow      bool
 	aclCheckOnSubscribe bool
+	sessions            map[string]session
+}
+
+type session struct {
+	username  string
+	expiresAt time.Time
 }
 
 func NewCache(store stores.UserStore, anonymousAllow bool, aclCheckOnSubscribe bool) *Cache {
 	return &Cache{
-		store:              store,
-		users:              map[string]stores.User{},
-		rulesByUser:        map[string][]stores.AclRule{},
-		anonymousAllow:     anonymousAllow,
+		store:               store,
+		users:               map[string]stores.User{},
+		rulesByUser:         map[string][]stores.AclRule{},
+		anonymousAllow:      anonymousAllow,
 		aclCheckOnSubscribe: aclCheckOnSubscribe,
+		sessions:            map[string]session{},
 	}
+}
+
+// Authenticate validates credentials and returns the enabled user.
+func (c *Cache) Authenticate(ctx context.Context, username, password string) (*stores.User, bool) {
+	if username == "" || password == "" {
+		return nil, false
+	}
+	u, err := c.store.ValidateCredentials(ctx, username, password)
+	if err != nil || u == nil || !u.Enabled {
+		return nil, false
+	}
+	return u, true
+}
+
+// CreateSession creates an opaque, process-local bearer token. Sessions expire
+// after 24 hours and are revalidated against the user cache on every request.
+func (c *Cache) CreateSession(username string) (string, error) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	token := base64.RawURLEncoding.EncodeToString(raw)
+	c.mu.Lock()
+	c.sessions[token] = session{username: username, expiresAt: time.Now().Add(24 * time.Hour)}
+	c.mu.Unlock()
+	return token, nil
+}
+
+// ValidateSession resolves a bearer token to an enabled user.
+func (c *Cache) ValidateSession(token string) (stores.User, bool) {
+	c.mu.RLock()
+	s, ok := c.sessions[token]
+	u, userOK := c.users[s.username]
+	c.mu.RUnlock()
+	if !ok || !userOK || !u.Enabled {
+		return stores.User{}, false
+	}
+	if time.Now().After(s.expiresAt) {
+		c.mu.Lock()
+		delete(c.sessions, token)
+		c.mu.Unlock()
+		return stores.User{}, false
+	}
+	return u, true
 }
 
 func (c *Cache) Refresh(ctx context.Context) error {

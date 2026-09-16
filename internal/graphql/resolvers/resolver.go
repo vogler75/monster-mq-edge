@@ -36,20 +36,20 @@ import (
 // Resolver is the root resolver. Built once at startup with handles to every
 // service the GraphQL surface exposes.
 type Resolver struct {
-	Cfg       *config.Config
-	Storage   *stores.Storage
-	Bus       *pubsub.Bus
-	Archives  *archive.Manager
-	Bridges   *mqttclient.Manager
-	WinCCUa   *winccua.Manager
-	WinCCOa   *winccoa.Manager
-	AuthCache *auth.Cache
-	Collector *metrics.Collector
-	LogBus    *mlog.Bus
-	Logger    *slog.Logger
-	NodeID    string
-	Version   string
-	Mochi     *mqtt.Server
+	Cfg         *config.Config
+	Storage     *stores.Storage
+	Bus         *pubsub.Bus
+	Archives    *archive.Manager
+	Bridges     *mqttclient.Manager
+	WinCCUa     *winccua.Manager
+	WinCCOa     *winccoa.Manager
+	AuthCache   *auth.Cache
+	Collector   *metrics.Collector
+	LogBus      *mlog.Bus
+	Logger      *slog.Logger
+	NodeID      string
+	Version     string
+	Mochi       *mqtt.Server
 	HmiMgr      *hmi.Manager
 	Redfish     *redfish.Manager
 	RtspCameras *rtspcamera.Manager
@@ -192,6 +192,28 @@ func (r *topicResolver) Value(ctx context.Context, obj *generated.Topic, format 
 // Helpers -------------------------------------------------------------------
 
 func ptr[T any](v T) *T { return &v }
+
+func (r *Resolver) allowTopic(ctx context.Context, topic string, write bool) bool {
+	if !r.Cfg.UserManagement.Enabled {
+		return true
+	}
+	user, ok := auth.Principal(ctx)
+	if !ok {
+		return r.Cfg.UserManagement.AnonymousEnabled
+	}
+	return r.AuthCache.Allow(user.Username, topic, write)
+}
+
+func (r *Resolver) requireTopic(ctx context.Context, topic string, write bool) error {
+	if r.allowTopic(ctx, topic, write) {
+		return nil
+	}
+	action := "subscribe to"
+	if write {
+		action = "publish to"
+	}
+	return fmt.Errorf("permission denied: cannot %s topic %q", action, topic)
+}
 
 func nowISO() string                { return time.Now().UTC().Format(time.RFC3339Nano) }
 func formatTime(t time.Time) string { return t.UTC().Format(time.RFC3339Nano) }
@@ -506,14 +528,14 @@ func (r *mutationResolver) Login(ctx context.Context, username, password string)
 	if username == "" || password == "" {
 		return &generated.LoginResult{Success: false, Message: ptr("Username and password are required"), IsAdmin: false}, nil
 	}
-	user, err := r.Storage.Users.ValidateCredentials(ctx, username, password)
+	user, ok := r.AuthCache.Authenticate(ctx, username, password)
+	if !ok {
+		return &generated.LoginResult{Success: false, Message: ptr("Invalid username or password"), IsAdmin: false}, nil
+	}
+	tok, err := r.AuthCache.CreateSession(user.Username)
 	if err != nil {
 		return &generated.LoginResult{Success: false, Message: ptr("Authentication failed"), IsAdmin: false}, nil
 	}
-	if user == nil {
-		return &generated.LoginResult{Success: false, Message: ptr("Invalid username or password"), IsAdmin: false}, nil
-	}
-	tok := fmt.Sprintf("session-%s-%d", user.Username, time.Now().UnixNano())
 	return &generated.LoginResult{
 		Success: true, Token: &tok, Message: ptr("Login successful"), Username: &user.Username, IsAdmin: user.IsAdmin,
 	}, nil
@@ -521,6 +543,9 @@ func (r *mutationResolver) Login(ctx context.Context, username, password string)
 
 func (r *mutationResolver) Publish(ctx context.Context, input generated.PublishInput) (*generated.PublishResult, error) {
 	now := time.Now().UnixMilli()
+	if err := r.requireTopic(ctx, input.Topic, true); err != nil {
+		return nil, err
+	}
 	if strings.ContainsRune(input.Topic, '+') || strings.ContainsRune(input.Topic, '#') {
 		errMsg := "Topic must not contain wildcard characters '+' or '#'"
 		return &generated.PublishResult{Success: false, Topic: input.Topic, Timestamp: now, Error: ptr(errMsg)}, nil
@@ -644,6 +669,9 @@ func (r *mutationResolver) WinCCOaDevice(ctx context.Context) (*generated.WinCCO
 func (r *queryResolver) CurrentUser(ctx context.Context) (*generated.CurrentUser, error) {
 	if !r.Cfg.UserManagement.Enabled {
 		return &generated.CurrentUser{Username: "Anonymous", IsAdmin: true}, nil
+	}
+	if user, ok := auth.Principal(ctx); ok {
+		return &generated.CurrentUser{Username: user.Username, IsAdmin: user.IsAdmin}, nil
 	}
 	return &generated.CurrentUser{Username: "Anonymous", IsAdmin: false}, nil
 }
@@ -814,6 +842,9 @@ func userToGraphQL(u stores.User) *generated.UserInfo {
 }
 
 func (r *queryResolver) RetainedMessage(ctx context.Context, topic string, format *generated.DataFormat) (*generated.RetainedMessage, error) {
+	if err := r.requireTopic(ctx, topic, false); err != nil {
+		return nil, err
+	}
 	msg, err := r.Storage.Retained.Get(ctx, topic)
 	if err != nil || msg == nil {
 		return nil, err
@@ -826,9 +857,15 @@ func (r *queryResolver) RetainedMessages(ctx context.Context, topicFilter *strin
 	if topicFilter != nil {
 		filter = *topicFilter
 	}
+	if err := r.requireTopic(ctx, filter, false); err != nil {
+		return nil, err
+	}
 	max := intPtr(limit, 100)
 	out := []*generated.RetainedMessage{}
 	err := r.Storage.Retained.FindMatchingMessages(ctx, filter, func(m stores.BrokerMessage) bool {
+		if !r.allowTopic(ctx, m.TopicName, false) {
+			return true
+		}
 		out = append(out, brokerMsgToRetained(m, format))
 		return len(out) < max
 	})
@@ -876,6 +913,9 @@ func userPropsTo(p map[string]string) []*generated.UserProperty {
 }
 
 func (r *queryResolver) CurrentValue(ctx context.Context, topic string, format *generated.DataFormat, archiveGroup *string) (*generated.TopicValue, error) {
+	if err := r.requireTopic(ctx, topic, false); err != nil {
+		return nil, err
+	}
 	store := r.lastValueStore(archiveGroup)
 	if store == nil {
 		return nil, nil
@@ -888,6 +928,9 @@ func (r *queryResolver) CurrentValue(ctx context.Context, topic string, format *
 }
 
 func (r *queryResolver) CurrentValues(ctx context.Context, topicFilter string, format *generated.DataFormat, limit *int, archiveGroup *string) ([]*generated.TopicValue, error) {
+	if err := r.requireTopic(ctx, topicFilter, false); err != nil {
+		return nil, err
+	}
 	store := r.lastValueStore(archiveGroup)
 	if store == nil {
 		return nil, nil
@@ -895,6 +938,9 @@ func (r *queryResolver) CurrentValues(ctx context.Context, topicFilter string, f
 	max := intPtr(limit, 100)
 	out := []*generated.TopicValue{}
 	err := store.FindMatchingMessages(ctx, topicFilter, func(m stores.BrokerMessage) bool {
+		if !r.allowTopic(ctx, m.TopicName, false) {
+			return true
+		}
 		out = append(out, brokerMsgToTopicValue(m, format))
 		return len(out) < max
 	})
@@ -957,6 +1003,9 @@ func (r *Resolver) archive(group *string) stores.MessageArchive {
 }
 
 func (r *queryResolver) ArchivedMessages(ctx context.Context, topicFilter string, startTime, endTime *string, format *generated.DataFormat, limit *int, archiveGroup *string, includeTopic *bool) ([]*generated.ArchivedMessage, error) {
+	if err := r.requireTopic(ctx, topicFilter, false); err != nil {
+		return nil, err
+	}
 	arc := r.archive(archiveGroup)
 	if arc == nil {
 		return []*generated.ArchivedMessage{}, nil
@@ -969,6 +1018,9 @@ func (r *queryResolver) ArchivedMessages(ctx context.Context, topicFilter string
 	}
 	out := make([]*generated.ArchivedMessage, 0, len(rows))
 	for _, row := range rows {
+		if !r.allowTopic(ctx, row.Topic, false) {
+			continue
+		}
 		payload, fm := encodePayload(row.Payload, format)
 		cid := row.ClientID
 		out = append(out, &generated.ArchivedMessage{
@@ -984,6 +1036,11 @@ func (r *queryResolver) ArchivedMessages(ctx context.Context, topicFilter string
 }
 
 func (r *queryResolver) AggregatedMessages(ctx context.Context, topics []string, interval generated.AggregationInterval, startTime, endTime string, functions []generated.AggregationFunction, fields []string, archiveGroup *string) (*generated.AggregatedResult, error) {
+	for _, topic := range topics {
+		if err := r.requireTopic(ctx, topic, false); err != nil {
+			return nil, err
+		}
+	}
 	arc := r.archive(archiveGroup)
 	if arc == nil {
 		return &generated.AggregatedResult{
@@ -1059,7 +1116,7 @@ func (r *queryResolver) SearchTopics(ctx context.Context, pattern string, limit 
 	matcher := compileSearchMatcher(pattern)
 	out := []string{}
 	err := store.FindMatchingTopics(ctx, "#", func(topic string) bool {
-		if matcher(topic) {
+		if matcher(topic) && r.allowTopic(ctx, topic, false) {
 			out = append(out, topic)
 		}
 		return len(out) < max
@@ -1126,6 +1183,9 @@ func (r *queryResolver) BrowseTopics(ctx context.Context, topic string, archiveG
 
 	// Exact topic — return it iff it has a value.
 	if !hasWildcard {
+		if err := r.requireTopic(ctx, topic, false); err != nil {
+			return nil, err
+		}
 		msg, err := store.Get(ctx, topic)
 		if err != nil || msg == nil {
 			return []*generated.Topic{}, err
@@ -1136,6 +1196,9 @@ func (r *queryResolver) BrowseTopics(ctx context.Context, topic string, archiveG
 	seen := map[string]struct{}{}
 	leaves := map[string]bool{}
 	err := store.FindMatchingTopics(ctx, "#", func(t string) bool {
+		if !r.allowTopic(ctx, t, false) {
+			return true
+		}
 		topicLevels := strings.Split(t, "/")
 		if len(topicLevels) < extractDepth {
 			return true
@@ -1476,6 +1539,11 @@ func (r *queryResolver) SystemLogs(ctx context.Context, startTime, endTime *stri
 // Subscriptions -------------------------------------------------------------
 
 func (r *subscriptionResolver) TopicUpdates(ctx context.Context, topicFilters []string, format *generated.DataFormat) (<-chan *generated.TopicUpdate, error) {
+	for _, filter := range topicFilters {
+		if err := r.requireTopic(ctx, filter, false); err != nil {
+			return nil, err
+		}
+	}
 	id, msgCh := r.Bus.Subscribe(topicFilters, 64)
 	out := make(chan *generated.TopicUpdate, 64)
 	go func() {
@@ -1489,6 +1557,9 @@ func (r *subscriptionResolver) TopicUpdates(ctx context.Context, topicFilters []
 				if !ok {
 					return
 				}
+				if !r.allowTopic(ctx, m.TopicName, false) {
+					continue
+				}
 				out <- brokerMsgToTopicUpdate(m, format)
 			}
 		}
@@ -1497,6 +1568,11 @@ func (r *subscriptionResolver) TopicUpdates(ctx context.Context, topicFilters []
 }
 
 func (r *subscriptionResolver) TopicUpdatesBulk(ctx context.Context, topicFilters []string, format *generated.DataFormat, timeoutMs, maxSize int) (<-chan *generated.TopicUpdateBulk, error) {
+	for _, filter := range topicFilters {
+		if err := r.requireTopic(ctx, filter, false); err != nil {
+			return nil, err
+		}
+	}
 	timeout := time.Duration(timeoutMs) * time.Millisecond
 	if timeoutMs <= 0 {
 		timeout = time.Second
@@ -1534,6 +1610,9 @@ func (r *subscriptionResolver) TopicUpdatesBulk(ctx context.Context, topicFilter
 				if !ok {
 					flush()
 					return
+				}
+				if !r.allowTopic(ctx, m.TopicName, false) {
+					continue
 				}
 				batch = append(batch, brokerMsgToTopicUpdate(m, format))
 				if len(batch) >= max {

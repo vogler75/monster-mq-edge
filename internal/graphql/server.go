@@ -2,11 +2,13 @@ package graphql
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
 
+	gqlgraphql "github.com/99designs/gqlgen/graphql"
 	"github.com/99designs/gqlgen/graphql/handler"
 	"github.com/99designs/gqlgen/graphql/handler/extension"
 	"github.com/99designs/gqlgen/graphql/handler/lru"
@@ -16,11 +18,13 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/gorilla/websocket"
 	"github.com/vektah/gqlparser/v2/ast"
+	"github.com/vektah/gqlparser/v2/gqlerror"
 
 	"os"
 	"path/filepath"
 	"strings"
 
+	"monstermq.io/edge/internal/auth"
 	"monstermq.io/edge/internal/config"
 	"monstermq.io/edge/internal/graphql/generated"
 	"monstermq.io/edge/internal/graphql/resolvers"
@@ -50,17 +54,56 @@ func NewServer(cfg *config.Config, resolver *resolvers.Resolver, hmiMgr *hmi.Man
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
 		},
+		InitFunc: func(ctx context.Context, payload transport.InitPayload) (context.Context, *transport.InitPayload, error) {
+			if !cfg.UserManagement.Enabled {
+				return ctx, nil, nil
+			}
+			value, _ := payload["Authorization"].(string)
+			if value == "" {
+				value, _ = payload["authorization"].(string)
+			}
+			return authenticateContext(ctx, value, cfg, resolver.AuthCache)
+		},
 	})
 	gql.SetQueryCache(lru.New[*ast.QueryDocument](100))
 	gql.Use(extension.Introspection{})
+	gql.AroundOperations(func(ctx context.Context, next gqlgraphql.OperationHandler) gqlgraphql.ResponseHandler {
+		if !cfg.UserManagement.Enabled {
+			return next(ctx)
+		}
+		op := gqlgraphql.GetOperationContext(ctx).Operation
+		if isLoginOnly(op) {
+			return next(ctx)
+		}
+		if _, ok := auth.Principal(ctx); !ok && !cfg.UserManagement.AnonymousEnabled {
+			return func(context.Context) *gqlgraphql.Response {
+				return gqlgraphql.ErrorResponse(ctx, "authentication required")
+			}
+		}
+		if op.Operation == ast.Mutation {
+			for _, field := range rootFields(op.SelectionSet) {
+				if field.Name == "login" || field.Name == "publish" || field.Name == "publishBatch" {
+					continue
+				}
+				user, authenticated := auth.Principal(ctx)
+				if !authenticated || !user.IsAdmin {
+					return func(context.Context) *gqlgraphql.Response {
+						return gqlgraphql.ErrorResponse(ctx, "administrator access required")
+					}
+				}
+			}
+		}
+		return next(ctx)
+	})
 
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
 	r.Use(corsMiddleware)
-	r.Handle("/graphql", gql)
-	r.Handle("/graphql/", gql)
+	authenticatedGQL := httpAuthMiddleware(cfg, resolver.AuthCache, gql)
+	r.Handle("/graphql", authenticatedGQL)
+	r.Handle("/graphql/", authenticatedGQL)
 	// Apollo-style alias the existing dashboard might use.
-	r.Handle("/query", gql)
+	r.Handle("/query", authenticatedGQL)
 	r.Get("/playground", playground.Handler("MonsterMQ Edge", "/graphql"))
 
 	if (cfg.HMI.Enabled || cfg.Features.Hmi) && hmiMgr != nil {
@@ -136,6 +179,78 @@ func NewServer(cfg *config.Config, resolver *resolvers.Resolver, hmiMgr *hmi.Man
 	return &Server{
 		cfg: cfg, logger: logger, router: r,
 	}
+}
+
+func httpAuthMiddleware(cfg *config.Config, cache *auth.Cache, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !cfg.UserManagement.Enabled {
+			next.ServeHTTP(w, r)
+			return
+		}
+		ctx, _, err := authenticateContext(r.Context(), r.Header.Get("Authorization"), cfg, cache)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = fmt.Fprintf(w, `%s`, `{"errors":[{"message":"invalid credentials"}]}`)
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func authenticateContext(ctx context.Context, authorization string, cfg *config.Config, cache *auth.Cache) (context.Context, *transport.InitPayload, error) {
+	if !cfg.UserManagement.Enabled || strings.TrimSpace(authorization) == "" {
+		return ctx, nil, nil
+	}
+	parts := strings.Fields(authorization)
+	if len(parts) != 2 {
+		return ctx, nil, gqlerror.Errorf("invalid authorization header")
+	}
+	if strings.EqualFold(parts[0], "Basic") {
+		raw, err := base64.StdEncoding.DecodeString(parts[1])
+		if err != nil {
+			return ctx, nil, gqlerror.Errorf("invalid basic credentials")
+		}
+		username, password, ok := strings.Cut(string(raw), ":")
+		user, valid := cache.Authenticate(ctx, username, password)
+		if !ok || !valid {
+			return ctx, nil, gqlerror.Errorf("invalid basic credentials")
+		}
+		return auth.WithPrincipal(ctx, *user), nil, nil
+	}
+	if strings.EqualFold(parts[0], "Bearer") {
+		user, ok := cache.ValidateSession(parts[1])
+		if !ok {
+			return ctx, nil, gqlerror.Errorf("invalid or expired session token")
+		}
+		return auth.WithPrincipal(ctx, user), nil, nil
+	}
+	return ctx, nil, gqlerror.Errorf("unsupported authorization scheme")
+}
+
+func isLoginOnly(op *ast.OperationDefinition) bool {
+	if op == nil || op.Operation != ast.Mutation {
+		return false
+	}
+	fields := rootFields(op.SelectionSet)
+	return len(fields) == 1 && fields[0].Name == "login"
+}
+
+func rootFields(selections ast.SelectionSet) []*ast.Field {
+	fields := make([]*ast.Field, 0, len(selections))
+	for _, selection := range selections {
+		switch value := selection.(type) {
+		case *ast.Field:
+			fields = append(fields, value)
+		case *ast.InlineFragment:
+			fields = append(fields, rootFields(value.SelectionSet)...)
+		case *ast.FragmentSpread:
+			if value.Definition != nil {
+				fields = append(fields, rootFields(value.Definition.SelectionSet)...)
+			}
+		}
+	}
+	return fields
 }
 
 func (s *Server) Start() error {
