@@ -140,6 +140,7 @@ Features:
   MqttClient: true
   WinCCUa: false
   WinCCOa: false
+  RtspCamera: true
 ```
 
 - `MqttClient` enables the MQTT bridge manager for forwarding topics between
@@ -150,6 +151,8 @@ Features:
 - `WinCCOa` enables WinCC Open Architecture clients. Each client subscribes to
   WinCC OA GraphQL `dpQueryConnectSingle` updates and republishes datapoint
   changes into MQTT.
+- `RtspCamera` enables the RTSP / HTTP / WebSocket video stream bridge for
+  capturing frames and publishing JPEG snapshots into MQTT topics.
 
 Enabled features are also reported through GraphQL as `enabledFeatures`, using
 the same names as the config flags.
@@ -170,6 +173,103 @@ address topic. WinCC OA publishes datapoint rows under:
 Both WinCC bridges expose live metrics through their GraphQL client `metrics`
 field. WinCC OA also writes metrics history when `Metrics.StoreType` is backed
 by a metrics store.
+
+### Camera snapshot bridge behavior
+
+Camera configurations are stored in the device config store (`RTSP_CAMERA`), so
+they remain persistent across broker restarts and can be managed via the web
+dashboard or GraphQL queries and mutations.
+
+The bridge connects to video streams without external tools (no CGO, no ffmpeg,
+no shared libraries). Supported sources:
+
+- **RTSP / RTSPS**: `rtsp://...` or `rtsps://...` with `TCP` (interleaved,
+  recommended for firewalls/NAT) or `UDP` transport.
+- **HTTP / HTTPS**: `http://...` or `https://...` multipart MJPEG streams
+  (`multipart/x-mixed-replace`).
+- **WebSocket / WSS**: `ws://...` or `wss://...` streaming raw MJPEG frames.
+
+Supported codecs and decoding modes:
+
+- **Motion JPEG (MJPEG)**: RTP, HTTP, or WebSocket MJPEG payloads are assembled
+  directly into JPEG snapshots with minimal processing.
+- **H.264 / AVC**: Progressive 8-bit YCbCr 4:2:0 I/P/B streams decoded natively
+  via `pkg/h264`. Configurable via `h264DecodeMode`:
+  - `FULL` (default): Decodes all reference frames continuously to maintain
+    unbroken inter-frame prediction, encoding JPEG snapshots on interval or
+    trigger.
+  - `KEYFRAMES_ONLY`: Skips P/B frames and decodes only independent IDR keyframes
+    at most once per `intervalMs`. This dramatically reduces CPU usage on edge
+    devices like the Raspberry Pi 4/5 while trading off capture latency.
+
+#### Snapshot modes
+
+- `CONTINUOUS`: Automatically captures and publishes the latest frame every
+  `intervalMs` (default `1000`, min `50`).
+- `TRIGGERED`: Captures on-demand when an MQTT message arrives on `triggerTopic`
+  (default `<topicPrefix>/trigger`) or when requested via GraphQL mutation
+  `rtspCamera.triggerSnapshot(name)`.
+- `BOTH`: Publishes regular periodic snapshots and also responds to triggers.
+
+#### Round-robin slot publishing and topic architecture
+
+For a configured `topicPrefix` (e.g. `cameras/front_gate`) and `slots` count (e.g. `5`):
+
+```text
+cameras/front_gate/capture/frames/1        # Raw JPEG image binary
+cameras/front_gate/capture/frames/1/meta   # JSON snapshot metadata
+...
+cameras/front_gate/capture/frames/5        # Round-robin advances 1..slots
+cameras/front_gate/capture/frames/5/meta
+
+cameras/front_gate/capture/latest/pic      # Always the most recent JPEG image
+cameras/front_gate/capture/latest/meta     # Metadata for the most recent image
+cameras/front_gate/capture/latest          # JSON pointer to current slot & topics
+cameras/front_gate/capture/snapshot/pic    # Trigger-specific snapshot JPEG
+cameras/front_gate/capture/snapshot/meta   # Trigger-specific metadata
+cameras/front_gate/status                  # Retained connection and health status
+```
+
+Metadata payloads include:
+```json
+{
+  "camera": "front_gate",
+  "slot": 1,
+  "timestamp": "2026-09-17T13:45:00.123456789Z",
+  "timestampMs": 1789652700123,
+  "bytes": 65432,
+  "contentType": "image/jpeg",
+  "topic": "cameras/front_gate/capture/frames/1",
+  "trigger": "continuous"
+}
+```
+
+The active slot pointer on `<topicPrefix>/capture/latest` allows clients to
+discover the current frame and metadata topics:
+```json
+{
+  "camera": "front_gate",
+  "slot": 1,
+  "picTopic": "cameras/front_gate/capture/frames/1",
+  "metaTopic": "cameras/front_gate/capture/frames/1/meta",
+  "timestamp": "2026-09-17T13:45:00.123456789Z",
+  "timestampMs": 1789652700123,
+  "bytes": 65432,
+  "trigger": "continuous"
+}
+```
+
+#### Reading snapshots via REST API
+
+Snapshots can be fetched as raw binary images using the edge broker's REST API:
+
+```bash
+# Get the most recent snapshot as a JPEG file:
+curl -o latest.jpg 'http://localhost:4000/api/v1/topics/cameras/front_gate/capture/latest/pic?raw'
+
+# Get slot 1 snapshot:
+curl -o frame1.jpg 'http://localhost:4000/api/v1/topics/cameras/front_gate/capture/frames/1?raw'
+```
 
 ## Low-write edge devices
 
@@ -254,12 +354,15 @@ internal/
   stores/mongodb/        → MongoDB implementations
   archive/               → archive group orchestrator + retention
   bridge/mqttclient/     → MQTT-to-MQTT bridge (paho client)
+  bridge/rtspcamera/     → RTSP/HTTP/WS camera stream & snapshot bridge (MJPEG & H.264)
   bridge/winccua/        → WinCC Unified bridge (GraphQL/Open Pipe)
   bridge/winccoa/        → WinCC Open Architecture bridge (GraphQL)
   auth/                  → user+ACL cache
   metrics/               → in-memory counters + periodic snapshot writer
   pubsub/                → in-process bus for GraphQL topicUpdates
   graphql/               → gqlgen-generated server, resolvers, dashboard handler
+pkg/
+  h264/                  → pure-Go H.264/AVC depacketizer & picture decoder
 ```
 
 ## Running tests

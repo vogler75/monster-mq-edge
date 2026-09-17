@@ -7,3 +7,4 @@ data/
 .vscode/
 /config.yaml
 .DS_Store
+dashboard
