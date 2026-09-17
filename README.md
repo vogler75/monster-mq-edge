@@ -11,6 +11,7 @@ on devices like the Raspberry Pi 4/5.
 - **Storage**: SQLite (default), PostgreSQL, MongoDB. Schemas are byte-compatible with the Kotlin broker, so the same DB can be opened by either implementation.
 - **Archive groups** (last-value + history fanout, retention purging) — same model as the Kotlin broker.
 - **GraphQL API** with subscriptions, schema-parity with the existing dashboard.
+- **REST API** for publishing, bodyless current/retained/history reads, bulk and Influx writes, and SSE subscriptions.
 - **MQTT bridge** — forward local topics to a remote broker and vice versa.
 - **Camera snapshots** — RTSP MJPEG and H.264 I/P/B streams to MQTT JPEG topics; [native Go decoder API and current limits](pkg/h264/README.md).
 - **Users + ACL** with bcrypt password hashing.
@@ -53,8 +54,38 @@ make build
 
 - MQTT: `mqtt://localhost:1883`
 - WebSocket MQTT: `ws://localhost:1884/mqtt`
-- GraphQL HTTP/WS: `http://localhost:8080/graphql`
-- GraphQL playground: `http://localhost:8080/playground`
+- GraphQL HTTP/WS: `http://localhost:4000/graphql`
+- GraphQL playground: `http://localhost:4000/playground`
+- REST API and offline docs: `http://localhost:4000/api/v1/docs`
+
+The REST API is enabled by default on the GraphQL listener and can be disabled
+with `RestApi.Enabled: false`. For a bodyless current-value read:
+
+```bash
+curl 'http://localhost:4000/api/v1/topics/sensor/temperature'
+```
+
+Omitting `group` (or sending `?group=`) selects the `Default` archive group.
+Adding `start` or `end` selects its history; a named group still uses
+`?group=Name`.
+
+Use URL-encoded MQTT wildcards to read multiple topics as a JSON `messages`
+array, for example `/api/v1/topics/cameras/%23` or
+`/api/v1/topics/cameras/%2B/snapshot`. Add `?raw` to an exact topic GET to
+receive the original payload bytes, for example:
+
+```bash
+curl -o snapshot.jpg 'http://localhost:4000/api/v1/topics/cameras/front/snapshot?raw'
+```
+
+`?retained&raw` reads retained bytes. Raw mode requires one exact current or
+retained topic; combining it with a wildcard or history range returns HTTP 400.
+
+`POST /api/v1/login` issues an opaque edge session token accepted by both REST
+and GraphQL on this broker. It is local to the edge process and is not a JWT
+from the main broker. See [the OpenAPI contract](internal/restapi/openapi.yaml)
+for publishing, retained and history reads, bulk writes, and SSE.
+REST publishes appear in history with the edge inline MQTT client ID.
 
 ## Cross-compile
 

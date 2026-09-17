@@ -19,13 +19,14 @@ import (
 	"monstermq.io/edge/internal/config"
 	gql "monstermq.io/edge/internal/graphql"
 	"monstermq.io/edge/internal/graphql/resolvers"
-	"monstermq.io/edge/internal/hostinfo"
 	"monstermq.io/edge/internal/hmi"
+	"monstermq.io/edge/internal/hostinfo"
 	mlog "monstermq.io/edge/internal/log"
 	"monstermq.io/edge/internal/mcp"
 	"monstermq.io/edge/internal/metrics"
 	"monstermq.io/edge/internal/pubsub"
 	"monstermq.io/edge/internal/redfish"
+	"monstermq.io/edge/internal/restapi"
 	"monstermq.io/edge/internal/stores"
 	storememory "monstermq.io/edge/internal/stores/memory"
 	storemongo "monstermq.io/edge/internal/stores/mongodb"
@@ -221,10 +222,10 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 	}
 	if cfg.WSS.Enabled {
 		tlsCfg, err := loadTLS(TLSParams{
-			CertPath:           cfg.EffectiveWSSKeyStorePath(),
-			KeyPath:            cfg.EffectiveWSSKeyPath(),
-			Password:           cfg.EffectiveWSSKeyStorePassword(),
-			ClientAuth:         config.ClientAuthNone,
+			CertPath:   cfg.EffectiveWSSKeyStorePath(),
+			KeyPath:    cfg.EffectiveWSSKeyPath(),
+			Password:   cfg.EffectiveWSSKeyStorePassword(),
+			ClientAuth: config.ClientAuthNone,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("wss tls config: %w", err)
@@ -299,7 +300,11 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 	var gqlSrv *gql.Server
 	if cfg.GraphQL.Enabled {
 		resolver := resolvers.New(cfg, storage, bus, archives, bridges, winCCUa, winCCOa, authCache, collector, logBus, logger, server, publishFn, hmiMgr, redfishMgr, rtspCameras)
-		gqlSrv = gql.NewServer(cfg, resolver, hmiMgr, redfishMgr, logger)
+		var rest *restapi.Handler
+		if cfg.RestApi.Enabled {
+			rest = restapi.New(cfg, authCache, storage.Retained, archives, bus, publishFn)
+		}
+		gqlSrv = gql.NewServer(cfg, resolver, hmiMgr, redfishMgr, rest, logger)
 	}
 
 	// 9. MCP server (Streamable HTTP / SSE)

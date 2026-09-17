@@ -197,6 +197,13 @@
         "Port":    { "type": "integer", "minimum": 1, "maximum": 65535, "default": 4000 }
       }
     },
+    "RestApi": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "Enabled": { "type": "boolean", "default": true, "description": "Serve /api/v1 on the GraphQL HTTP listener." }
+      }
+    },
     "HMI": {
       "type": "object",
       "additionalProperties": false,

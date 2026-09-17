@@ -46,6 +46,9 @@ GraphQL:
   Enabled: true
   Port: 4000
 
+RestApi:
+  Enabled: true
+
 HMI:
   Enabled: true
   Path: "/var/lib/monstermq/hmi"

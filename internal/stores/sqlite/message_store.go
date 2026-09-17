@@ -29,9 +29,9 @@ func NewMessageStore(name string, db *DB) *MessageStore {
 	}
 }
 
-func (s *MessageStore) Name() string                    { return s.name }
-func (s *MessageStore) Type() stores.MessageStoreType   { return stores.MessageStoreSQLite }
-func (s *MessageStore) Close() error                    { return nil }
+func (s *MessageStore) Name() string                  { return s.name }
+func (s *MessageStore) Type() stores.MessageStoreType { return stores.MessageStoreSQLite }
+func (s *MessageStore) Close() error                  { return nil }
 
 func (s *MessageStore) EnsureTable(ctx context.Context) error {
 	cols := make([]string, 0, MaxFixedTopicLevels)
@@ -201,7 +201,7 @@ func (s *MessageStore) DelAll(ctx context.Context, topics []string) error {
 // We do MQTT-style matching in Go to keep the SQL portable; performance can be tuned
 // later by leveraging the topic_1..topic_9 columns for prefix prefiltering.
 func (s *MessageStore) FindMatchingMessages(ctx context.Context, pattern string, yield func(stores.BrokerMessage) bool) error {
-	q := fmt.Sprintf(`SELECT topic, payload_blob, qos, client_id, message_uuid, creation_time, message_expiry_interval
+	q := fmt.Sprintf(`SELECT topic, payload_blob, qos, retained, client_id, message_uuid, creation_time, message_expiry_interval
                       FROM %s`, s.tableName)
 	rows, err := s.db.Conn().QueryContext(ctx, q)
 	if err != nil {
@@ -214,12 +214,13 @@ func (s *MessageStore) FindMatchingMessages(ctx context.Context, pattern string,
 			topic       string
 			payload     []byte
 			qos         int
+			retained    bool
 			clientID    sql.NullString
 			messageUUID sql.NullString
 			creation    sql.NullInt64
 			expiry      sql.NullInt64
 		)
-		if err := rows.Scan(&topic, &payload, &qos, &clientID, &messageUUID, &creation, &expiry); err != nil {
+		if err := rows.Scan(&topic, &payload, &qos, &retained, &clientID, &messageUUID, &creation, &expiry); err != nil {
 			return err
 		}
 		if !MatchTopic(pattern, topic) {
@@ -237,7 +238,7 @@ func (s *MessageStore) FindMatchingMessages(ctx context.Context, pattern string,
 			TopicName:   topic,
 			Payload:     payload,
 			QoS:         byte(qos),
-			IsRetain:    true,
+			IsRetain:    retained,
 			ClientID:    clientID.String,
 			Time:        time.UnixMilli(creation.Int64),
 		}

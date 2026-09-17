@@ -19,13 +19,21 @@ type Bus struct {
 }
 
 type sub struct {
-	filters []string
-	ch      chan stores.BrokerMessage
+	filters  []string
+	ch       chan stores.BrokerMessage
+	overflow chan struct{}
+	once     sync.Once
 }
 
 func NewBus() *Bus { return &Bus{subs: map[int]*sub{}} }
 
 func (b *Bus) Subscribe(filters []string, buffer int) (id int, ch <-chan stores.BrokerMessage) {
+	id, ch, _ = b.SubscribeWithOverflow(filters, buffer)
+	return id, ch
+}
+
+// SubscribeWithOverflow reports a dropped event so streaming clients can close.
+func (b *Bus) SubscribeWithOverflow(filters []string, buffer int) (id int, ch <-chan stores.BrokerMessage, overflow <-chan struct{}) {
 	if buffer <= 0 {
 		buffer = 16
 	}
@@ -33,10 +41,11 @@ func (b *Bus) Subscribe(filters []string, buffer int) (id int, ch <-chan stores.
 	b.mu.Lock()
 	b.next++
 	id = b.next
-	b.subs[id] = &sub{filters: filters, ch: c}
+	s := &sub{filters: filters, ch: c, overflow: make(chan struct{})}
+	b.subs[id] = s
 	b.count.Store(int32(len(b.subs)))
 	b.mu.Unlock()
-	return id, c
+	return id, c, s.overflow
 }
 
 // HasSubscribers reports whether any subscription is active. Lock-free so the
@@ -64,6 +73,7 @@ func (b *Bus) Publish(msg stores.BrokerMessage) {
 			case s.ch <- msg:
 			default:
 				// drop on slow subscriber to keep the broker hot path nonblocking
+				s.once.Do(func() { close(s.overflow) })
 			}
 		}
 	}

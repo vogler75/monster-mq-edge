@@ -133,6 +133,10 @@ type GraphQLConfig struct {
 	Port    int  `yaml:"Port"`
 }
 
+type RestApiConfig struct {
+	Enabled bool `yaml:"Enabled"`
+}
+
 type MCPConfig struct {
 	Enabled bool `yaml:"Enabled"`
 	Port    int  `yaml:"Port"`
@@ -219,6 +223,7 @@ type Config struct {
 	Metrics        MetricsConfig        `yaml:"Metrics"`
 	Logging        LoggingConfig        `yaml:"Logging"`
 	GraphQL        GraphQLConfig        `yaml:"GraphQL"`
+	RestApi        RestApiConfig        `yaml:"RestApi"`
 	MCP            MCPConfig            `yaml:"MCP"`
 	Features       FeaturesConfig       `yaml:"Features"`
 	HostMonitoring HostMonitoringConfig `yaml:"HostMonitoring"`
@@ -240,24 +245,25 @@ type Config struct {
 
 func Default() *Config {
 	return &Config{
-		NodeID:                "",
-		TCP:                   Listener{Enabled: true, Port: 1883},
-		TCPS:                  Listener{Enabled: false, Port: 8883},
-		WS:                    Listener{Enabled: false, Port: 1884},
-		WSS:                   Listener{Enabled: false, Port: 8884},
-		MaxMessageSize:        1048576,
-		DefaultStoreType:      StoreSQLite,
-		SessionStoreType:      StoreSQLite,
-		RetainedStoreType:     StoreSQLite,
-		ConfigStoreType:       StoreSQLite,
-		QueueStoreType:        StoreSQLite,
-		SQLite:                SQLiteConfig{Path: "./data/monstermq.db"},
-		UserManagement:        UserManagementConfig{Enabled: false, PasswordAlgorithm: "BCRYPT", AnonymousEnabled: true, AclCacheEnabled: true},
-		Metrics:               MetricsConfig{Enabled: true, CollectionIntervalSeconds: 1, RetentionHours: 168, MaxHistoryRows: 3600},
-		Logging:               LoggingConfig{Level: "INFO", MqttSyslogEnabled: false, RingBufferSize: 1000},
-		GraphQL:               GraphQLConfig{Enabled: true, Port: 4000},
-		MCP:                   MCPConfig{Enabled: false, Port: 3000},
-		Features:              FeaturesConfig{MqttClient: false, WinCCUa: false, WinCCOa: false, DeviceImportExport: false, Mcp: false, Hmi: false, Redfish: false, RtspCamera: false},
+		NodeID:            "",
+		TCP:               Listener{Enabled: true, Port: 1883},
+		TCPS:              Listener{Enabled: false, Port: 8883},
+		WS:                Listener{Enabled: false, Port: 1884},
+		WSS:               Listener{Enabled: false, Port: 8884},
+		MaxMessageSize:    1048576,
+		DefaultStoreType:  StoreSQLite,
+		SessionStoreType:  StoreSQLite,
+		RetainedStoreType: StoreSQLite,
+		ConfigStoreType:   StoreSQLite,
+		QueueStoreType:    StoreSQLite,
+		SQLite:            SQLiteConfig{Path: "./data/monstermq.db"},
+		UserManagement:    UserManagementConfig{Enabled: false, PasswordAlgorithm: "BCRYPT", AnonymousEnabled: true, AclCacheEnabled: true},
+		Metrics:           MetricsConfig{Enabled: true, CollectionIntervalSeconds: 1, RetentionHours: 168, MaxHistoryRows: 3600},
+		Logging:           LoggingConfig{Level: "INFO", MqttSyslogEnabled: false, RingBufferSize: 1000},
+		GraphQL:           GraphQLConfig{Enabled: true, Port: 4000},
+		RestApi:           RestApiConfig{Enabled: true},
+		MCP:               MCPConfig{Enabled: false, Port: 3000},
+		Features:          FeaturesConfig{MqttClient: false, WinCCUa: false, WinCCOa: false, DeviceImportExport: false, Mcp: false, Hmi: false, Redfish: false, RtspCamera: false},
 		HostMonitoring: HostMonitoringConfig{
 			Enabled:         false,
 			BaseTopic:       "nodes/{NodeId}/host",

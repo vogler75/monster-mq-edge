@@ -60,6 +60,9 @@ GraphQL:
   Enabled: true
   Port: 4000
 
+RestApi:
+  Enabled: true
+
 HMI:
   Enabled: false
   Path: "./data/hmi"

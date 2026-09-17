@@ -2,7 +2,6 @@ package graphql
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -18,7 +17,6 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/gorilla/websocket"
 	"github.com/vektah/gqlparser/v2/ast"
-	"github.com/vektah/gqlparser/v2/gqlerror"
 
 	"os"
 	"path/filepath"
@@ -30,6 +28,7 @@ import (
 	"monstermq.io/edge/internal/graphql/resolvers"
 	"monstermq.io/edge/internal/hmi"
 	"monstermq.io/edge/internal/redfish"
+	"monstermq.io/edge/internal/restapi"
 )
 
 // Server hosts the GraphQL HTTP and WebSocket endpoints, HMI dashboards, and Redfish API.
@@ -40,7 +39,7 @@ type Server struct {
 	httpSrv *http.Server
 }
 
-func NewServer(cfg *config.Config, resolver *resolvers.Resolver, hmiMgr *hmi.Manager, redfishMgr *redfish.Manager, logger *slog.Logger) *Server {
+func NewServer(cfg *config.Config, resolver *resolvers.Resolver, hmiMgr *hmi.Manager, redfishMgr *redfish.Manager, rest *restapi.Handler, logger *slog.Logger) *Server {
 	es := generated.NewExecutableSchema(generated.Config{Resolvers: resolver})
 	gql := handler.New(es)
 	gql.AddTransport(transport.Options{})
@@ -105,6 +104,9 @@ func NewServer(cfg *config.Config, resolver *resolvers.Resolver, hmiMgr *hmi.Man
 	// Apollo-style alias the existing dashboard might use.
 	r.Handle("/query", authenticatedGQL)
 	r.Get("/playground", playground.Handler("MonsterMQ Edge", "/graphql"))
+	if cfg.RestApi.Enabled && rest != nil {
+		r.Mount("/api/v1", rest.Router())
+	}
 
 	if (cfg.HMI.Enabled || cfg.Features.Hmi) && hmiMgr != nil {
 		mountPath := cfg.HMI.MountPath
@@ -199,33 +201,11 @@ func httpAuthMiddleware(cfg *config.Config, cache *auth.Cache, next http.Handler
 }
 
 func authenticateContext(ctx context.Context, authorization string, cfg *config.Config, cache *auth.Cache) (context.Context, *transport.InitPayload, error) {
-	if !cfg.UserManagement.Enabled || strings.TrimSpace(authorization) == "" {
+	if !cfg.UserManagement.Enabled {
 		return ctx, nil, nil
 	}
-	parts := strings.Fields(authorization)
-	if len(parts) != 2 {
-		return ctx, nil, gqlerror.Errorf("invalid authorization header")
-	}
-	if strings.EqualFold(parts[0], "Basic") {
-		raw, err := base64.StdEncoding.DecodeString(parts[1])
-		if err != nil {
-			return ctx, nil, gqlerror.Errorf("invalid basic credentials")
-		}
-		username, password, ok := strings.Cut(string(raw), ":")
-		user, valid := cache.Authenticate(ctx, username, password)
-		if !ok || !valid {
-			return ctx, nil, gqlerror.Errorf("invalid basic credentials")
-		}
-		return auth.WithPrincipal(ctx, *user), nil, nil
-	}
-	if strings.EqualFold(parts[0], "Bearer") {
-		user, ok := cache.ValidateSession(parts[1])
-		if !ok {
-			return ctx, nil, gqlerror.Errorf("invalid or expired session token")
-		}
-		return auth.WithPrincipal(ctx, user), nil, nil
-	}
-	return ctx, nil, gqlerror.Errorf("unsupported authorization scheme")
+	ctx, err := auth.AuthenticateHeader(ctx, cache, authorization)
+	return ctx, nil, err
 }
 
 func isLoginOnly(op *ast.OperationDefinition) bool {
@@ -276,7 +256,7 @@ func (s *Server) Stop(ctx context.Context) error {
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>MonsterMQ Edge REST API</title>
+  <style>
+    body { font: 16px system-ui, sans-serif; max-width: 860px; margin: 3rem auto; padding: 0 1rem; color: #172233; }
+    p { line-height: 1.5; }
+    code, pre { background: #f2f5f8; border-radius: 4px; }
+    code { padding: .15rem .3rem; }
+    pre { padding: 1rem; overflow: auto; }
+    a { color: #1262a3; }
+    table { border-collapse: collapse; width: 100%; }
+    td, th { padding: .65rem; text-align: left; border-bottom: 1px solid #dbe2e9; }
+  </style>
+</head>
+<body>
+  <h1>MonsterMQ Edge REST API</h1>
+  <p>The API runs on the GraphQL listener. Use Basic authentication or an edge session token from <code>POST /api/v1/login</code>. <a href="/api/v1/openapi.yaml">Download OpenAPI YAML</a>.</p>
+  <table>
+    <thead><tr><th>Method</th><th>Path</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td>POST</td><td>/api/v1/login</td><td>Get a session token</td></tr>
+      <tr><td>POST, PUT</td><td>/api/v1/topics/{topic}</td><td>Publish bytes or a query payload</td></tr>
+      <tr><td>GET</td><td>/api/v1/topics/{topic}?retained</td><td>Read retained value</td></tr>
+      <tr><td>GET</td><td>/api/v1/topics/{topic}</td><td>Read current value from Default</td></tr>
+      <tr><td>GET</td><td>/api/v1/topics/{topic}?raw</td><td>Read original bytes from one topic</td></tr>
+      <tr><td>GET</td><td>/api/v1/topics/{topic}?start=...</td><td>Read history from Default</td></tr>
+      <tr><td>POST</td><td>/api/v1/write</td><td>Bulk publish</td></tr>
+      <tr><td>POST</td><td>/api/v1/write/influx</td><td>Influx line protocol</td></tr>
+      <tr><td>GET</td><td>/api/v1/subscribe?topic=...</td><td>Server-Sent Events</td></tr>
+    </tbody>
+  </table>
+  <p>Omitting <code>group</code> or sending <code>?group=</code> selects <code>Default</code>. Set <code>?group=Name</code> to read another archive group.</p>
+  <pre>curl 'http://localhost:4000/api/v1/topics/sensor/temperature'</pre>
+  <h2>Read multiple topics</h2>
+  <p>The topic path accepts one MQTT filter. Encode <code>+</code> as <code>%2B</code> to match one level, or <code>#</code> as <code>%23</code> to match all remaining levels. The result is a JSON <code>messages</code> array. For unrelated filters, make separate GET requests; the SSE endpoint accepts repeated <code>topic</code> parameters.</p>
+  <pre>curl 'http://localhost:4000/api/v1/topics/cameras/%23'
+curl 'http://localhost:4000/api/v1/topics/cameras/%2B/snapshot'</pre>
+  <h2>Read original bytes</h2>
+  <p>Add <code>?raw</code> to a GET for one exact topic to receive the original MQTT payload, with no JSON or base64 wrapper. This works for current values and retained messages. Recognized image payloads are served with an image content type; other payloads use <code>application/octet-stream</code>. Raw reads of wildcard filters or history return HTTP 400, and a missing topic returns HTTP 404.</p>
+  <pre>curl -o snapshot.jpg 'http://localhost:4000/api/v1/topics/cameras/front/snapshot?raw'
+curl -o snapshot.jpg 'http://localhost:4000/api/v1/topics/cameras/front/snapshot?retained&amp;raw'</pre>
+  <p>The default archive group stores current values in memory and does not keep history unless configured with an archive store. Request bodies are limited to 4 MiB.</p>
+</body>
+</html>
