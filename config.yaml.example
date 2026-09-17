@@ -43,6 +43,7 @@ UserManagement:
   AnonymousEnabled: true
   AclCacheEnabled: true
   # AclCheckOnSubscription: false  # When false, wildcard subscriptions are allowed; ACL enforced at delivery time.
+  # AllowAnonymousLocalhost: false # When true, requests and connections from 127.0.0.1 bypass authentication (MQTT, GraphQL, HMI).
 
 Metrics:
   Enabled: true

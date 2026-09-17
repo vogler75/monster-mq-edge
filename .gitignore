@@ -8,3 +8,4 @@ data/
 /config.yaml
 .DS_Store
 dashboard
+dist/

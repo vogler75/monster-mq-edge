@@ -20,11 +20,12 @@ import (
 // mutual TLS client certificate Common Name authentication.
 type AuthHook struct {
 	mqtt.HookBase
-	cache                 *auth.Cache
-	userStore             stores.UserStore
-	useIdentityAsUsername bool
-	autoCreateUser        bool
-	logger                *slog.Logger
+	cache                   *auth.Cache
+	userStore               stores.UserStore
+	useIdentityAsUsername   bool
+	autoCreateUser          bool
+	allowAnonymousLocalhost bool
+	logger                  *slog.Logger
 }
 
 func NewAuthHook(
@@ -32,14 +33,16 @@ func NewAuthHook(
 	userStore stores.UserStore,
 	useIdentityAsUsername bool,
 	autoCreateUser bool,
+	allowAnonymousLocalhost bool,
 	logger *slog.Logger,
 ) *AuthHook {
 	return &AuthHook{
-		cache:                 cache,
-		userStore:             userStore,
-		useIdentityAsUsername: useIdentityAsUsername,
-		autoCreateUser:        autoCreateUser,
-		logger:                logger,
+		cache:                   cache,
+		userStore:               userStore,
+		useIdentityAsUsername:   useIdentityAsUsername,
+		autoCreateUser:          autoCreateUser,
+		allowAnonymousLocalhost: allowAnonymousLocalhost,
+		logger:                  logger,
 	}
 }
 
@@ -144,12 +147,36 @@ func (h *AuthHook) OnConnectAuthenticate(cl *mqtt.Client, pk packets.Packet) boo
 		}
 	}
 
+	if h.allowAnonymousLocalhost && h.isLocalhost(cl) && len(cl.Properties.Username) == 0 {
+		cl.Properties.Username = []byte("localhost")
+		if h.logger != nil {
+			h.logger.Info("anonymous connection allowed from localhost", "client", cl.ID)
+		}
+		return true
+	}
+
 	username := string(cl.Properties.Username)
 	password := string(pk.Connect.Password)
 	return h.cache.Validate(username, password)
 }
 
+func (h *AuthHook) isLocalhost(cl *mqtt.Client) bool {
+	if cl == nil {
+		return false
+	}
+	var remote string
+	if cl.Net.Conn != nil && cl.Net.Conn.RemoteAddr() != nil {
+		remote = cl.Net.Conn.RemoteAddr().String()
+	} else {
+		remote = cl.Net.Remote
+	}
+	return auth.IsLocalhost(remote)
+}
+
 func (h *AuthHook) OnACLCheck(cl *mqtt.Client, topic string, write bool) bool {
 	username := string(cl.Properties.Username)
+	if h.allowAnonymousLocalhost && username == "localhost" && h.isLocalhost(cl) {
+		return true
+	}
 	return h.cache.Allow(username, topic, write)
 }

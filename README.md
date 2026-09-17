@@ -327,6 +327,23 @@ startup leaves it unchanged.
 With `AnonymousEnabled: true`, GraphQL login and MQTT clients can still use
 anonymous access. Set `AnonymousEnabled: false` to require configured users.
 
+### Localhost unauthenticated access
+
+Setting `AllowAnonymousLocalhost: true` allows connections and requests originating
+strictly from IPv4 `127.0.0.1` (localhost) to connect without authentication, even when
+`UserManagement.Enabled: true` and `AnonymousEnabled: false`:
+
+- **MQTT**: Clients connecting from `127.0.0.1` without credentials are authenticated as
+  user `localhost` with full topic publish and subscribe permissions.
+- **GraphQL**: Requests arriving from `127.0.0.1` without an `Authorization` header are
+  granted administrator access with username `localhost`.
+- **HMI (`/hmi`)**: Web dashboards and static assets are served directly to requests from
+  `127.0.0.1` without requiring a session token.
+- **REST API (`/api/v1`)**: Requests from `127.0.0.1` without credentials bypass authentication.
+
+Connections or requests arriving from any other IP address continue to require valid
+credentials or tokens.
+
 ## Dashboard
 
 Set `Dashboard.Path` to a built `dashboard/dist` directory to serve the existing

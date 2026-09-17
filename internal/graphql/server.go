@@ -57,6 +57,9 @@ func NewServer(cfg *config.Config, resolver *resolvers.Resolver, hmiMgr *hmi.Man
 			if !cfg.UserManagement.Enabled {
 				return ctx, nil, nil
 			}
+			if _, ok := auth.Principal(ctx); ok {
+				return ctx, nil, nil
+			}
 			value, _ := payload["Authorization"].(string)
 			if value == "" {
 				value, _ = payload["authorization"].(string)
@@ -115,6 +118,33 @@ func NewServer(cfg *config.Config, resolver *resolvers.Resolver, hmiMgr *hmi.Man
 		}
 
 		hmiHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if cfg.UserManagement.Enabled {
+				isLocal := auth.IsLocalhostRequest(r)
+				if !(cfg.UserManagement.AllowAnonymousLocalhost && isLocal) {
+					authenticated := false
+					if authHdr := r.Header.Get("Authorization"); authHdr != "" {
+						if _, err := auth.AuthenticateHeader(r.Context(), resolver.AuthCache, authHdr); err != nil {
+							http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+							return
+						}
+						authenticated = true
+					}
+					if !authenticated {
+						if tok := r.URL.Query().Get("token"); tok != "" {
+							if _, ok := resolver.AuthCache.ValidateSession(tok); !ok {
+								http.Error(w, "Invalid session token", http.StatusUnauthorized)
+								return
+							}
+							authenticated = true
+						}
+					}
+					if !authenticated && !cfg.UserManagement.AnonymousEnabled {
+						http.Error(w, "Authentication required", http.StatusUnauthorized)
+						return
+					}
+				}
+			}
+
 			relPath := strings.TrimPrefix(r.URL.Path, mountPath)
 			relPath = strings.TrimPrefix(relPath, "/")
 
@@ -187,6 +217,11 @@ func httpAuthMiddleware(cfg *config.Config, cache *auth.Cache, next http.Handler
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !cfg.UserManagement.Enabled {
 			next.ServeHTTP(w, r)
+			return
+		}
+		if cfg.UserManagement.AllowAnonymousLocalhost && auth.IsLocalhostRequest(r) && r.Header.Get("Authorization") == "" {
+			ctx := auth.WithPrincipal(r.Context(), auth.LocalhostUser)
+			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
 		ctx, _, err := authenticateContext(r.Context(), r.Header.Get("Authorization"), cfg, cache)

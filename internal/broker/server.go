@@ -135,6 +135,7 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 			storage.Users,
 			cfg.EffectiveUseIdentityAsUsername(),
 			cfg.EffectiveAutoCreateUser(),
+			cfg.UserManagement.AllowAnonymousLocalhost,
 			logger,
 		)
 		if err := server.AddHook(authHook, nil); err != nil {

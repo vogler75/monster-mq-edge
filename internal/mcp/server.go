@@ -90,6 +90,10 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
+			if s.cfg.UserManagement.AllowAnonymousLocalhost && auth.IsLocalhostRequest(r) {
+				next.ServeHTTP(w, r.WithContext(auth.WithPrincipal(r.Context(), auth.LocalhostUser)))
+				return
+			}
 			if s.cfg.UserManagement.AnonymousEnabled {
 				next.ServeHTTP(w, r)
 				return

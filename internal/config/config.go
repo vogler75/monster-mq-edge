@@ -103,7 +103,8 @@ type UserManagementConfig struct {
 	PasswordAlgorithm      string `yaml:"PasswordAlgorithm"`
 	AnonymousEnabled       bool   `yaml:"AnonymousEnabled"`
 	AclCacheEnabled        bool   `yaml:"AclCacheEnabled"`
-	AclCheckOnSubscription *bool  `yaml:"AclCheckOnSubscription,omitempty"`
+	AclCheckOnSubscription  *bool  `yaml:"AclCheckOnSubscription,omitempty"`
+	AllowAnonymousLocalhost bool   `yaml:"AllowAnonymousLocalhost"`
 }
 
 // AclCheckOnSub returns the effective value: default true (subscribe-time check).
@@ -257,7 +258,7 @@ func Default() *Config {
 		ConfigStoreType:   StoreSQLite,
 		QueueStoreType:    StoreSQLite,
 		SQLite:            SQLiteConfig{Path: "./data/monstermq.db"},
-		UserManagement:    UserManagementConfig{Enabled: false, PasswordAlgorithm: "BCRYPT", AnonymousEnabled: true, AclCacheEnabled: true},
+		UserManagement:    UserManagementConfig{Enabled: false, PasswordAlgorithm: "BCRYPT", AnonymousEnabled: true, AclCacheEnabled: true, AllowAnonymousLocalhost: false},
 		Metrics:           MetricsConfig{Enabled: true, CollectionIntervalSeconds: 1, RetentionHours: 168, MaxHistoryRows: 3600},
 		Logging:           LoggingConfig{Level: "INFO", MqttSyslogEnabled: false, RingBufferSize: 1000},
 		GraphQL:           GraphQLConfig{Enabled: true, Port: 4000},

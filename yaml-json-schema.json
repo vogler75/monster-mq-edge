@@ -166,7 +166,8 @@
         "PasswordAlgorithm": { "type": "string", "enum": ["BCRYPT", "PLAIN"], "default": "BCRYPT" },
         "AnonymousEnabled":  { "type": "boolean", "description": "When true, missing credentials are allowed even with UserManagement.Enabled=true." },
         "AclCacheEnabled":   { "type": "boolean" },
-        "AclCheckOnSubscription": { "type": "boolean", "description": "When false, wildcard subscriptions (e.g. #) are allowed and ACL is enforced at message delivery time instead. Default true." }
+        "AclCheckOnSubscription": { "type": "boolean", "description": "When false, wildcard subscriptions (e.g. #) are allowed and ACL is enforced at message delivery time instead. Default true." },
+        "AllowAnonymousLocalhost": { "type": "boolean", "default": false, "description": "When true, requests and connections originating from 127.0.0.1 (localhost) are allowed without authentication for MQTT, GraphQL, and HMI." }
       }
     },
     "Metrics": {

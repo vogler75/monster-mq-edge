@@ -72,6 +72,11 @@ func (h *Handler) authenticate(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		if h.cfg.UserManagement.AllowAnonymousLocalhost && auth.IsLocalhostRequest(r) && r.Header.Get("Authorization") == "" {
+			ctx := auth.WithPrincipal(r.Context(), auth.LocalhostUser)
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
 		ctx, err := auth.AuthenticateHeader(r.Context(), h.auth, r.Header.Get("Authorization"))
 		if err != nil {
 			w.Header().Set("WWW-Authenticate", `Basic realm="MonsterMQ REST API"`)
@@ -91,6 +96,12 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	if !h.cfg.UserManagement.Enabled {
 		respond(w, 200, map[string]any{"success": true, "token": nil, "message": "Authentication disabled", "username": "anonymous"})
 		return
+	}
+	if h.cfg.UserManagement.AllowAnonymousLocalhost && auth.IsLocalhostRequest(r) {
+		if p, ok := auth.Principal(r.Context()); ok && p.Username == "localhost" {
+			respond(w, 200, map[string]any{"success": true, "token": nil, "message": "Authentication bypassed for localhost", "username": "localhost"})
+			return
+		}
 	}
 	var input struct {
 		Username string `json:"username"`
@@ -147,6 +158,9 @@ func (h *Handler) allowed(r *http.Request, topic string, write bool) bool {
 	user, ok := auth.Principal(r.Context())
 	if !ok {
 		return h.auth.Allow("", topic, write)
+	}
+	if h.cfg.UserManagement.AllowAnonymousLocalhost && user.Username == "localhost" && auth.IsLocalhostRequest(r) {
+		return true
 	}
 	return h.auth.Allow(user.Username, topic, write)
 }

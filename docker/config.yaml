@@ -21,6 +21,7 @@ UserManagement:
   PasswordAlgorithm: BCRYPT
   AnonymousEnabled: true
   AclCacheEnabled: true
+  AllowAnonymousLocalhost: true
 
 Metrics:
   Enabled: true

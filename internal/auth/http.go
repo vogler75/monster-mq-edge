@@ -4,8 +4,42 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"net"
+	"net/http"
 	"strings"
+
+	"monstermq.io/edge/internal/stores"
 )
+
+// LocalhostUser is the synthetic user representing an unauthenticated localhost connection.
+var LocalhostUser = stores.User{
+	Username:     "localhost",
+	Enabled:      true,
+	CanSubscribe: true,
+	CanPublish:   true,
+	IsAdmin:      true,
+}
+
+// IsLocalhost returns true if the remote address string resolves to IPv4 127.0.0.1.
+func IsLocalhost(remoteAddr string) bool {
+	if remoteAddr == "" {
+		return false
+	}
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		host = remoteAddr
+	}
+	return host == "127.0.0.1"
+}
+
+// IsLocalhostRequest returns true if the HTTP request originated from IPv4 127.0.0.1.
+func IsLocalhostRequest(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	return IsLocalhost(r.RemoteAddr)
+}
+
 
 // AuthenticateHeader applies the same Basic and bearer credentials to HTTP APIs.
 func AuthenticateHeader(ctx context.Context, cache *Cache, header string) (context.Context, error) {

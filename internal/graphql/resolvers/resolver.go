@@ -525,6 +525,18 @@ func (r *mutationResolver) Login(ctx context.Context, username, password string)
 	if r.Storage == nil {
 		return &generated.LoginResult{Success: false, Message: ptr("auth unavailable"), IsAdmin: false}, nil
 	}
+	if r.Cfg.UserManagement.AllowAnonymousLocalhost {
+		if p, ok := auth.Principal(ctx); ok && p.Username == "localhost" && (username == "" || password == "") {
+			name := "localhost"
+			admin := true
+			return &generated.LoginResult{
+				Success:  true,
+				Message:  ptr("Authentication bypassed for localhost"),
+				Username: &name,
+				IsAdmin:  admin,
+			}, nil
+		}
+	}
 	if username == "" || password == "" {
 		return &generated.LoginResult{Success: false, Message: ptr("Username and password are required"), IsAdmin: false}, nil
 	}
