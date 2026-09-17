@@ -12,6 +12,7 @@ on devices like the Raspberry Pi 4/5.
 - **Archive groups** (last-value + history fanout, retention purging) — same model as the Kotlin broker.
 - **GraphQL API** with subscriptions, schema-parity with the existing dashboard.
 - **MQTT bridge** — forward local topics to a remote broker and vice versa.
+- **Camera snapshots** — RTSP MJPEG and H.264 I/P/B streams to MQTT JPEG topics; [native Go decoder API and current limits](pkg/h264/README.md).
 - **Users + ACL** with bcrypt password hashing.
 - **Periodic metrics** surfaced via `Broker.metrics`/`metricsHistory`; history can be persisted or kept in memory.
 - **WinCC Unified bridge** — GraphQL/WebSocket or Open Pipe transport into local MQTT topics.

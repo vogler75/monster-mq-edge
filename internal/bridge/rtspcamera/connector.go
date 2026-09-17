@@ -14,6 +14,7 @@ import (
 
 	"github.com/bluenviron/gortsplib/v5"
 	"github.com/bluenviron/gortsplib/v5/pkg/base"
+	"github.com/bluenviron/gortsplib/v5/pkg/description"
 	"github.com/bluenviron/gortsplib/v5/pkg/format"
 	"github.com/bluenviron/gortsplib/v5/pkg/format/rtpmjpeg"
 	"github.com/gorilla/websocket"
@@ -356,50 +357,85 @@ func (c *Connector) connectAndStream(ctx context.Context) error {
 	}
 
 	c.mu.Lock()
-	c.client = client
-	c.mu.Unlock()
-
+	select {
+	case <-c.stopCh:
+		c.mu.Unlock()
+		return context.Canceled
+	default:
+	}
 	if err := client.Start(); err != nil {
+		c.mu.Unlock()
 		return fmt.Errorf("rtsp client start failed: %w", err)
 	}
-	defer client.Close()
+	c.client = client
+	c.latestFrame = nil
+	c.mu.Unlock()
+	watcherStop, watcherDone := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(watcherDone)
+		select {
+		case <-ctx.Done():
+			client.Close()
+		case <-c.stopCh:
+			client.Close()
+		case <-watcherStop:
+		}
+	}()
+	defer func() {
+		close(watcherStop)
+		<-watcherDone
+		client.Close()
+		c.mu.Lock()
+		if c.client == client {
+			c.client = nil
+		}
+		c.latestFrame = nil
+		c.mu.Unlock()
+	}()
 
 	desc, _, err := client.Describe(u)
 	if err != nil {
 		return fmt.Errorf("rtsp describe failed: %w", err)
 	}
 
-	// Locate MJPEG format.
-	var forma *format.MJPEG
-	medi := desc.FindFormat(&forma)
-	if medi == nil {
-		return errors.New("stream format is not MJPEG; only MJPEG RTSP streams are currently supported in pure-Go edge broker")
+	var jpegFormat *format.MJPEG
+	var h264Format *format.H264
+	var medi *description.Media
+	var selected format.Format
+	var handlePacket func(*rtp.Packet)
+	decodeErrors := make(chan error, 1)
+	if medi = desc.FindFormat(&jpegFormat); medi != nil {
+		selected = jpegFormat
+		rtpDec, err := jpegFormat.CreateDecoder()
+		if err != nil {
+			return fmt.Errorf("create mjpeg decoder failed: %w", err)
+		}
+		handlePacket = func(pkt *rtp.Packet) {
+			enc, err := rtpDec.Decode(pkt)
+			if err != nil {
+				if !errors.Is(err, rtpmjpeg.ErrNonStartingPacketAndNoPrevious) && !errors.Is(err, rtpmjpeg.ErrMorePacketsNeeded) {
+					c.logger.Debug("rtp decode packet error", "err", err)
+				}
+				return
+			}
+			if len(enc) > 0 {
+				atomic.AddUint64(&c.framesReceived, 1)
+				c.setLatestFrame(enc)
+			}
+		}
+	} else if medi = desc.FindFormat(&h264Format); medi != nil {
+		selected = h264Format
+		handlePacket, err = c.h264PacketHandler(h264Format, decodeErrors)
+		if err != nil {
+			return err
+		}
+	} else {
+		return errors.New("RTSP stream has no supported video track; expected MJPEG or H.264")
 	}
-
-	rtpDec, err := forma.CreateDecoder()
-	if err != nil {
-		return fmt.Errorf("create mjpeg decoder failed: %w", err)
-	}
-
-	_, err = client.Setup(desc.BaseURL, medi, 0, 0)
-	if err != nil {
+	if _, err = client.Setup(desc.BaseURL, medi, 0, 0); err != nil {
 		return fmt.Errorf("rtsp setup failed: %w", err)
 	}
-
-	client.OnPacketRTP(medi, forma, func(pkt *rtp.Packet) {
-		enc, err2 := rtpDec.Decode(pkt)
-		if err2 != nil {
-			if !errors.Is(err2, rtpmjpeg.ErrNonStartingPacketAndNoPrevious) && !errors.Is(err2, rtpmjpeg.ErrMorePacketsNeeded) {
-				c.logger.Debug("rtp decode packet error", "err", err2)
-			}
-			return
-		}
-
-		if len(enc) > 0 {
-			atomic.AddUint64(&c.framesReceived, 1)
-			c.setLatestFrame(enc)
-		}
-	})
+	client.OnPacketRTP(medi, selected, handlePacket)
 
 	_, err = client.Play(nil)
 	if err != nil {
@@ -409,13 +445,27 @@ func (c *Connector) connectAndStream(ctx context.Context) error {
 	c.setStatus(true, "")
 	c.logger.Info("rtsp stream connected and playing", "url", c.cfg.URL)
 
-	// Wait until client terminates or error occurs.
-	waitErr := client.Wait()
-	c.setStatus(false, "disconnected")
-	if waitErr != nil {
-		return fmt.Errorf("rtsp connection terminated: %w", waitErr)
+	waitDone := make(chan error, 1)
+	go func() { waitDone <- client.Wait() }()
+	select {
+	case err := <-decodeErrors:
+		client.Close()
+		<-waitDone
+		return fmt.Errorf("H.264 stream decode failed: %w", err)
+	case <-ctx.Done():
+		client.Close()
+		<-waitDone
+		return ctx.Err()
+	case <-c.stopCh:
+		client.Close()
+		<-waitDone
+		return context.Canceled
+	case err := <-waitDone:
+		if err != nil {
+			return fmt.Errorf("rtsp connection terminated: %w", err)
+		}
+		return nil
 	}
-	return nil
 }
 
 func (c *Connector) publishSnapshot(frame []byte, triggerSource string) error {
