@@ -2,6 +2,7 @@ package integration
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,17 +17,17 @@ import (
 	"monstermq.io/edge/internal/config"
 )
 
-func startWithMCP(t *testing.T, mqttPort, gqlPort, mcpPort int, cfgFns ...func(*config.Config)) (*broker.Server, string) {
+func startWithMCP(t *testing.T, mqttPort, gqlPort int, cfgFns ...func(*config.Config)) (*broker.Server, string) {
 	t.Helper()
 	cfg := config.Default()
-	cfg.NodeID = fmt.Sprintf("mcp-node-%d", mcpPort)
+	cfg.NodeID = fmt.Sprintf("mcp-node-%d", gqlPort)
 	cfg.TCP.Enabled = true
 	cfg.TCP.Port = mqttPort
 	cfg.WS.Enabled = false
 	cfg.GraphQL.Enabled = true
 	cfg.GraphQL.Port = gqlPort
+	cfg.GraphQL.TLSPort = gqlPort + 1000
 	cfg.MCP.Enabled = true
-	cfg.MCP.Port = mcpPort
 	cfg.Features.Mcp = true
 	cfg.SQLite.Path = filepath.Join(t.TempDir(), "mcp.db")
 	for _, fn := range cfgFns {
@@ -38,7 +39,7 @@ func startWithMCP(t *testing.T, mqttPort, gqlPort, mcpPort int, cfgFns ...func(*
 	}
 	go func() { _ = srv.Serve() }()
 
-	mcpURL := fmt.Sprintf("http://localhost:%d/mcp", mcpPort)
+	mcpURL := fmt.Sprintf("http://localhost:%d/mcp", gqlPort)
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
 		req, _ := http.NewRequest("POST", mcpURL, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`))
@@ -77,7 +78,7 @@ func mcpRequest(t *testing.T, url, body, authorization string) (int, string) {
 }
 
 func TestMCPBearerAuthenticationAndACL(t *testing.T) {
-	srv, mcpURL := startWithMCP(t, 23051, 28051, 23001, func(c *config.Config) {
+	srv, mcpURL := startWithMCP(t, 23051, 28051, func(c *config.Config) {
 		c.UserManagement.Enabled = true
 		c.UserManagement.AnonymousEnabled = false
 	})
@@ -133,7 +134,7 @@ func TestMCPBearerAuthenticationAndACL(t *testing.T) {
 }
 
 func TestMCPInvalidBearerRejectedWhenAnonymousEnabled(t *testing.T) {
-	srv, mcpURL := startWithMCP(t, 23052, 28052, 23002, func(c *config.Config) {
+	srv, mcpURL := startWithMCP(t, 23052, 28052, func(c *config.Config) {
 		c.UserManagement.Enabled = true
 		c.UserManagement.AnonymousEnabled = true
 	})
@@ -153,9 +154,8 @@ func TestMCPInvalidBearerRejectedWhenAnonymousEnabled(t *testing.T) {
 func TestMCPServerTools(t *testing.T) {
 	mqttPort := 23050
 	gqlPort := 28050
-	mcpPort := 23000
 
-	srv, mcpURL := startWithMCP(t, mqttPort, gqlPort, mcpPort, func(c *config.Config) {
+	srv, mcpURL := startWithMCP(t, mqttPort, gqlPort, func(c *config.Config) {
 		c.UserManagement.Enabled = false
 	})
 	defer srv.Close()
@@ -287,5 +287,35 @@ func TestMCPServerTools(t *testing.T) {
 	resp.Body.Close()
 	if !strings.Contains(string(bodyBytes), "sensors/temp/room1") {
 		t.Fatalf("find-topics-by-name response invalid: %s", string(bodyBytes))
+	}
+}
+
+func TestMCPServerOverHTTPS(t *testing.T) {
+	tempDir := t.TempDir()
+	certPath := filepath.Join(tempDir, "auto.crt")
+	keyPath := filepath.Join(tempDir, "auto.key")
+
+	srv, _ := startWithMCP(t, 23053, 28053, func(c *config.Config) {
+		c.GraphQL.TLSPort = 28153
+		c.GraphQL.KeyStorePath = certPath
+		c.GraphQL.KeyPath = keyPath
+	})
+	defer srv.Close()
+
+	tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+	client := &http.Client{Transport: tr, Timeout: 3 * time.Second}
+
+	httpsMCPURL := "https://localhost:28153/mcp"
+	req, _ := http.NewRequest("POST", httpsMCPURL, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("MCP HTTPS request error: %v", err)
+	}
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 over HTTPS, got %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 }

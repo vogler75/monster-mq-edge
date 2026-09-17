@@ -59,10 +59,9 @@ Logging:
 
 GraphQL:
   Enabled: true
-  Port: 4000
-  # TLSEnabled: false              # Enable HTTPS (creates self-signed data/server.crt & data/server.key if missing)
-  # TLSPort: 4443                 # HTTPS listener port
-  # RequireHTTPSFromOutside: false # When true, outside requests on HTTP are redirected to HTTPS (localhost stays HTTP)
+  Port: 4000                      # HTTP port (plain). When defined (> 0), HTTP is enabled
+  TLSPort: 4443                   # HTTPS port (TLS). When defined (> 0), HTTPS is enabled (creates self-signed cert if missing)
+  RequireHTTPSFromOutside: false  # When true, outside requests on HTTP are redirected to HTTPS (localhost stays HTTP)
 
 Dashboard:
   Enabled: true
@@ -78,7 +77,6 @@ HMI:
 
 MCP:
   Enabled: false
-  Port: 3000
 
 Features:
   MqttClient: true

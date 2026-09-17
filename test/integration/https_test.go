@@ -22,7 +22,6 @@ func TestHTTPSAutoCertGeneration(t *testing.T) {
 	keyPath := filepath.Join(tempDir, "auto.key")
 
 	srv, _ := startWithGraphQL(t, 23180, 28180, func(c *config.Config) {
-		c.GraphQL.TLSEnabled = true
 		c.GraphQL.TLSPort = 28181
 		c.GraphQL.KeyStorePath = certPath
 		c.GraphQL.KeyPath = keyPath
@@ -80,7 +79,6 @@ func TestHTTPSRequireFromOutside_LocalhostAllowed(t *testing.T) {
 	keyPath := filepath.Join(tempDir, "auto.key")
 
 	srv, _ := startWithGraphQL(t, 23182, 28182, func(c *config.Config) {
-		c.GraphQL.TLSEnabled = true
 		c.GraphQL.TLSPort = 28183
 		c.GraphQL.RequireHTTPSFromOutside = true
 		c.GraphQL.KeyStorePath = certPath
@@ -114,7 +112,6 @@ func TestHTTPSRequireFromOutside_ExternalRedirect(t *testing.T) {
 	keyPath := filepath.Join(tempDir, "auto.key")
 
 	srv, _ := startWithGraphQL(t, 23184, 28184, func(c *config.Config) {
-		c.GraphQL.TLSEnabled = true
 		c.GraphQL.TLSPort = 28185
 		c.GraphQL.RequireHTTPSFromOutside = true
 		c.GraphQL.KeyStorePath = certPath
@@ -126,7 +123,6 @@ func TestHTTPSRequireFromOutside_ExternalRedirect(t *testing.T) {
 	// In Go's net/http, any request arriving on a real TCP listener has the real RemoteAddr.
 	// We can test the handler middleware directly:
 	cfg := config.Default()
-	cfg.GraphQL.TLSEnabled = true
 	cfg.GraphQL.TLSPort = 28185
 	cfg.GraphQL.RequireHTTPSFromOutside = true
 
@@ -150,7 +146,6 @@ func TestHTTPSRequireFromOutside_ExternalRedirect(t *testing.T) {
 
 func TestRequireHTTPSMiddlewareRedirect(t *testing.T) {
 	cfg := config.Default()
-	cfg.GraphQL.TLSEnabled = true
 	cfg.GraphQL.TLSPort = 4443
 	cfg.GraphQL.RequireHTTPSFromOutside = true
 
@@ -171,5 +166,62 @@ func TestRequireHTTPSMiddlewareRedirect(t *testing.T) {
 	}
 	if loc := rec.Header().Get("Location"); loc != "https://192.168.1.100:4443/pages/dashboard.html" {
 		t.Fatalf("expected https://192.168.1.100:4443/pages/dashboard.html, got %s", loc)
+	}
+}
+
+func TestHTTPS_OnlyHTTPSPort_NoHTTP(t *testing.T) {
+	tempDir := t.TempDir()
+	certPath := filepath.Join(tempDir, "auto.crt")
+	keyPath := filepath.Join(tempDir, "auto.key")
+
+	srv, _ := startWithGraphQL(t, 23186, 28186, func(c *config.Config) {
+		c.GraphQL.Port = 0 // HTTP disabled
+		c.GraphQL.TLSPort = 28187
+		c.GraphQL.KeyStorePath = certPath
+		c.GraphQL.KeyPath = keyPath
+	})
+	defer srv.Close()
+
+	// HTTPS works
+	tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+	client := &http.Client{Transport: tr, Timeout: 2 * time.Second}
+	resp, err := client.Get("https://localhost:28187/health")
+	if err != nil {
+		t.Fatalf("HTTPS GET: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	// Plain HTTP port was never opened
+	_, err = http.Get("http://localhost:28186/health")
+	if err == nil {
+		t.Fatal("expected error connecting to disabled HTTP port")
+	}
+}
+
+func TestHTTP_OnlyHTTPPort_NoHTTPS(t *testing.T) {
+	srv, _ := startWithGraphQL(t, 23188, 28188, func(c *config.Config) {
+		c.GraphQL.TLSPort = 0 // HTTPS disabled
+	})
+	defer srv.Close()
+
+	// HTTP works
+	resp, err := http.Get("http://localhost:28188/health")
+	if err != nil {
+		t.Fatalf("HTTP GET: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	// HTTPS port was never opened
+	tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+	client := &http.Client{Transport: tr, Timeout: 500 * time.Millisecond}
+	_, err = client.Get("https://localhost:29188/health")
+	if err == nil {
+		t.Fatal("expected error connecting to disabled HTTPS port")
 	}
 }

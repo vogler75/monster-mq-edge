@@ -44,7 +44,7 @@ type Server struct {
 	httpsSrv  *http.Server
 }
 
-func NewServer(cfg *config.Config, resolver *resolvers.Resolver, hmiMgr *hmi.Manager, redfishMgr *redfish.Manager, rest *restapi.Handler, tlsConfig *tls.Config, logger *slog.Logger) *Server {
+func NewServer(cfg *config.Config, resolver *resolvers.Resolver, hmiMgr *hmi.Manager, redfishMgr *redfish.Manager, rest *restapi.Handler, mcpHandler http.Handler, tlsConfig *tls.Config, logger *slog.Logger) *Server {
 	es := generated.NewExecutableSchema(generated.Config{Resolvers: resolver})
 	gql := handler.New(es)
 	gql.AddTransport(transport.Options{})
@@ -106,7 +106,7 @@ func NewServer(cfg *config.Config, resolver *resolvers.Resolver, hmiMgr *hmi.Man
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
 	r.Use(corsMiddleware)
-	if cfg.GraphQL.TLSEnabled && cfg.GraphQL.RequireHTTPSFromOutside {
+	if cfg.GraphQL.TLSEnabled() && cfg.GraphQL.RequireHTTPSFromOutside {
 		r.Use(requireHTTPSMiddleware(cfg))
 	}
 	authenticatedGQL := httpAuthMiddleware(cfg, resolver.AuthCache, gql)
@@ -117,6 +117,10 @@ func NewServer(cfg *config.Config, resolver *resolvers.Resolver, hmiMgr *hmi.Man
 	r.Get("/playground", playground.Handler("MonsterMQ Edge", "/graphql"))
 	if cfg.RestApi.Enabled && rest != nil {
 		r.Mount("/api/v1", rest.Router())
+	}
+	if (cfg.MCP.Enabled || cfg.Features.Mcp) && mcpHandler != nil {
+		r.Handle("/mcp", mcpHandler)
+		r.Handle("/mcp/*", mcpHandler)
 	}
 
 	if (cfg.HMI.Enabled || cfg.Features.Hmi) && hmiMgr != nil {
@@ -283,36 +287,39 @@ func rootFields(selections ast.SelectionSet) []*ast.Field {
 
 func (s *Server) Start() error {
 	errCh := make(chan error, 2)
-	servers := 1
+	servers := 0
 
-	httpAddr := s.cfg.GraphQL.Address
-	if httpAddr == "" {
-		httpAddr = "0.0.0.0"
-	}
-	s.httpSrv = &http.Server{
-		Addr:              fmt.Sprintf("%s:%d", httpAddr, s.cfg.GraphQL.Port),
-		Handler:           s.router,
-		ReadHeaderTimeout: 10 * time.Second,
-	}
-	s.logger.Info("graphql http listening", "addr", httpAddr, "port", s.cfg.GraphQL.Port)
-
-	go func() {
-		err := s.httpSrv.ListenAndServe()
-		if err != nil && err != http.ErrServerClosed {
-			s.logger.Error("http server error", "err", err)
-			errCh <- err
-			return
+	if s.cfg.GraphQL.HTTPEnabled() {
+		servers++
+		httpAddr := s.cfg.GraphQL.Address
+		if httpAddr == "" {
+			httpAddr = "0.0.0.0"
 		}
-		errCh <- nil
-	}()
+		s.httpSrv = &http.Server{
+			Addr:              fmt.Sprintf("%s:%d", httpAddr, s.cfg.GraphQL.Port),
+			Handler:           s.router,
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+		s.logger.Info("graphql http listening", "addr", httpAddr, "port", s.cfg.GraphQL.Port)
 
-	if s.cfg.GraphQL.TLSEnabled && s.tlsConfig != nil {
+		go func() {
+			err := s.httpSrv.ListenAndServe()
+			if err != nil && err != http.ErrServerClosed {
+				s.logger.Error("http server error", "err", err)
+				errCh <- err
+				return
+			}
+			errCh <- nil
+		}()
+	}
+
+	if s.cfg.GraphQL.TLSEnabled() && s.tlsConfig != nil {
 		servers++
 		tlsAddr := s.cfg.GraphQL.TLSAddress
 		if tlsAddr == "" {
 			tlsAddr = "0.0.0.0"
 		}
-		tlsPort := s.cfg.EffectiveGraphQLTLSPort()
+		tlsPort := s.cfg.GraphQL.TLSPort
 		s.httpsSrv = &http.Server{
 			Addr:              fmt.Sprintf("%s:%d", tlsAddr, tlsPort),
 			Handler:           s.router,
@@ -330,6 +337,10 @@ func (s *Server) Start() error {
 			}
 			errCh <- nil
 		}()
+	}
+
+	if servers == 0 {
+		return nil
 	}
 
 	var firstErr error
@@ -368,7 +379,7 @@ func requireHTTPSMiddleware(cfg *config.Config) func(http.Handler) http.Handler 
 			if err != nil {
 				host = r.Host
 			}
-			tlsPort := cfg.EffectiveGraphQLTLSPort()
+			tlsPort := cfg.GraphQL.TLSPort
 			uri := r.URL.RequestURI()
 			if uri == "" {
 				uri = r.URL.Path

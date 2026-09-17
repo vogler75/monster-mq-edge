@@ -2,11 +2,9 @@ package mcp
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"monstermq.io/edge/internal/archive"
@@ -16,14 +14,13 @@ import (
 )
 
 type Server struct {
-	cfg        *config.Config
-	storage    *stores.Storage
-	archives   *archive.Manager
-	authCache  *auth.Cache
-	publishFn  func(topic string, payload []byte, retain bool, qos byte) error
-	logger     *slog.Logger
-	mcpServer  *mcp.Server
-	httpServer *http.Server
+	cfg       *config.Config
+	storage   *stores.Storage
+	archives  *archive.Manager
+	authCache *auth.Cache
+	publishFn func(topic string, payload []byte, retain bool, qos byte) error
+	logger    *slog.Logger
+	mcpServer *mcp.Server
 }
 
 func NewServer(cfg *config.Config, storage *stores.Storage, archives *archive.Manager, authCache *auth.Cache, publishFn func(topic string, payload []byte, retain bool, qos byte) error, logger *slog.Logger) *Server {
@@ -48,7 +45,8 @@ func NewServer(cfg *config.Config, storage *stores.Storage, archives *archive.Ma
 	return s
 }
 
-func (s *Server) Start() error {
+// Handler returns an http.Handler that serves MCP Streamable HTTP / SSE with authentication.
+func (s *Server) Handler() http.Handler {
 	opts := &mcp.StreamableHTTPOptions{
 		Stateless:    true,
 		JSONResponse: true,
@@ -56,29 +54,15 @@ func (s *Server) Start() error {
 	handler := mcp.NewStreamableHTTPHandler(func(req *http.Request) *mcp.Server {
 		return s.mcpServer
 	}, opts)
+	return s.authMiddleware(handler)
+}
 
-	mux := http.NewServeMux()
-	mux.Handle("/mcp", s.authMiddleware(handler))
-	mux.Handle("/mcp/", s.authMiddleware(handler))
-
-	s.httpServer = &http.Server{
-		Addr:              fmt.Sprintf(":%d", s.cfg.MCP.Port),
-		Handler:           mux,
-		ReadHeaderTimeout: 10 * time.Second,
-	}
-
-	s.logger.Info("mcp server listening", "port", s.cfg.MCP.Port)
-	if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		return err
-	}
+func (s *Server) Start() error {
 	return nil
 }
 
 func (s *Server) Stop(ctx context.Context) error {
-	if s.httpServer == nil {
-		return nil
-	}
-	return s.httpServer.Shutdown(ctx)
+	return nil
 }
 
 func (s *Server) authMiddleware(next http.Handler) http.Handler {

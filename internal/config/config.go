@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"os"
+
+	"gopkg.in/yaml.v3"
 )
 
 type StoreType string
@@ -132,14 +134,37 @@ type LoggingConfig struct {
 type GraphQLConfig struct {
 	Enabled                 bool   `yaml:"Enabled"`
 	Address                 string `yaml:"Address,omitempty"`
-	Port                    int    `yaml:"Port"`
-	TLSEnabled              bool   `yaml:"TLSEnabled"`
-	TLSPort                 int    `yaml:"TLSPort"`
+	Port                    int    `yaml:"Port,omitempty"`
+	TLSPort                 int    `yaml:"TLSPort,omitempty"`
 	TLSAddress              string `yaml:"TLSAddress,omitempty"`
 	RequireHTTPSFromOutside bool   `yaml:"RequireHTTPSFromOutside"`
 	KeyStorePath            string `yaml:"KeyStorePath,omitempty"`
 	KeyPath                 string `yaml:"KeyPath,omitempty"`
 	KeyStorePassword        string `yaml:"KeyStorePassword,omitempty"`
+}
+
+// HTTPEnabled reports whether the HTTP listener is enabled (Port > 0).
+func (g *GraphQLConfig) HTTPEnabled() bool {
+	return g.Enabled && g.Port > 0
+}
+
+// TLSEnabled reports whether the HTTPS listener is enabled (TLSPort > 0).
+func (g *GraphQLConfig) TLSEnabled() bool {
+	return g.Enabled && g.TLSPort > 0
+}
+
+// UnmarshalYAML implements yaml.Unmarshaler so that when a GraphQL block
+// is defined in YAML, Port and TLSPort are enabled only if explicitly defined (> 0).
+func (g *GraphQLConfig) UnmarshalYAML(value *yaml.Node) error {
+	type rawGraphQLConfig GraphQLConfig
+	aux := rawGraphQLConfig{
+		Enabled: true,
+	}
+	if err := value.Decode(&aux); err != nil {
+		return err
+	}
+	*g = GraphQLConfig(aux)
+	return nil
 }
 
 type DashboardConfig struct {
@@ -153,7 +178,6 @@ type RestApiConfig struct {
 
 type MCPConfig struct {
 	Enabled bool `yaml:"Enabled"`
-	Port    int  `yaml:"Port"`
 }
 
 type HostMonitoringConfig struct {
@@ -278,13 +302,12 @@ func Default() *Config {
 		GraphQL: GraphQLConfig{
 			Enabled:                 true,
 			Port:                    4000,
-			TLSEnabled:              false,
 			TLSPort:                 4443,
 			RequireHTTPSFromOutside: false,
 		},
 		Dashboard:         DashboardConfig{Enabled: true, Path: ""},
 		RestApi:           RestApiConfig{Enabled: true},
-		MCP:               MCPConfig{Enabled: false, Port: 3000},
+		MCP:               MCPConfig{Enabled: false},
 		Features:          FeaturesConfig{MqttClient: false, WinCCUa: false, WinCCOa: false, DeviceImportExport: false, Mcp: false, Hmi: false, Redfish: false, RtspCamera: false},
 		HostMonitoring: HostMonitoringConfig{
 			Enabled:         false,
@@ -565,8 +588,5 @@ func (c *Config) EffectiveGraphQLKeyPassword() string {
 }
 
 func (c *Config) EffectiveGraphQLTLSPort() int {
-	if c.GraphQL.TLSPort > 0 {
-		return c.GraphQL.TLSPort
-	}
-	return 4443
+	return c.GraphQL.TLSPort
 }

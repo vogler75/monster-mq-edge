@@ -55,6 +55,7 @@ func Handler(customPath string, logger *slog.Logger) http.Handler {
 
 		if strings.HasPrefix(cleanPath, "/api/") || cleanPath == "/api" ||
 			strings.HasPrefix(cleanPath, "/graphql") ||
+			strings.HasPrefix(cleanPath, "/mcp/") || cleanPath == "/mcp" ||
 			strings.HasPrefix(cleanPath, "/hmi/") || cleanPath == "/hmi" ||
 			strings.HasPrefix(cleanPath, "/redfish/") || cleanPath == "/redfish" {
 			http.NotFound(w, r)

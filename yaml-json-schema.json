@@ -196,9 +196,8 @@
       "properties": {
         "Enabled":                 { "type": "boolean" },
         "Address":                 { "type": "string", "default": "0.0.0.0" },
-        "Port":                    { "type": "integer", "minimum": 1, "maximum": 65535, "default": 4000 },
-        "TLSEnabled":              { "type": "boolean", "default": false, "description": "Enable HTTPS server for Web Dashboard and GraphQL API" },
-        "TLSPort":                 { "type": "integer", "minimum": 1, "maximum": 65535, "default": 4443 },
+        "Port":                    { "type": "integer", "minimum": 1, "maximum": 65535, "description": "HTTP port (plain). When defined (> 0), HTTP is enabled." },
+        "TLSPort":                 { "type": "integer", "minimum": 1, "maximum": 65535, "description": "HTTPS port (TLS). When defined (> 0), HTTPS is enabled (generates self-signed cert if missing)." },
         "TLSAddress":              { "type": "string", "default": "0.0.0.0" },
         "RequireHTTPSFromOutside": { "type": "boolean", "default": false, "description": "Require HTTPS for external connections, allowing plain HTTP only from localhost" },
         "KeyStorePath":            { "type": "string", "description": "Path to TLS certificate (defaults to SSL.KeyStorePath or data/server.crt)" },
@@ -246,8 +245,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "Enabled": { "type": "boolean", "description": "Enable the Model Context Protocol (MCP) server." },
-        "Port":    { "type": "integer", "minimum": 1, "maximum": 65535, "default": 3000 }
+        "Enabled": { "type": "boolean", "description": "Enable the Model Context Protocol (MCP) server mounted at /mcp." }
       }
     },
     "Features": {
