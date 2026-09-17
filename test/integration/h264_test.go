@@ -124,6 +124,48 @@ func BenchmarkH264Decode(b *testing.B) {
 	}
 }
 
+func BenchmarkH264DecodeStream(b *testing.B) {
+	for _, name := range []string{"motion-baseline", "motion-high-cabac", "motion-b-pyramid"} {
+		b.Run(name, func(b *testing.B) {
+			raw, err := os.ReadFile("testdata/h264/" + name + ".264")
+			if err != nil {
+				b.Fatal(err)
+			}
+			nals, err := h264.SplitAnnexB(raw)
+			if err != nil {
+				b.Fatal(err)
+			}
+			var units [][][]byte
+			var unit [][]byte
+			for _, nal := range nals {
+				if nal[0]&31 == 9 && len(unit) > 0 {
+					units = append(units, unit)
+					unit = nil
+				}
+				unit = append(unit, nal)
+			}
+			units = append(units, unit)
+			dec := h264.NewDecoder(h264.Config{})
+			b.ReportAllocs()
+			b.SetBytes(int64(len(raw)))
+			b.ResetTimer()
+			frames := 0
+			for b.Loop() {
+				dec.Reset()
+				for _, au := range units {
+					out, err := dec.Decode(au)
+					if err != nil {
+						b.Fatal(err)
+					}
+					frames += len(out)
+				}
+				frames += len(dec.Flush())
+			}
+			b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(frames), "ns/frame")
+		})
+	}
+}
+
 func TestH264ParameterChangesAndOwnership(t *testing.T) {
 	dec := h264.NewDecoder(h264.Config{})
 	var first *h264.Frame

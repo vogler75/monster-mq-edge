@@ -462,9 +462,15 @@ enum RtspCaptureMode {
     BOTH
 }
 
+enum RtspH264DecodeMode {
+    FULL
+    KEYFRAMES_ONLY
+}
+
 type RtspCameraConfig {
     url: String!
     transport: RtspTransport!
+    h264DecodeMode: RtspH264DecodeMode!
     topicPrefix: String!
     mode: RtspCaptureMode!
     intervalMs: Int!
@@ -506,6 +512,7 @@ type RtspCameraResult {
 input RtspCameraConfigInput {
     url: String!
     transport: RtspTransport = TCP
+    h264DecodeMode: RtspH264DecodeMode = FULL
     topicPrefix: String!
     mode: RtspCaptureMode = CONTINUOUS
     intervalMs: Int = 1000
@@ -16378,6 +16385,8 @@ func (ec *executionContext) fieldContext_RtspCamera_config(_ context.Context, fi
 				return ec.fieldContext_RtspCameraConfig_url(ctx, field)
 			case "transport":
 				return ec.fieldContext_RtspCameraConfig_transport(ctx, field)
+			case "h264DecodeMode":
+				return ec.fieldContext_RtspCameraConfig_h264DecodeMode(ctx, field)
 			case "topicPrefix":
 				return ec.fieldContext_RtspCameraConfig_topicPrefix(ctx, field)
 			case "mode":
@@ -16643,6 +16652,35 @@ func (ec *executionContext) fieldContext_RtspCameraConfig_transport(_ context.Co
 		IsResolver: false,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return nil, errors.New("field of type RtspTransport does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _RtspCameraConfig_h264DecodeMode(ctx context.Context, field graphql.CollectedField, obj *RtspCameraConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_RtspCameraConfig_h264DecodeMode,
+		func(ctx context.Context) (any, error) {
+			return obj.H264DecodeMode, nil
+		},
+		nil,
+		ec.marshalNRtspH264DecodeMode2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspH264DecodeMode,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_RtspCameraConfig_h264DecodeMode(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "RtspCameraConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type RtspH264DecodeMode does not have child fields")
 		},
 	}
 	return fc, nil
@@ -26451,6 +26489,9 @@ func (ec *executionContext) unmarshalInputRtspCameraConfigInput(ctx context.Cont
 	if _, present := asMap["transport"]; !present {
 		asMap["transport"] = "TCP"
 	}
+	if _, present := asMap["h264DecodeMode"]; !present {
+		asMap["h264DecodeMode"] = "FULL"
+	}
 	if _, present := asMap["mode"]; !present {
 		asMap["mode"] = "CONTINUOUS"
 	}
@@ -26470,7 +26511,7 @@ func (ec *executionContext) unmarshalInputRtspCameraConfigInput(ctx context.Cont
 		asMap["publishMetadata"] = true
 	}
 
-	fieldsInOrder := [...]string{"url", "transport", "topicPrefix", "mode", "intervalMs", "slots", "triggerTopic", "retain", "qos", "publishMetadata"}
+	fieldsInOrder := [...]string{"url", "transport", "h264DecodeMode", "topicPrefix", "mode", "intervalMs", "slots", "triggerTopic", "retain", "qos", "publishMetadata"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -26491,6 +26532,13 @@ func (ec *executionContext) unmarshalInputRtspCameraConfigInput(ctx context.Cont
 				return it, err
 			}
 			it.Transport = data
+		case "h264DecodeMode":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("h264DecodeMode"))
+			data, err := ec.unmarshalORtspH264DecodeMode2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspH264DecodeMode(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.H264DecodeMode = data
 		case "topicPrefix":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("topicPrefix"))
 			data, err := ec.unmarshalNString2string(ctx, v)
@@ -32434,6 +32482,11 @@ func (ec *executionContext) _RtspCameraConfig(ctx context.Context, sel ast.Selec
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
+		case "h264DecodeMode":
+			out.Values[i] = ec._RtspCameraConfig_h264DecodeMode(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
 		case "topicPrefix":
 			out.Values[i] = ec._RtspCameraConfig_topicPrefix(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
@@ -37273,6 +37326,16 @@ func (ec *executionContext) marshalNRtspCaptureMode2monstermqᚗioᚋedgeᚋinte
 	return v
 }
 
+func (ec *executionContext) unmarshalNRtspH264DecodeMode2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspH264DecodeMode(ctx context.Context, v any) (RtspH264DecodeMode, error) {
+	var res RtspH264DecodeMode
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNRtspH264DecodeMode2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspH264DecodeMode(ctx context.Context, sel ast.SelectionSet, v RtspH264DecodeMode) graphql.Marshaler {
+	return v
+}
+
 func (ec *executionContext) unmarshalNRtspTransport2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspTransport(ctx context.Context, v any) (RtspTransport, error) {
 	var res RtspTransport
 	err := res.UnmarshalGQL(v)
@@ -38509,6 +38572,22 @@ func (ec *executionContext) unmarshalORtspCaptureMode2ᚖmonstermqᚗioᚋedge�
 }
 
 func (ec *executionContext) marshalORtspCaptureMode2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspCaptureMode(ctx context.Context, sel ast.SelectionSet, v *RtspCaptureMode) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return v
+}
+
+func (ec *executionContext) unmarshalORtspH264DecodeMode2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspH264DecodeMode(ctx context.Context, v any) (*RtspH264DecodeMode, error) {
+	if v == nil {
+		return nil, nil
+	}
+	var res = new(RtspH264DecodeMode)
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalORtspH264DecodeMode2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐRtspH264DecodeMode(ctx context.Context, sel ast.SelectionSet, v *RtspH264DecodeMode) graphql.Marshaler {
 	if v == nil {
 		return graphql.Null
 	}

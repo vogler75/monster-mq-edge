@@ -294,6 +294,7 @@ func (r *Resolver) deviceToRtspCamera(d stores.DeviceConfig) *generated.RtspCame
 		Config: &generated.RtspCameraConfig{
 			URL:             cfg.URL,
 			Transport:       transport,
+			H264DecodeMode:  generated.RtspH264DecodeMode(cfg.H264DecodeMode),
 			TopicPrefix:     cfg.TopicPrefix,
 			Mode:            mode,
 			IntervalMs:      cfg.IntervalMs,
@@ -312,6 +313,9 @@ func rtspCameraInputToConfig(input *generated.RtspCameraConfigInput) rtspcamera.
 		return cfg
 	}
 	cfg.URL = input.URL
+	if input.H264DecodeMode != nil {
+		cfg.H264DecodeMode = string(*input.H264DecodeMode)
+	}
 	if input.Transport != nil && *input.Transport == generated.RtspTransportUDP {
 		cfg.Transport = rtspcamera.TransportUDP
 	} else {

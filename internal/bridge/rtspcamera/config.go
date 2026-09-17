@@ -16,12 +16,16 @@ const (
 
 	TransportTCP = "TCP"
 	TransportUDP = "UDP"
+
+	H264DecodeFull          = "FULL"
+	H264DecodeKeyframesOnly = "KEYFRAMES_ONLY"
 )
 
 // Config is the persisted JSON configuration for one RTSP Camera device.
 type Config struct {
 	URL             string `json:"url"`
 	Transport       string `json:"transport"`
+	H264DecodeMode  string `json:"h264DecodeMode"`
 	TopicPrefix     string `json:"topicPrefix"`
 	Mode            string `json:"mode"`
 	IntervalMs      int    `json:"intervalMs"`
@@ -93,6 +97,7 @@ func ParseConfig(raw string) (Config, error) {
 func DefaultConfig() Config {
 	return Config{
 		Transport:       TransportTCP,
+		H264DecodeMode:  H264DecodeFull,
 		TopicPrefix:     "cameras/camera",
 		Mode:            ModeContinuous,
 		IntervalMs:      1000,
@@ -105,6 +110,9 @@ func DefaultConfig() Config {
 
 // ApplyDefaults fills in zero values with reasonable defaults.
 func (c *Config) ApplyDefaults() {
+	if c.H264DecodeMode == "" {
+		c.H264DecodeMode = H264DecodeFull
+	}
 	if c.Transport == "" {
 		c.Transport = TransportTCP
 	}
@@ -128,6 +136,9 @@ func (c *Config) ApplyDefaults() {
 // Validate checks for configuration errors.
 func (c *Config) Validate() []string {
 	var errs []string
+	if c.H264DecodeMode != H264DecodeFull && c.H264DecodeMode != H264DecodeKeyframesOnly {
+		errs = append(errs, fmt.Sprintf("invalid h264DecodeMode %q, must be FULL or KEYFRAMES_ONLY", c.H264DecodeMode))
+	}
 	if strings.TrimSpace(c.URL) == "" {
 		errs = append(errs, "url is required")
 	} else if parsed, err := url.Parse(c.URL); err != nil || parsed.Host == "" || !supportedStreamScheme(parsed.Scheme) {

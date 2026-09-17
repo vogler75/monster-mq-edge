@@ -1,10 +1,10 @@
 package rtspcamera
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"sync/atomic"
+	"time"
 
 	"github.com/bluenviron/gortsplib/v5/pkg/format"
 	"github.com/pion/rtp"
@@ -29,14 +29,18 @@ func (c *Connector) h264PacketHandler(f *format.H264, fatal chan<- error) (func(
 		return nil, fmt.Errorf("H.264 SDP parameter sets: %w", err)
 	}
 	dep := &h264.Depacketizer{}
+	keyframesOnly := c.cfg.H264DecodeMode == H264DecodeKeyframesOnly
+	var lastKeyframe time.Time
+	c.logger.Info("H.264 capture configured", "decodeMode", c.cfg.H264DecodeMode, "intervalMs", c.cfg.IntervalMs)
 	var ssrc uint32
 	haveSSRC := false
-	var buf bytes.Buffer
 	report := func(err error) {
+		lastKeyframe = time.Time{}
 		c.mu.Lock()
 		changed := c.lastError != err.Error()
 		c.lastError = err.Error()
 		c.latestFrame = nil
+		c.latestDecoded = nil
 		c.mu.Unlock()
 		if changed {
 			c.publishStatus()
@@ -52,6 +56,10 @@ func (c *Connector) h264PacketHandler(f *format.H264, fatal chan<- error) (func(
 		if haveSSRC && ssrc != pkt.SSRC {
 			dep.Reset()
 			dec.Discontinuity()
+			lastKeyframe = time.Time{}
+			c.mu.Lock()
+			c.latestFrame, c.latestDecoded = nil, nil
+			c.mu.Unlock()
 		}
 		haveSSRC, ssrc = true, pkt.SSRC
 		au, err := dep.Push(h264.RTPPacket{SequenceNumber: pkt.SequenceNumber, Timestamp: pkt.Timestamp, Marker: pkt.Marker, Payload: pkt.Payload})
@@ -63,19 +71,44 @@ func (c *Connector) h264PacketHandler(f *format.H264, fatal chan<- error) (func(
 		if len(au) == 0 {
 			return
 		}
+		var selectedAt time.Time
+		if keyframesOnly {
+			idr := false
+			var parameterSets [][]byte
+			for _, nal := range au {
+				switch nal[0] & 31 {
+				case 5:
+					idr = true
+				case 7, 8:
+					parameterSets = append(parameterSets, nal)
+				}
+			}
+			selectedAt = time.Now()
+			if !idr || !lastKeyframe.IsZero() && selectedAt.Sub(lastKeyframe).Milliseconds() < int64(c.cfg.IntervalMs) {
+				// Parameter sets can change in an access unit whose picture is
+				// skipped. Retain those changes for the next selected IDR.
+				if _, err := dec.Decode(parameterSets); err != nil {
+					report(err)
+				}
+				return
+			}
+			dec.Discontinuity()
+		}
 		frames, err := dec.Decode(au)
 		if err != nil {
 			report(err)
 			return
 		}
+		if keyframesOnly {
+			// Each selected IDR is an independent sequence. B-frame streams
+			// may otherwise delay even this picture for display reordering.
+			frames = append(frames, dec.Flush()...)
+			dec.Discontinuity()
+			lastKeyframe = selectedAt
+		}
 		for _, frame := range frames {
-			buf.Reset()
-			if err := frame.WriteJPEG(&buf, 85); err != nil {
-				report(err)
-				return
-			}
 			atomic.AddUint64(&c.framesReceived, 1)
-			c.setLatestFrame(buf.Bytes())
+			c.setLatestDecoded(frame)
 			c.mu.Lock()
 			hadError := c.lastError != ""
 			c.lastError = ""

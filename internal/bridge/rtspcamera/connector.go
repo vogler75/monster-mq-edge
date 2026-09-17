@@ -1,6 +1,7 @@
 package rtspcamera
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -19,6 +20,8 @@ import (
 	"github.com/bluenviron/gortsplib/v5/pkg/format/rtpmjpeg"
 	"github.com/gorilla/websocket"
 	"github.com/pion/rtp"
+
+	"monstermq.io/edge/pkg/h264"
 )
 
 // LocalPublisher is the broker's publish function.
@@ -56,6 +59,7 @@ type Connector struct {
 	lastSnapshotAt     time.Time
 	lastError          string
 	latestFrame        []byte
+	latestDecoded      *h264.Frame
 	latestFrameVersion uint64
 	publishedVersion   uint64
 
@@ -159,34 +163,63 @@ func (c *Connector) Metrics() Metrics {
 
 // TriggerSnapshot triggers an immediate snapshot from the latest cached frame.
 func (c *Connector) TriggerSnapshot() error {
-	if len(c.getLatestFrame()) == 0 {
+	if !c.hasLatestFrame() {
 		return errors.New("no frame received from camera yet")
 	}
 	return c.publishLatestSnapshot("manual")
 }
 
 func (c *Connector) getLatestFrame() []byte {
+	c.publishMu.Lock()
+	defer c.publishMu.Unlock()
+	frame, _, _ := c.latestFrameWithVersion()
+	return frame
+}
+
+func (c *Connector) hasLatestFrame() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	if len(c.latestFrame) == 0 {
-		return nil
-	}
-	out := make([]byte, len(c.latestFrame))
-	copy(out, c.latestFrame)
-	return out
+	return len(c.latestFrame) > 0 || c.latestDecoded != nil
 }
 
 func (c *Connector) setLatestFrame(frame []byte) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.latestFrame = append(c.latestFrame[:0], frame...)
+	c.latestDecoded = nil
 	c.latestFrameVersion++
 }
 
-func (c *Connector) latestFrameWithVersion() ([]byte, uint64) {
+// The decoder owns immutable picture planes, so snapshots can encode the latest
+// picture on demand without blocking RTP decoding or retaining a frame queue.
+func (c *Connector) setLatestDecoded(frame *h264.Frame) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.latestDecoded = frame
+	c.latestFrame = nil
+	c.latestFrameVersion++
+}
+
+// Caller holds publishMu to serialize JPEG encoding and publication.
+func (c *Connector) latestFrameWithVersion() ([]byte, uint64, error) {
 	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return append([]byte(nil), c.latestFrame...), c.latestFrameVersion
+	frame, decoded, version := append([]byte(nil), c.latestFrame...), c.latestDecoded, c.latestFrameVersion
+	c.mu.RUnlock()
+	if len(frame) != 0 || decoded == nil {
+		return frame, version, nil
+	}
+	var buf bytes.Buffer
+	if err := decoded.WriteJPEG(&buf, 85); err != nil {
+		return nil, version, fmt.Errorf("encode H.264 snapshot: %w", err)
+	}
+	frame = buf.Bytes()
+	c.mu.Lock()
+	if c.latestFrameVersion == version && c.latestDecoded == decoded {
+		c.latestFrame = append([]byte(nil), frame...)
+		c.latestDecoded = nil
+	}
+	c.mu.Unlock()
+	return frame, version, nil
 }
 
 func (c *Connector) setStatus(connected bool, errMsg string) {
@@ -258,7 +291,7 @@ func (c *Connector) run(ctx context.Context) {
 		case <-c.stopCh:
 			return
 		case <-tickCh:
-			if len(c.getLatestFrame()) > 0 {
+			if c.hasLatestFrame() {
 				if err := c.publishLatestSnapshot("continuous"); err != nil {
 					c.logger.Warn("failed to publish continuous snapshot", "err", err)
 				}
@@ -268,7 +301,7 @@ func (c *Connector) run(ctx context.Context) {
 				triggerCh = nil
 				continue
 			}
-			if len(c.getLatestFrame()) > 0 {
+			if c.hasLatestFrame() {
 				if err := c.publishLatestSnapshot("topic_trigger"); err != nil {
 					c.logger.Warn("failed to publish triggered snapshot", "err", err)
 				}
@@ -369,6 +402,7 @@ func (c *Connector) connectAndStream(ctx context.Context) error {
 	}
 	c.client = client
 	c.latestFrame = nil
+	c.latestDecoded = nil
 	c.mu.Unlock()
 	watcherStop, watcherDone := make(chan struct{}), make(chan struct{})
 	go func() {
@@ -390,6 +424,7 @@ func (c *Connector) connectAndStream(ctx context.Context) error {
 			c.client = nil
 		}
 		c.latestFrame = nil
+		c.latestDecoded = nil
 		c.mu.Unlock()
 	}()
 
@@ -478,12 +513,18 @@ func (c *Connector) publishSnapshot(frame []byte, triggerSource string) error {
 }
 
 func (c *Connector) publishLatestSnapshot(triggerSource string) error {
-	frame, version := c.latestFrameWithVersion()
-	if c.publisher == nil || len(frame) == 0 {
+	if c.publisher == nil {
 		return nil
 	}
 	c.publishMu.Lock()
 	defer c.publishMu.Unlock()
+	frame, version, err := c.latestFrameWithVersion()
+	if err != nil {
+		return err
+	}
+	if len(frame) == 0 {
+		return nil
+	}
 	if version <= c.publishedVersion {
 		return nil
 	}

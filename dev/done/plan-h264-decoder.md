@@ -120,9 +120,14 @@ Optional follow-up work:
    camera now has exact independent pixel validation. Existing explicit P/B weighting and POC tests are passing.
 2. Audit malformed input and allocation bounds across the newly supported paths;
    expand fuzz seeds to custom matrices and test loss while B frames await display.
-3. Encode JPEG only when a snapshot is needed instead of encoding every decoded
-   frame. Measure whole-stream decoding and memory use across resolutions. Real 720p
-   decoding was measured on M4; Raspberry Pi throughput is not yet measured.
+3. Measure whole-stream decoding and memory use across more resolutions and on
+   Raspberry Pi. The September 17 CPU follow-up moved JPEG encoding to snapshot
+   requests and removed redundant per-pixel motion/deblocking calculations;
+   real 720p stream replay was profiled on M4. The per-camera `h264DecodeMode`
+   now offers `FULL` (default) or `KEYFRAMES_ONLY`, configurable through GraphQL
+   and the dashboard, without a broker-wide YAML option. At a 1000 ms interval,
+   the 20-second replay used 30.3% of one core in full mode and 10.1% in
+   keyframes-only mode (19 versus 16 snapshots). Atom runtime remains unmeasured.
 4. Repeat relevant full checks after future changes. Keep
    unsupported extensions explicit and the original no-external-codec constraint.
 

@@ -42,7 +42,13 @@ func (w *workPicture) deblock() {
 					if alpha == 0 || beta == 0 {
 						continue
 					}
-					for off := 0; off < n; off++ {
+					segment := 4
+					if plane != 0 {
+						segment = 2
+					}
+					// Boundary strength depends on the adjacent luma blocks,
+					// not on the individual samples along this edge segment.
+					for off := 0; off < n; off += segment {
 						lx, ly := edge, off
 						if dir == 1 {
 							lx, ly = off, edge
@@ -76,11 +82,13 @@ func (w *workPicture) deblock() {
 						if bs == 0 {
 							continue
 						}
-						step, pos := 1, (y+off)*stride+x+edge
+						step, along, pos := 1, stride, (y+off)*stride+x+edge
 						if dir == 1 {
-							step, pos = stride, (y+edge)*stride+x+off
+							step, along, pos = stride, 1, (y+edge)*stride+x+off
 						}
-						filterEdge(data, pos, step, bs, alpha, beta, ia, plane != 0)
+						for k := 0; k < segment; k++ {
+							filterEdge(data, pos+k*along, step, bs, alpha, beta, ia, plane != 0)
+						}
 					}
 				}
 			}

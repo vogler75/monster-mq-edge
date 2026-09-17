@@ -587,29 +587,31 @@ type RtspCamera struct {
 }
 
 type RtspCameraConfig struct {
-	URL             string          `json:"url"`
-	Transport       RtspTransport   `json:"transport"`
-	TopicPrefix     string          `json:"topicPrefix"`
-	Mode            RtspCaptureMode `json:"mode"`
-	IntervalMs      int             `json:"intervalMs"`
-	Slots           int             `json:"slots"`
-	TriggerTopic    *string         `json:"triggerTopic,omitempty"`
-	Retain          bool            `json:"retain"`
-	Qos             int             `json:"qos"`
-	PublishMetadata bool            `json:"publishMetadata"`
+	URL             string             `json:"url"`
+	Transport       RtspTransport      `json:"transport"`
+	H264DecodeMode  RtspH264DecodeMode `json:"h264DecodeMode"`
+	TopicPrefix     string             `json:"topicPrefix"`
+	Mode            RtspCaptureMode    `json:"mode"`
+	IntervalMs      int                `json:"intervalMs"`
+	Slots           int                `json:"slots"`
+	TriggerTopic    *string            `json:"triggerTopic,omitempty"`
+	Retain          bool               `json:"retain"`
+	Qos             int                `json:"qos"`
+	PublishMetadata bool               `json:"publishMetadata"`
 }
 
 type RtspCameraConfigInput struct {
-	URL             string           `json:"url"`
-	Transport       *RtspTransport   `json:"transport,omitempty"`
-	TopicPrefix     string           `json:"topicPrefix"`
-	Mode            *RtspCaptureMode `json:"mode,omitempty"`
-	IntervalMs      *int             `json:"intervalMs,omitempty"`
-	Slots           *int             `json:"slots,omitempty"`
-	TriggerTopic    *string          `json:"triggerTopic,omitempty"`
-	Retain          *bool            `json:"retain,omitempty"`
-	Qos             *int             `json:"qos,omitempty"`
-	PublishMetadata *bool            `json:"publishMetadata,omitempty"`
+	URL             string              `json:"url"`
+	Transport       *RtspTransport      `json:"transport,omitempty"`
+	H264DecodeMode  *RtspH264DecodeMode `json:"h264DecodeMode,omitempty"`
+	TopicPrefix     string              `json:"topicPrefix"`
+	Mode            *RtspCaptureMode    `json:"mode,omitempty"`
+	IntervalMs      *int                `json:"intervalMs,omitempty"`
+	Slots           *int                `json:"slots,omitempty"`
+	TriggerTopic    *string             `json:"triggerTopic,omitempty"`
+	Retain          *bool               `json:"retain,omitempty"`
+	Qos             *int                `json:"qos,omitempty"`
+	PublishMetadata *bool               `json:"publishMetadata,omitempty"`
 }
 
 type RtspCameraDeviceMutations struct {
@@ -1574,6 +1576,61 @@ func (e *RtspCaptureMode) UnmarshalJSON(b []byte) error {
 }
 
 func (e RtspCaptureMode) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type RtspH264DecodeMode string
+
+const (
+	RtspH264DecodeModeFull          RtspH264DecodeMode = "FULL"
+	RtspH264DecodeModeKeyframesOnly RtspH264DecodeMode = "KEYFRAMES_ONLY"
+)
+
+var AllRtspH264DecodeMode = []RtspH264DecodeMode{
+	RtspH264DecodeModeFull,
+	RtspH264DecodeModeKeyframesOnly,
+}
+
+func (e RtspH264DecodeMode) IsValid() bool {
+	switch e {
+	case RtspH264DecodeModeFull, RtspH264DecodeModeKeyframesOnly:
+		return true
+	}
+	return false
+}
+
+func (e RtspH264DecodeMode) String() string {
+	return string(e)
+}
+
+func (e *RtspH264DecodeMode) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = RtspH264DecodeMode(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid RtspH264DecodeMode", str)
+	}
+	return nil
+}
+
+func (e RtspH264DecodeMode) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *RtspH264DecodeMode) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e RtspH264DecodeMode) MarshalJSON() ([]byte, error) {
 	var buf bytes.Buffer
 	e.MarshalGQL(&buf)
 	return buf.Bytes(), nil

@@ -172,43 +172,29 @@ func (w *workPicture) compensate(addr int, p partition, h *sliceHeader) error {
 	m := &w.mbs[addr]
 	for plane := 0; plane < 3; plane++ {
 		dst, stride, x, y, _ := w.plane(addr, plane)
-		scale, shift := 1, 2
+		scale := 1
 		if plane != 0 {
-			scale, shift = 2, 3
+			scale = 2
 		}
-		for j := p.y / scale; j < (p.y+p.h)/scale; j++ {
-			for i := p.x / scale; i < (p.x+p.w)/scale; i++ {
-				block := blockIndex(i*scale, j*scale)
-				var values [2]int
-				for list := 0; list < 2; list++ {
-					ref := m.ref[list][block]
-					if ref == nil {
-						continue
-					}
-					r := ref.img
-					src, ss, ww, hh := r.Y, r.YStride, r.Rect.Dx(), r.Rect.Dy()
-					if plane != 0 {
-						src, ss, ww, hh = r.Cb, r.CStride, ww/2, hh/2
-						if plane == 2 {
-							src = r.Cr
-						}
-					}
-					mv := m.mv[list][block]
-					xx, yy := ((x+i)<<shift)+mv.x, ((y+j)<<shift)+mv.y
-					if plane == 0 {
-						values[list] = lumaSample(src, ss, ww, hh, xx, yy)
-					} else {
-						values[list] = chromaSample(src, ss, ww, hh, xx, yy)
-					}
-				}
+		size := 4 / scale
+		for by := p.y / scale; by < (p.y+p.h)/scale; by += size {
+			for bx := p.x / scale; bx < (p.x+p.w)/scale; bx += size {
+				// Motion, references and weights are constant within a 4x4 luma
+				// block. Resolve them once, including the matching chroma block.
+				block := blockIndex(bx*scale, by*scale)
 				r0, r1 := m.ref[0][block], m.ref[1][block]
-				v := 0
+				if r0 == nil && r1 == nil {
+					return fmt.Errorf("%w: inter partition has no reference", ErrMalformed)
+				}
+				var values [2][16]int
+				weights, shift, round, offset := [2]int{}, 0, 0, 0
 				if r0 != nil && r1 != nil {
 					switch h.pps.weightedB {
 					case 1:
 						a, b := h.weights[0][m.refIndex[0][block]], h.weights[1][m.refIndex[1][block]]
-						den := a.denom[plane]
-						v = ((a.value[plane]*values[0] + b.value[plane]*values[1] + (1 << den)) >> (den + 1)) + ((a.offset[plane] + b.offset[plane] + 1) >> 1)
+						weights = [2]int{a.value[plane], b.value[plane]}
+						shift, round = a.denom[plane]+1, 1<<a.denom[plane]
+						offset = (a.offset[plane] + b.offset[plane] + 1) >> 1
 					case 2:
 						weight := 32
 						if r0.long < 0 && r1.long < 0 && r0.poc != r1.poc {
@@ -217,34 +203,94 @@ func (w *workPicture) compensate(addr int, p partition, h *sliceHeader) error {
 								weight = factor
 							}
 						}
-						v = ((64-weight)*values[0] + weight*values[1] + 32) >> 6
+						weights, shift, round = [2]int{64 - weight, weight}, 6, 32
 					default:
-						v = (values[0] + values[1] + 1) >> 1
+						weights, shift, round = [2]int{1, 1}, 1, 1
 					}
 				} else {
 					list := 0
 					if r0 == nil {
 						list = 1
 					}
-					if m.ref[list][block] == nil {
-						return fmt.Errorf("%w: inter partition has no reference", ErrMalformed)
-					}
-					v = values[list]
+					weights[list] = 1
 					if len(h.weights[list]) > 0 {
 						wt := h.weights[list][m.refIndex[list][block]]
-						den := wt.denom[plane]
-						round := 0
-						if den > 0 {
-							round = 1 << (den - 1)
+						weights[list], shift, offset = wt.value[plane], wt.denom[plane], wt.offset[plane]
+						if shift > 0 {
+							round = 1 << (shift - 1)
 						}
-						v = ((wt.value[plane]*v + round) >> den) + wt.offset[plane]
+					}
+					if weights[list] == 1<<shift && offset == 0 {
+						if copyPrediction(dst, stride, x+bx, y+by, m.ref[list][block], plane, m.mv[list][block], size) {
+							continue
+						}
 					}
 				}
-				dst[(y+j)*stride+x+i] = byte(clip(v, 0, 255))
+				for list, ref := range [2]*reference{r0, r1} {
+					if ref != nil {
+						predictionSamples(&values[list], ref, plane, x+bx, y+by, m.mv[list][block], size)
+					}
+				}
+				for j := 0; j < size; j++ {
+					row := dst[(y+by+j)*stride+x+bx:][:size]
+					for i := range row {
+						k := j*size + i
+						v := ((weights[0]*values[0][k] + weights[1]*values[1][k] + round) >> shift) + offset
+						row[i] = byte(clip(v, 0, 255))
+					}
+				}
 			}
 		}
 	}
 	return nil
+}
+
+func referencePlane(ref *reference, plane int) (src []byte, stride, width, height, shift int) {
+	r := ref.img
+	if plane == 0 {
+		return r.Y, r.YStride, r.Rect.Dx(), r.Rect.Dy(), 2
+	}
+	src = r.Cb
+	if plane == 2 {
+		src = r.Cr
+	}
+	return src, r.CStride, r.Rect.Dx() / 2, r.Rect.Dy() / 2, 3
+}
+
+// Integer motion with identity weighting needs only a row copy. Edge extension
+// and fractional positions use the same interpolation rules as other blocks.
+func copyPrediction(dst []byte, stride, x, y int, ref *reference, plane int, mv motion, size int) bool {
+	src, ss, width, height, shift := referencePlane(ref, plane)
+	mask := (1 << shift) - 1
+	if mv.x&mask != 0 || mv.y&mask != 0 {
+		return false
+	}
+	sx, sy := x+(mv.x>>shift), y+(mv.y>>shift)
+	if sx < 0 || sy < 0 || sx+size > width || sy+size > height {
+		return false
+	}
+	for j := 0; j < size; j++ {
+		copy(dst[(y+j)*stride+x:][:size], src[(sy+j)*ss+sx:][:size])
+	}
+	return true
+}
+
+func predictionSamples(out *[16]int, ref *reference, plane, x, y int, mv motion, size int) {
+	src, stride, width, height, shift := referencePlane(ref, plane)
+	qx, qy := (x<<shift)+mv.x, (y<<shift)+mv.y
+	if plane == 0 {
+		for j := 0; j < size; j++ {
+			for i := 0; i < size; i++ {
+				out[j*size+i] = lumaSample(src, stride, width, height, qx+(i<<2), qy+(j<<2))
+			}
+		}
+	} else {
+		for j := 0; j < size; j++ {
+			for i := 0; i < size; i++ {
+				out[j*size+i] = chromaSample(src, stride, width, height, qx+(i<<3), qy+(j<<3))
+			}
+		}
+	}
 }
 
 // The implicit biprediction weight is one quarter of the temporal distance

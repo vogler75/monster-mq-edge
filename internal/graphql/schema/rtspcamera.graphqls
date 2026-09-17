@@ -11,9 +11,15 @@ enum RtspCaptureMode {
     BOTH
 }
 
+enum RtspH264DecodeMode {
+    FULL
+    KEYFRAMES_ONLY
+}
+
 type RtspCameraConfig {
     url: String!
     transport: RtspTransport!
+    h264DecodeMode: RtspH264DecodeMode!
     topicPrefix: String!
     mode: RtspCaptureMode!
     intervalMs: Int!
@@ -55,6 +61,7 @@ type RtspCameraResult {
 input RtspCameraConfigInput {
     url: String!
     transport: RtspTransport = TCP
+    h264DecodeMode: RtspH264DecodeMode = FULL
     topicPrefix: String!
     mode: RtspCaptureMode = CONTINUOUS
     intervalMs: Int = 1000

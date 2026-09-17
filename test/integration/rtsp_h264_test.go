@@ -25,9 +25,10 @@ import (
 )
 
 type h264RTSPSource struct {
-	stream *gortsplib.ServerStream
-	closed chan struct{}
-	drop   chan struct{}
+	stream  *gortsplib.ServerStream
+	closed  chan struct{}
+	drop    chan struct{}
+	packets chan []*rtp.Packet
 }
 
 func (s *h264RTSPSource) OnDescribe(*gortsplib.ServerHandlerOnDescribeCtx) (*base.Response, *gortsplib.ServerStream, error) {
@@ -166,6 +167,11 @@ func TestRTSPH264CameraPublishesSnapshots(t *testing.T) {
 
 func startH264RTSPSource(t *testing.T, fixture string, inband, udp bool) (string, *h264RTSPSource) {
 	t.Helper()
+	return startH264RTSPSourceWithPlayback(t, fixture, inband, udp, true)
+}
+
+func startH264RTSPSourceWithPlayback(t *testing.T, fixture string, inband, udp, automatic bool) (string, *h264RTSPSource) {
+	t.Helper()
 	raw, err := os.ReadFile("testdata/h264/" + fixture + ".264")
 	if err != nil {
 		t.Fatal(err)
@@ -202,7 +208,7 @@ func startH264RTSPSource(t *testing.T, fixture string, inband, udp bool) (string
 		f.SPS, f.PPS = sps, pps
 	}
 	media := &description.Media{Type: description.MediaTypeVideo, Formats: []format.Format{f}}
-	source := &h264RTSPSource{closed: make(chan struct{}, 4), drop: make(chan struct{}, 1)}
+	source := &h264RTSPSource{closed: make(chan struct{}, 4), drop: make(chan struct{}, 1), packets: make(chan []*rtp.Packet)}
 	var listener net.Listener
 	server := &gortsplib.Server{RTSPAddress: "127.0.0.1:0", Handler: source, Listen: func(network, address string) (net.Listener, error) {
 		var e error
@@ -228,6 +234,10 @@ func startH264RTSPSource(t *testing.T, fixture string, inband, udp bool) (string
 		defer wg.Done()
 		ticker := time.NewTicker(40 * time.Millisecond)
 		defer ticker.Stop()
+		var ticks <-chan time.Time
+		if automatic {
+			ticks = ticker.C
+		}
 		seq := uint16(65530)
 		ts := uint32(0xffffff00)
 		index := 0
@@ -235,7 +245,14 @@ func startH264RTSPSource(t *testing.T, fixture string, inband, udp bool) (string
 			select {
 			case <-stop:
 				return
-			case <-ticker.C:
+			case packets := <-source.packets:
+				for _, pkt := range packets {
+					if err := source.stream.WritePacketRTP(media, pkt); err != nil {
+						return
+					}
+				}
+				continue
+			case <-ticks:
 			}
 			au := units[index]
 			if inband {
@@ -268,6 +285,92 @@ func startH264RTSPSource(t *testing.T, fixture string, inband, udp bool) (string
 	}()
 	t.Cleanup(func() { close(stop); wg.Wait(); source.stream.Close(); server.Close() })
 	return "rtsp://" + listener.Addr().String() + "/camera", source
+}
+
+func TestRTSPH264TriggeredSnapshots(t *testing.T) {
+	url, _ := startH264RTSPSource(t, "motion-b-pyramid", false, false)
+	const mqttPort, gqlPort = 23219, 28219
+	srv, gqlURL := startWithGraphQL(t, mqttPort, gqlPort, func(c *config.Config) { c.Features.RtspCamera = true })
+	defer srv.Close()
+	client := mqtt.NewClient(mqttOpts(mqttPort, "rtsp-h264-triggered"))
+	if tok := client.Connect(); !tok.WaitTimeout(2*time.Second) || tok.Error() != nil {
+		t.Fatalf("connect: %v", tok.Error())
+	}
+	defer client.Disconnect(100)
+	pictures := make(chan []byte, 32)
+	if tok := client.Subscribe("camera/h264-trigger/capture/frames/+", 0, func(_ mqtt.Client, m mqtt.Message) {
+		select {
+		case pictures <- append([]byte(nil), m.Payload()...):
+		default:
+		}
+	}); !tok.WaitTimeout(2*time.Second) || tok.Error() != nil {
+		t.Fatalf("subscribe: %v", tok.Error())
+	}
+	result := gqlQuery(t, gqlURL, `mutation Create($input: RtspCameraInput!) {rtspCamera {create(input:$input) {success errors}}}`, map[string]any{"input": map[string]any{
+		"name": "h264_trigger", "nodeId": fmt.Sprintf("g-%d", gqlPort), "enabled": true, "config": map[string]any{
+			"url": url, "topicPrefix": "camera/h264-trigger", "mode": "TRIGGERED", "intervalMs": 50,
+		},
+	}})
+	if created := result["rtspCamera"].(map[string]any)["create"].(map[string]any); created["success"] != true {
+		t.Fatalf("create: %v", created)
+	}
+	metrics := func() map[string]any {
+		data := gqlQuery(t, gqlURL, `{rtspCamera(name:"h264_trigger") {metrics {framesReceived snapshotsPublished lastError}}}`, nil)
+		all := data["rtspCamera"].(map[string]any)["metrics"].([]any)
+		if len(all) != 1 {
+			t.Fatalf("expected local camera metrics: %v", all)
+		}
+		return all[0].(map[string]any)
+	}
+	waitFrames := func(target float64) {
+		t.Helper()
+		deadline := time.Now().Add(3 * time.Second)
+		for time.Now().Before(deadline) {
+			m := metrics()
+			starting := m["framesReceived"].(float64) == 0
+			if err, _ := m["lastError"].(string); err != "" && !(starting && err == h264.ErrNeedIDR.Error()) {
+				t.Fatalf("stream decode: %s", err)
+			}
+			if m["framesReceived"].(float64) >= target {
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		t.Fatalf("camera did not decode %.0f frames", target)
+	}
+	// Reference decoding must keep advancing even without a snapshot consumer.
+	waitFrames(15)
+	if n := metrics()["snapshotsPublished"].(float64); n != 0 {
+		t.Fatalf("triggered camera published %v snapshots without a request", n)
+	}
+	for i := 0; i < 3; i++ {
+		waitFrames(metrics()["framesReceived"].(float64) + 3)
+		if i == 1 {
+			if tok := client.Publish("camera/h264-trigger/trigger", 0, false, "capture"); !tok.WaitTimeout(2*time.Second) || tok.Error() != nil {
+				t.Fatalf("trigger publish: %v", tok.Error())
+			}
+		} else {
+			result := gqlQuery(t, gqlURL, `mutation {rtspCamera {triggerSnapshot(name:"h264_trigger") {success errors}}}`, nil)
+			if trigger := result["rtspCamera"].(map[string]any)["triggerSnapshot"].(map[string]any); trigger["success"] != true {
+				t.Fatalf("manual trigger: %v", trigger)
+			}
+		}
+		select {
+		case data := <-pictures:
+			img, err := jpeg.Decode(bytes.NewReader(data))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if img.Bounds().Dx() != 128 || img.Bounds().Dy() != 96 {
+				t.Fatalf("unexpected snapshot size: %v", img.Bounds())
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("snapshot request produced no JPEG")
+		}
+	}
+	if n := metrics()["snapshotsPublished"].(float64); n != 3 {
+		t.Fatalf("expected exactly three requested snapshots, got %v", n)
+	}
 }
 
 // Independent RFC 6184 packet generation: deliberately small FU-A fragments

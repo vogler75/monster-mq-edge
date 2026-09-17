@@ -95,17 +95,53 @@ Go standard library to encode JPEG snapshots. The existing RTSP library still
 handles session negotiation and TCP/UDP transport. No H.264 depacketizer or
 pixel decoder is imported from it.
 
-No GraphQL, storage, or device-configuration changes are required. Existing
-snapshot topics, metadata, triggering and round-robin slots are preserved.
+Existing camera configurations require no migration. Snapshot topics, metadata,
+triggering and round-robin slots are preserved.
 `lastError` reports decoding failures. A lost or damaged picture clears the
 cached snapshot and decoding resumes at a subsequent IDR.
 
-The current bridge converts each decoded picture to JPEG; reducing this work
-for slow snapshot intervals is still a performance task. Raspberry Pi runtime
-throughput has not been measured. On Apple M4 (darwin/arm64, CGO disabled),
-single High CABAC IDR decoding measured about 0.52 ms at 128x96 and 5.8 ms at
-640x360, allocating about 144 KB and 2.47 MB respectively (24 allocations).
-These measurements exclude RGB/JPEG work and do not measure predictive streams.
+The bridge retains the latest decoded picture and encodes JPEG only when a
+continuous timer, manual request or MQTT trigger needs a snapshot. JPEG encoding
+runs outside the RTP callback, so a slow snapshot interval avoids encoding all
+the intervening pictures. In the default `FULL` mode, reference decoding still
+processes the full stream; CPU use depends on the camera's resolution, frame
+rate and coding tools as well as the snapshot interval. Raspberry Pi runtime
+throughput has not been measured.
+
+On Apple M4 (darwin/arm64, CGO disabled), a 20-second full-broker replay of the
+recorded 1280x720 High-profile camera stream at 25 fps, with a 1000 ms snapshot
+interval, used 30.3% of one CPU core after the snapshot/motion/deblocking fixes,
+versus 103.3% before them. The updated broker decoded all 500 incoming frames;
+the previous version had reached 446 when measured. Both published 19 snapshots
+during that window. This is one stream on one machine, not a throughput guarantee.
+
+For slower processors, select **H.264 Decoding → Keyframes only — lower CPU**
+in the camera's dashboard settings. The persisted per-camera JSON/GraphQL field
+is `h264DecodeMode: KEYFRAMES_ONLY`; `FULL` is the default for existing cameras.
+Saving a changed mode restarts only that camera connection. There is no
+broker-wide YAML option.
+
+The same 20-second M4 replay in `KEYFRAMES_ONLY` mode used 10.1% of one CPU
+core, decoding and publishing 16 selected pictures. CPU savings and snapshot
+frequency depend on the stream's IDR cadence; the Atom E3940 has not been measured.
+
+Keyframes-only decoding selects independent IDR pictures, at most once per
+camera `intervalMs`, and skips intervening P/B and non-IDR I pictures. Parameter
+sets are still processed. A selected IDR is returned immediately even when the
+stream normally reorders B pictures. Packet loss or a source change resets the
+limiter so the next intact IDR can restore snapshots promptly. In this mode,
+`framesReceived` counts the selected pictures actually decoded.
+
+This trades snapshot freshness for CPU use. Triggers return the latest decoded
+keyframe; they do not force the camera to send a new one. A 2000 ms capture
+interval decodes at most one keyframe every two seconds during uninterrupted
+reception, and updates can be slower when keyframes arrive less frequently.
+The camera must send periodic IDRs; some cameras using only gradual intra
+refresh will not produce regular snapshots in this mode. MJPEG is unaffected,
+and incoming RTSP network traffic is not reduced. For full-motion decoding,
+reducing the camera's own frame rate or using a lower-resolution substream
+reduces the work at the source; merely increasing the broker's snapshot interval
+does not remove H.264 reference decoding in `FULL` mode.
 
 ## Verification
 
@@ -142,7 +178,7 @@ recovery, malformed input and fuzzing.
 CGO_ENABLED=0 go test ./test/integration -run 'Test(H264|RTSPH264)' -count=1
 go test -race ./test/integration -run 'Test(H264|RTSPH264)' -count=1
 CGO_ENABLED=0 go test ./test/integration -run '^$' -fuzz '^FuzzH264Decoder$' -fuzztime=30s
-CGO_ENABLED=0 go test ./test/integration -run '^$' -bench '^BenchmarkH264Decode$' -benchmem
+CGO_ENABLED=0 go test ./test/integration -run '^$' -bench '^BenchmarkH264Decode' -benchmem
 make build-arm64 build-armv7
 ```
 
