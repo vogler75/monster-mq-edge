@@ -134,6 +134,11 @@ type GraphQLConfig struct {
 	Port    int  `yaml:"Port"`
 }
 
+type DashboardConfig struct {
+	Enabled bool   `yaml:"Enabled"`
+	Path    string `yaml:"Path"`
+}
+
 type RestApiConfig struct {
 	Enabled bool `yaml:"Enabled"`
 }
@@ -224,6 +229,7 @@ type Config struct {
 	Metrics        MetricsConfig        `yaml:"Metrics"`
 	Logging        LoggingConfig        `yaml:"Logging"`
 	GraphQL        GraphQLConfig        `yaml:"GraphQL"`
+	Dashboard      DashboardConfig      `yaml:"Dashboard"`
 	RestApi        RestApiConfig        `yaml:"RestApi"`
 	MCP            MCPConfig            `yaml:"MCP"`
 	Features       FeaturesConfig       `yaml:"Features"`
@@ -262,6 +268,7 @@ func Default() *Config {
 		Metrics:           MetricsConfig{Enabled: true, CollectionIntervalSeconds: 1, RetentionHours: 168, MaxHistoryRows: 3600},
 		Logging:           LoggingConfig{Level: "INFO", MqttSyslogEnabled: false, RingBufferSize: 1000},
 		GraphQL:           GraphQLConfig{Enabled: true, Port: 4000},
+		Dashboard:         DashboardConfig{Enabled: true, Path: ""},
 		RestApi:           RestApiConfig{Enabled: true},
 		MCP:               MCPConfig{Enabled: false, Port: 3000},
 		Features:          FeaturesConfig{MqttClient: false, WinCCUa: false, WinCCOa: false, DeviceImportExport: false, Mcp: false, Hmi: false, Redfish: false, RtspCamera: false},

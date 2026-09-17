@@ -49,11 +49,7 @@ for arg in "$@"; do
 done
 
 if [ "$BUILD" = true ]; then
-    echo "Building monstermq-edge..."
-    mkdir -p bin
-    VERSION=$(head -n 1 "$SCRIPT_DIR/version.txt" 2>/dev/null | tr -d '\n' | tr -d '\r' || echo "dev")
-    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X monstermq.io/edge/internal/version.Version=$VERSION" -o "$BIN" ./cmd/monstermq-edge
-    echo "Built: $BIN ($(du -h "$BIN" | cut -f1))"
+    "$SCRIPT_DIR/build.sh" --binary
 fi
 
 if [ "$COMPILE" = true ] && [ "$BUILD" = false ]; then

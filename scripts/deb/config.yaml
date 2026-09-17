@@ -47,6 +47,9 @@ GraphQL:
   Enabled: true
   Port: 4000
 
+Dashboard:
+  Enabled: true
+
 RestApi:
   Enabled: true
 

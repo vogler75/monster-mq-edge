@@ -24,6 +24,7 @@ import (
 
 	"monstermq.io/edge/internal/auth"
 	"monstermq.io/edge/internal/config"
+	"monstermq.io/edge/internal/dashboard"
 	"monstermq.io/edge/internal/graphql/generated"
 	"monstermq.io/edge/internal/graphql/resolvers"
 	"monstermq.io/edge/internal/hmi"
@@ -207,6 +208,11 @@ func NewServer(cfg *config.Config, resolver *resolvers.Resolver, hmiMgr *hmi.Man
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
+
+	if cfg.Dashboard.Enabled {
+		dashHandler := dashboard.Handler(cfg.Dashboard.Path, logger)
+		r.Handle("/*", dashHandler)
+	}
 
 	return &Server{
 		cfg: cfg, logger: logger, router: r,

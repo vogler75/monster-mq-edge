@@ -198,6 +198,26 @@
         "Port":    { "type": "integer", "minimum": 1, "maximum": 65535, "default": 4000 }
       }
     },
+    "Dashboard": {
+      "type": "object",
+      "title": "Web Dashboard Hosting",
+      "description": "Embedded Siemens iX Web Dashboard configuration (served from GraphQL HTTP port)",
+      "additionalProperties": false,
+      "properties": {
+        "Enabled": {
+          "type": "boolean",
+          "title": "Enable Dashboard",
+          "description": "Enable serving the web dashboard UI",
+          "default": true
+        },
+        "Path": {
+          "type": "string",
+          "title": "Custom Dashboard Path",
+          "description": "Filesystem path to override dashboard files for live UI development. Leave empty to serve from embedded bundle.",
+          "default": ""
+        }
+      }
+    },
     "RestApi": {
       "type": "object",
       "additionalProperties": false,

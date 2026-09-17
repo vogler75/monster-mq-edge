@@ -61,6 +61,10 @@ GraphQL:
   Enabled: true
   Port: 4000
 
+Dashboard:
+  Enabled: true
+  # Path: "" # Optional: filesystem path to override dashboard files for live UI development
+
 RestApi:
   Enabled: true
 
