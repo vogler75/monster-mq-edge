@@ -11,6 +11,7 @@ import (
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
+	"github.com/gorilla/websocket"
 
 	"monstermq.io/edge/internal/config"
 )
@@ -49,7 +50,7 @@ func testHTTPMJPEGCameraPublishesSnapshots(t *testing.T, contentType string, mqt
 		data  []byte
 	}
 	messages := make(chan received, 64)
-	if tok := client.Subscribe("camera/http/capture/#", 0, func(_ mqtt.Client, m mqtt.Message) {
+	if tok := client.Subscribe("camera/http/#", 0, func(_ mqtt.Client, m mqtt.Message) {
 		select {
 		case messages <- received{m.Topic(), append([]byte(nil), m.Payload()...)}:
 		default:
@@ -74,21 +75,21 @@ func testHTTPMJPEGCameraPublishesSnapshots(t *testing.T, contentType string, mqt
 
 	seen := map[string]bool{}
 	deadline := time.After(4 * time.Second)
-	for !(seen["1/pic"] && seen["2/pic"] && seen["latest"] && seen["meta"] && seen["latest/pic"] && seen["latest/meta"]) {
+	for !(seen["frame/1"] && seen["frame/2"] && seen["latest"] && seen["meta"] && seen["latest/pic"] && seen["latest/meta"]) {
 		select {
 		case msg := <-messages:
 			if strings.HasPrefix(msg.topic, "camera/http/capture/snapshot/") {
 				t.Fatalf("continuous capture published topic-triggered snapshot %s", msg.topic)
 			}
-			if strings.HasSuffix(msg.topic, "/pic") {
+			if msg.topic == "camera/http/capture/frames/1" || msg.topic == "camera/http/capture/frames/2" || strings.HasSuffix(msg.topic, "/pic") {
 				if !bytes.Equal(msg.data, frame) {
 					t.Fatalf("unexpected JPEG payload on %s: %x", msg.topic, msg.data)
 				}
-				if strings.Contains(msg.topic, "/1/") {
-					seen["1/pic"] = true
+				if msg.topic == "camera/http/capture/frames/1" {
+					seen["frame/1"] = true
 				}
-				if strings.Contains(msg.topic, "/2/") {
-					seen["2/pic"] = true
+				if msg.topic == "camera/http/capture/frames/2" {
+					seen["frame/2"] = true
 				}
 				if strings.HasSuffix(msg.topic, "/latest/pic") {
 					seen["latest/pic"] = true
@@ -140,6 +141,179 @@ func newTestMJPEGStream(t *testing.T, contentType string, frame []byte) *httptes
 		}
 	}))
 	return stream
+}
+
+func TestWebSocketMJPEGCameraPublishesSnapshots(t *testing.T) {
+	frame := []byte{0xff, 0xd8, 0x45, 0x67, 0xff, 0xd9}
+	upgrader := websocket.Upgrader{}
+	stream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		for {
+			if err := conn.WriteMessage(websocket.BinaryMessage, frame); err != nil {
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}))
+	defer stream.Close()
+	streamURL := "ws" + strings.TrimPrefix(stream.URL, "http")
+
+	srv, gqlURL := startWithGraphQL(t, 23194, 28194, func(c *config.Config) { c.Features.RtspCamera = true })
+	defer srv.Close()
+	client := mqtt.NewClient(mqttOpts(23194, "websocket-mjpeg-test"))
+	if tok := client.Connect(); !tok.WaitTimeout(2*time.Second) || tok.Error() != nil {
+		t.Fatalf("connect: %v", tok.Error())
+	}
+	defer client.Disconnect(100)
+
+	pictures := make(chan []byte, 8)
+	if tok := client.Subscribe("camera/websocket/capture/frames/+", 0, func(_ mqtt.Client, m mqtt.Message) {
+		select {
+		case pictures <- append([]byte(nil), m.Payload()...):
+		default:
+		}
+	}); !tok.WaitTimeout(2*time.Second) || tok.Error() != nil {
+		t.Fatalf("subscribe: %v", tok.Error())
+	}
+
+	res := gqlQuery(t, gqlURL, `mutation Create($input: RtspCameraInput!) {
+		rtspCamera { create(input: $input) { success errors } }
+	}`, map[string]any{"input": map[string]any{
+		"name": "websocket_cam", "nodeId": "g-28194", "enabled": true,
+		"config": map[string]any{
+			"url": streamURL, "topicPrefix": "camera/websocket", "mode": "CONTINUOUS",
+			"intervalMs": 50, "slots": 2,
+		},
+	}})
+	created := res["rtspCamera"].(map[string]any)["create"].(map[string]any)
+	if created["success"] != true {
+		t.Fatalf("camera create failed: %v", created["errors"])
+	}
+
+	select {
+	case picture := <-pictures:
+		if !bytes.Equal(picture, frame) {
+			t.Fatalf("unexpected JPEG payload: %x", picture)
+		}
+	case <-time.After(4 * time.Second):
+		t.Fatal("timed out waiting for WebSocket MJPEG snapshot")
+	}
+}
+
+func TestDisconnectedCameraDoesNotRepublishCachedFrame(t *testing.T) {
+	frame := []byte{0xff, 0xd8, 0x78, 0x9a, 0xff, 0xd9}
+	upgrader := websocket.Upgrader{}
+	stream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		_ = conn.WriteMessage(websocket.BinaryMessage, frame)
+		_ = conn.Close()
+	}))
+	defer stream.Close()
+	streamURL := "ws" + strings.TrimPrefix(stream.URL, "http")
+
+	srv, gqlURL := startWithGraphQL(t, 23195, 28195, func(c *config.Config) { c.Features.RtspCamera = true })
+	defer srv.Close()
+	client := mqtt.NewClient(mqttOpts(23195, "disconnected-camera-test"))
+	if tok := client.Connect(); !tok.WaitTimeout(2*time.Second) || tok.Error() != nil {
+		t.Fatalf("connect: %v", tok.Error())
+	}
+	defer client.Disconnect(100)
+
+	type received struct {
+		topic    string
+		payload  []byte
+		retained bool
+	}
+	messages := make(chan received, 16)
+	if tok := client.Subscribe("camera/disconnected/#", 0, func(_ mqtt.Client, m mqtt.Message) {
+		messages <- received{topic: m.Topic(), payload: append([]byte(nil), m.Payload()...), retained: m.Retained()}
+	}); !tok.WaitTimeout(2*time.Second) || tok.Error() != nil {
+		t.Fatalf("subscribe: %v", tok.Error())
+	}
+
+	res := gqlQuery(t, gqlURL, `mutation Create($input: RtspCameraInput!) {
+		rtspCamera { create(input: $input) { success errors } }
+	}`, map[string]any{"input": map[string]any{
+		"name": "disconnected_cam", "nodeId": "g-28195", "enabled": true,
+		"config": map[string]any{
+			"url": streamURL, "topicPrefix": "camera/disconnected", "mode": "CONTINUOUS",
+			"intervalMs": 50, "slots": 2,
+		},
+	}})
+	created := res["rtspCamera"].(map[string]any)["create"].(map[string]any)
+	if created["success"] != true {
+		t.Fatalf("camera create failed: %v", created["errors"])
+	}
+
+	seenPicture := false
+	seenConnected := false
+	seenDisconnected := false
+	deadline := time.After(4 * time.Second)
+	for !seenPicture || !seenConnected || !seenDisconnected {
+		select {
+		case msg := <-messages:
+			switch msg.topic {
+			case "camera/disconnected/capture/latest/pic":
+				if !bytes.Equal(msg.payload, frame) {
+					t.Fatalf("unexpected JPEG payload: %x", msg.payload)
+				}
+				seenPicture = true
+			case "camera/disconnected/status":
+				var status map[string]any
+				if err := json.Unmarshal(msg.payload, &status); err != nil {
+					t.Fatalf("decode camera status: %v", err)
+				}
+				connected, _ := status["connected"].(bool)
+				if connected {
+					seenConnected = true
+				} else if status["lastError"] != nil {
+					seenDisconnected = true
+				}
+			}
+		case <-deadline:
+			t.Fatalf("timed out waiting for camera events: picture=%v connected=%v disconnected=%v", seenPicture, seenConnected, seenDisconnected)
+		}
+	}
+
+	// Capture traffic must stop after disconnect even though the last frame remains cached.
+	select {
+	case msg := <-messages:
+		if msg.topic == "camera/disconnected/capture/latest/pic" {
+			t.Fatal("cached frame was republished after the camera disconnected")
+		}
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	retainedStatus := make(chan received, 1)
+	lateClient := mqtt.NewClient(mqttOpts(23195, "camera-status-retained-test"))
+	if tok := lateClient.Connect(); !tok.WaitTimeout(2*time.Second) || tok.Error() != nil {
+		t.Fatalf("late client connect: %v", tok.Error())
+	}
+	defer lateClient.Disconnect(100)
+	if tok := lateClient.Subscribe("camera/disconnected/status", 0, func(_ mqtt.Client, m mqtt.Message) {
+		retainedStatus <- received{topic: m.Topic(), payload: append([]byte(nil), m.Payload()...), retained: m.Retained()}
+	}); !tok.WaitTimeout(2*time.Second) || tok.Error() != nil {
+		t.Fatalf("late status subscribe: %v", tok.Error())
+	}
+	select {
+	case msg := <-retainedStatus:
+		if !msg.retained {
+			t.Fatal("camera status was not retained")
+		}
+		var status map[string]any
+		if err := json.Unmarshal(msg.payload, &status); err != nil || status["connected"] != false {
+			t.Fatalf("unexpected retained camera status: %s (%v)", msg.payload, err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for retained camera status")
+	}
 }
 
 func TestMQTTTriggeredCameraPublishesSnapshotPair(t *testing.T) {

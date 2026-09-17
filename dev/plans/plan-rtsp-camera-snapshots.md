@@ -4,7 +4,7 @@
 
 This plan introduces an **RTSP Camera Bridge** to `monster-mq-edge` (Go broker) and its paired **iX Web Dashboard** (`monster-mq-dashboard`). 
 
-The bridge connects to RTSP camera streams, extracts Motion JPEG (MJPEG) frames in **100% pure Go (zero CGO)**, and publishes snapshots into a configurable number of **round-robin slot topics** (e.g. `cameras/front_gate/capture/1/pic` and `cameras/front_gate/capture/1/meta`). Snapshots can be captured either **continuously (overwriting on a timer)**, or **on-demand (triggered via an MQTT topic)**.
+The bridge connects to RTSP camera streams, extracts Motion JPEG (MJPEG) frames in **100% pure Go (zero CGO)**, and publishes snapshots into a configurable number of **round-robin slot topics** (e.g. `cameras/front_gate/capture/frames/1` and `cameras/front_gate/capture/frames/1/meta`). Snapshots can be captured either **continuously (overwriting on a timer)**, or **on-demand (triggered via an MQTT topic)**.
 
 ---
 
@@ -16,8 +16,8 @@ The bridge connects to RTSP camera streams, extracts Motion JPEG (MJPEG) frames 
 2. **Round-Robin Snapshot Topics with `/pic` and `/meta`**:
    - User configures `slots` (e.g. $N = 5$) and `topicPrefix` (e.g. `cameras/front_gate`).
    - For each slot $k \in [1, N]$, snapshots are published to paired subtopics:
-     - **Binary Picture**: `<topicPrefix>/capture/<slot>/pic` (raw JPEG `[]byte`)
-     - **JSON Metadata**: `<topicPrefix>/capture/<slot>/meta` (JSON payload containing at least the timestamp)
+     - **Binary Picture**: `<topicPrefix>/capture/frames/<slot>` (raw JPEG `[]byte`)
+     - **JSON Metadata**: `<topicPrefix>/capture/frames/<slot>/meta` (JSON payload containing at least the timestamp)
    - Cycles sequentially: $1 \rightarrow 2 \rightarrow \dots \rightarrow N \rightarrow 1$.
    - Each slot is overwritten with the newest picture and metadata when its turn arrives.
 3. **Capture Modes**:
@@ -30,16 +30,17 @@ The bridge connects to RTSP camera streams, extracts Motion JPEG (MJPEG) frames 
      {
        "camera": "front_gate",
        "slot": 1,
-       "picTopic": "cameras/front_gate/capture/1/pic",
-       "metaTopic": "cameras/front_gate/capture/1/meta",
+       "picTopic": "cameras/front_gate/capture/frames/1",
+       "metaTopic": "cameras/front_gate/capture/frames/1/meta",
        "timestamp": "2026-09-16T10:15:30.123Z",
        "timestampMs": 1789553730123,
        "bytes": 142800,
        "trigger": "continuous"
      }
      ```
-   - Downstream consumers (HMI panels, Node-RED, AI/vision workers) can subscribe to `<topicPrefix>/capture/latest` or `<topicPrefix>/capture/+/meta` without needing to pull high-bandwidth binary pictures until desired.
+   - Downstream consumers (HMI panels, Node-RED, AI/vision workers) can subscribe to `<topicPrefix>/capture/latest` or `<topicPrefix>/capture/frames/+/meta` without needing to pull high-bandwidth binary pictures until desired.
    - Every capture also updates `<topicPrefix>/capture/latest/pic` and `<topicPrefix>/capture/latest/meta`. A capture initiated by the MQTT trigger topic additionally updates `<topicPrefix>/capture/snapshot/pic` and `<topicPrefix>/capture/snapshot/meta`.
+   - The retained `<topicPrefix>/status` topic reports the camera name, node, connection state, last connection error, and update timestamp.
 5. **Dashboard Management**:
    - Full configuration UI in `monster-mq-dashboard`: list view, detail editor with slot preview, connection status, manual "Trigger Snapshot" testing, and live preview.
 
@@ -210,8 +211,8 @@ extend type Mutation {
      - `publishSnapshot(frame []byte, triggerSource string)`:
        1. Atomically advance slot: `slot = (atomic.AddUint32(&c.currentSlot, 1)-1)%slots + 1`.
        2. Now = `time.Now().UTC()`.
-       3. Pic topic = `fmt.Sprintf("%s/capture/%d/pic", c.cfg.TopicPrefix, slot)`.
-       4. Meta topic = `fmt.Sprintf("%s/capture/%d/meta", c.cfg.TopicPrefix, slot)`.
+       3. Pic topic = `fmt.Sprintf("%s/capture/frames/%d", c.cfg.TopicPrefix, slot)`.
+       4. Meta topic = `fmt.Sprintf("%s/capture/frames/%d/meta", c.cfg.TopicPrefix, slot)`.
        5. Publish binary JPEG payload to pic topic: `Publish(picTopic, frame, c.cfg.Retain, byte(c.cfg.QoS))`.
        6. Prepare and marshal `SnapshotMeta`:
           ```go
@@ -233,8 +234,8 @@ extend type Mutation {
           {
             "camera": "front_gate",
             "slot": 1,
-            "picTopic": "cameras/front_gate/capture/1/pic",
-            "metaTopic": "cameras/front_gate/capture/1/meta",
+            "picTopic": "cameras/front_gate/capture/frames/1",
+            "metaTopic": "cameras/front_gate/capture/frames/1/meta",
             "timestamp": "2026-09-16T10:15:30.123Z",
             "timestampMs": 1789553730123,
             "bytes": 142800,
@@ -298,8 +299,8 @@ Follows `dashboard/DESIGN.md`:
 - **Section 2: Capture & Round-Robin Settings**:
   - Topic Prefix (e.g. `cameras/front_gate`).
   - Live Topic Preview pills showing:
-    - `.../capture/1/pic` & `.../capture/1/meta`
-    - `.../capture/2/pic` & `.../capture/2/meta`
+    - `.../capture/frames/1` & `.../capture/frames/1/meta`
+    - `.../capture/frames/2` & `.../capture/frames/2/meta`
     - `...`
     - `.../capture/latest` (Pointer)
   - Capture Mode (`Continuous`, `Triggered`, `Both`).
@@ -322,8 +323,8 @@ Follows `dashboard/DESIGN.md`:
    - Test trigger topic subscriber triggering snapshot publishing.
 2. **Mock RTSP Stream Integration Test** (`test/integration/rtsp_test.go`):
    - Run a lightweight in-memory RTSP MJPEG server feeding synthetic MJPEG RTP packets.
-   - Verify broker publishes binary JPEG payloads to `cameras/test/capture/1/pic`.
-   - Verify broker publishes JSON metadata to `cameras/test/capture/1/meta` containing timestamp.
+   - Verify broker publishes binary JPEG payloads to `cameras/test/capture/frames/1`.
+   - Verify broker publishes JSON metadata to `cameras/test/capture/frames/1/meta` containing timestamp.
    - Verify `cameras/test/capture/latest` receives updated slot pointers.
 3. **Build & Lint Verification**:
    - Run `make lint` and `make build` (ensuring `CGO_ENABLED=0` succeeds).

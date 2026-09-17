@@ -32,7 +32,7 @@ type Config struct {
 	PublishMetadata bool   `json:"publishMetadata"`
 }
 
-// SnapshotMeta is the payload published to <topicPrefix>/capture/<slot>/meta.
+// SnapshotMeta is the payload published to <topicPrefix>/capture/frames/<slot>/meta.
 type SnapshotMeta struct {
 	Camera      string `json:"camera"`
 	Slot        int    `json:"slot"`
@@ -54,6 +54,15 @@ type LatestPointer struct {
 	TimestampMs int64  `json:"timestampMs"`
 	Bytes       int    `json:"bytes"`
 	Trigger     string `json:"trigger"`
+}
+
+// CameraStatus is the retained connection state published to <topicPrefix>/status.
+type CameraStatus struct {
+	Camera    string `json:"camera"`
+	NodeID    string `json:"nodeId"`
+	Connected bool   `json:"connected"`
+	LastError string `json:"lastError,omitempty"`
+	Timestamp string `json:"timestamp"`
 }
 
 // Metrics captures runtime stats for an active camera connector.
@@ -121,8 +130,8 @@ func (c *Config) Validate() []string {
 	var errs []string
 	if strings.TrimSpace(c.URL) == "" {
 		errs = append(errs, "url is required")
-	} else if parsed, err := url.Parse(c.URL); err != nil || parsed.Host == "" || (parsed.Scheme != "rtsp" && parsed.Scheme != "rtsps" && parsed.Scheme != "http" && parsed.Scheme != "https") {
-		errs = append(errs, "url must be an rtsp://, rtsps://, http://, or https:// URL with a host")
+	} else if parsed, err := url.Parse(c.URL); err != nil || parsed.Host == "" || !supportedStreamScheme(parsed.Scheme) {
+		errs = append(errs, "url must be an rtsp://, rtsps://, http://, https://, ws://, or wss:// URL with a host")
 	}
 
 	mode := strings.ToUpper(c.Mode)
@@ -151,4 +160,13 @@ func (c *Config) Validate() []string {
 		errs = append(errs, "qos must be 0, 1, or 2")
 	}
 	return errs
+}
+
+func supportedStreamScheme(scheme string) bool {
+	switch strings.ToLower(scheme) {
+	case "rtsp", "rtsps", "http", "https", "ws", "wss":
+		return true
+	default:
+		return false
+	}
 }

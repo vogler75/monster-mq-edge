@@ -74,6 +74,16 @@ func TestConfigValidation(t *testing.T) {
 			wantErrs: 0,
 		},
 		{
+			name:     "valid WebSocket MJPEG URL",
+			modify:   func(c *Config) { c.URL = "ws://example.com/stream" },
+			wantErrs: 0,
+		},
+		{
+			name:     "valid secure WebSocket MJPEG URL",
+			modify:   func(c *Config) { c.URL = "wss://example.com/stream" },
+			wantErrs: 0,
+		},
+		{
 			name: "invalid url scheme",
 			modify: func(c *Config) {
 				c.URL = "ftp://example.com"
@@ -167,8 +177,8 @@ func TestRoundRobinSnapshotPublishing(t *testing.T) {
 	}
 
 	mu.Lock()
-	pic1, hasPic1 := published["cameras/test_cam/capture/1/pic"]
-	meta1Bytes, hasMeta1 := published["cameras/test_cam/capture/1/meta"]
+	pic1, hasPic1 := published["cameras/test_cam/capture/frames/1"]
+	meta1Bytes, hasMeta1 := published["cameras/test_cam/capture/frames/1/meta"]
 	latestBytes, hasLatest := published["cameras/test_cam/capture/latest"]
 	latestPic, hasLatestPic := published["cameras/test_cam/capture/latest/pic"]
 	latestMetaBytes, hasLatestMeta := published["cameras/test_cam/capture/latest/meta"]
@@ -221,13 +231,16 @@ func TestRoundRobinSnapshotPublishing(t *testing.T) {
 	if latest.Slot != 1 {
 		t.Errorf("expected latest.Slot = 1, got %d", latest.Slot)
 	}
+	if latest.PicTopic != "cameras/test_cam/capture/frames/1" || latest.MetaTopic != "cameras/test_cam/capture/frames/1/meta" {
+		t.Errorf("latest pointer references unexpected topics: %+v", latest)
+	}
 
 	// Capture 2 -> Slot 2
 	if err := c.publishSnapshot(fakeFrame, "test"); err != nil {
 		t.Fatalf("publish 2 failed: %v", err)
 	}
 	mu.Lock()
-	_, hasPic2 := published["cameras/test_cam/capture/2/pic"]
+	_, hasPic2 := published["cameras/test_cam/capture/frames/2"]
 	mu.Unlock()
 	if !hasPic2 {
 		t.Errorf("expected pic on slot 2")
@@ -238,7 +251,7 @@ func TestRoundRobinSnapshotPublishing(t *testing.T) {
 		t.Fatalf("publish 3 failed: %v", err)
 	}
 	mu.Lock()
-	_, hasPic3 := published["cameras/test_cam/capture/3/pic"]
+	_, hasPic3 := published["cameras/test_cam/capture/frames/3"]
 	mu.Unlock()
 	if !hasPic3 {
 		t.Errorf("expected pic on slot 3")
@@ -251,8 +264,8 @@ func TestRoundRobinSnapshotPublishing(t *testing.T) {
 	}
 
 	mu.Lock()
-	pic1Wrap := published["cameras/test_cam/capture/1/pic"]
-	meta1WrapBytes := published["cameras/test_cam/capture/1/meta"]
+	pic1Wrap := published["cameras/test_cam/capture/frames/1"]
+	meta1WrapBytes := published["cameras/test_cam/capture/frames/1/meta"]
 	latestWrapBytes := published["cameras/test_cam/capture/latest"]
 	latestWrapPic := published["cameras/test_cam/capture/latest/pic"]
 	latestWrapMetaBytes := published["cameras/test_cam/capture/latest/meta"]
@@ -339,8 +352,8 @@ func TestTriggerSnapshot(t *testing.T) {
 	}
 
 	mu.Lock()
-	pic1, hasPic1 := published["cameras/trigger_cam/capture/1/pic"]
-	meta1Bytes, hasMeta1 := published["cameras/trigger_cam/capture/1/meta"]
+	pic1, hasPic1 := published["cameras/trigger_cam/capture/frames/1"]
+	meta1Bytes, hasMeta1 := published["cameras/trigger_cam/capture/frames/1/meta"]
 	mu.Unlock()
 
 	if !hasPic1 || len(pic1) != len(fakeFrame) {
@@ -364,16 +377,92 @@ func TestTriggerSnapshot(t *testing.T) {
 	}
 }
 
+func TestLatestFrameIsPublishedOnlyOnce(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	publishCount := 0
+	pubFn := func(string, []byte, bool, byte) error {
+		publishCount++
+		return nil
+	}
+	cfg := DefaultConfig()
+	cfg.URL = "rtsp://127.0.0.1/cam"
+	cfg.PublishMetadata = false
+	c := NewConnector("camera", "node1", cfg, pubFn, nil, logger)
+	frame := []byte{0xff, 0xd8, 0x01, 0xff, 0xd9}
+
+	c.setLatestFrame(frame)
+	if err := c.publishLatestSnapshot("continuous"); err != nil {
+		t.Fatal(err)
+	}
+	firstCount := publishCount
+	if err := c.publishLatestSnapshot("continuous"); err != nil {
+		t.Fatal(err)
+	}
+	if publishCount != firstCount {
+		t.Fatalf("unchanged cached frame was republished: count %d -> %d", firstCount, publishCount)
+	}
+
+	// A newly received frame is publishable even when its JPEG bytes are identical.
+	c.setLatestFrame(frame)
+	if err := c.publishLatestSnapshot("continuous"); err != nil {
+		t.Fatal(err)
+	}
+	if publishCount != firstCount*2 {
+		t.Fatalf("new frame was not published: got %d publishes, want %d", publishCount, firstCount*2)
+	}
+}
+
+func TestCameraStatusIsRetainedAndIncludesConnectionState(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	type publication struct {
+		topic   string
+		payload []byte
+		retain  bool
+		qos     byte
+	}
+	var got publication
+	pubFn := func(topic string, payload []byte, retain bool, qos byte) error {
+		got = publication{topic: topic, payload: append([]byte(nil), payload...), retain: retain, qos: qos}
+		return nil
+	}
+	cfg := DefaultConfig()
+	cfg.URL = "rtsp://127.0.0.1/cam"
+	cfg.TopicPrefix = "cameras/gate/"
+	cfg.QoS = 1
+	c := NewConnector("gate", "edge-1", cfg, pubFn, nil, logger)
+
+	c.setStatus(false, "connection refused")
+	if got.topic != "cameras/gate/status" || !got.retain || got.qos != 1 {
+		t.Fatalf("unexpected status publication: %+v", got)
+	}
+	var status CameraStatus
+	if err := json.Unmarshal(got.payload, &status); err != nil {
+		t.Fatal(err)
+	}
+	if status.Camera != "gate" || status.NodeID != "edge-1" || status.Connected || status.LastError != "connection refused" || status.Timestamp == "" {
+		t.Fatalf("unexpected disconnected status: %+v", status)
+	}
+
+	c.setStatus(true, "")
+	status = CameraStatus{}
+	if err := json.Unmarshal(got.payload, &status); err != nil {
+		t.Fatal(err)
+	}
+	if !status.Connected || status.LastError != "" {
+		t.Fatalf("unexpected connected status: %+v", status)
+	}
+}
+
 func TestSlotPointersAndTopics(t *testing.T) {
 	slots := 5
 	prefix := "cameras/gate"
 	for s := 1; s <= slots; s++ {
-		picTopic := fmt.Sprintf("%s/capture/%d/pic", prefix, s)
-		metaTopic := fmt.Sprintf("%s/capture/%d/meta", prefix, s)
-		if picTopic != fmt.Sprintf("cameras/gate/capture/%d/pic", s) {
+		picTopic := fmt.Sprintf("%s/capture/frames/%d", prefix, s)
+		metaTopic := fmt.Sprintf("%s/capture/frames/%d/meta", prefix, s)
+		if picTopic != fmt.Sprintf("cameras/gate/capture/frames/%d", s) {
 			t.Errorf("unexpected picTopic %s", picTopic)
 		}
-		if metaTopic != fmt.Sprintf("cameras/gate/capture/%d/meta", s) {
+		if metaTopic != fmt.Sprintf("cameras/gate/capture/frames/%d/meta", s) {
 			t.Errorf("unexpected metaTopic %s", metaTopic)
 		}
 	}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -15,6 +16,7 @@ import (
 	"github.com/bluenviron/gortsplib/v5/pkg/base"
 	"github.com/bluenviron/gortsplib/v5/pkg/format"
 	"github.com/bluenviron/gortsplib/v5/pkg/format/rtpmjpeg"
+	"github.com/gorilla/websocket"
 	"github.com/pion/rtp"
 )
 
@@ -53,9 +55,12 @@ type Connector struct {
 	lastSnapshotAt     time.Time
 	lastError          string
 	latestFrame        []byte
+	latestFrameVersion uint64
+	publishedVersion   uint64
 
 	client     *gortsplib.Client
 	httpCancel context.CancelFunc
+	wsConn     *websocket.Conn
 	stopCh     chan struct{}
 	subID      int
 }
@@ -87,6 +92,7 @@ func (c *Connector) Config() Config {
 // Start launches the background worker goroutine.
 func (c *Connector) Start(ctx context.Context) {
 	c.logger.Info("starting rtsp camera connector", "url", c.cfg.URL, "mode", c.cfg.Mode, "slots", c.cfg.Slots)
+	c.setStatus(false, "")
 	go c.run(ctx)
 }
 
@@ -107,7 +113,7 @@ func (c *Connector) Stop() {
 	}
 	client := c.client
 	httpCancel := c.httpCancel
-	c.connected = false
+	wsConn := c.wsConn
 	c.mu.Unlock()
 
 	if client != nil {
@@ -116,6 +122,10 @@ func (c *Connector) Stop() {
 	if httpCancel != nil {
 		httpCancel()
 	}
+	if wsConn != nil {
+		_ = wsConn.Close()
+	}
+	c.setStatus(false, "")
 	c.logger.Info("stopped rtsp camera connector")
 }
 
@@ -148,11 +158,10 @@ func (c *Connector) Metrics() Metrics {
 
 // TriggerSnapshot triggers an immediate snapshot from the latest cached frame.
 func (c *Connector) TriggerSnapshot() error {
-	frame := c.getLatestFrame()
-	if len(frame) == 0 {
+	if len(c.getLatestFrame()) == 0 {
 		return errors.New("no frame received from camera yet")
 	}
-	return c.publishSnapshot(frame, "manual")
+	return c.publishLatestSnapshot("manual")
 }
 
 func (c *Connector) getLatestFrame() []byte {
@@ -169,14 +178,49 @@ func (c *Connector) getLatestFrame() []byte {
 func (c *Connector) setLatestFrame(frame []byte) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.latestFrame = frame
+	c.latestFrame = append(c.latestFrame[:0], frame...)
+	c.latestFrameVersion++
+}
+
+func (c *Connector) latestFrameWithVersion() ([]byte, uint64) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return append([]byte(nil), c.latestFrame...), c.latestFrameVersion
 }
 
 func (c *Connector) setStatus(connected bool, errMsg string) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.connected = connected
 	c.lastError = errMsg
+	c.mu.Unlock()
+	c.publishStatus()
+}
+
+func (c *Connector) publishStatus() {
+	if c.publisher == nil {
+		return
+	}
+	c.mu.RLock()
+	status := CameraStatus{
+		Camera:    c.name,
+		NodeID:    c.nodeID,
+		Connected: c.connected,
+		LastError: c.lastError,
+		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	c.mu.RUnlock()
+	payload, err := json.Marshal(status)
+	if err != nil {
+		c.logger.Warn("failed to encode camera status", "err", err)
+		return
+	}
+	topic := strings.TrimSuffix(c.cfg.TopicPrefix, "/") + "/status"
+	c.publishMu.Lock()
+	err = c.publisher(topic, payload, true, byte(c.cfg.QoS))
+	c.publishMu.Unlock()
+	if err != nil {
+		c.logger.Warn("failed to publish camera status", "topic", topic, "err", err)
+	}
 }
 
 func (c *Connector) run(ctx context.Context) {
@@ -213,8 +257,8 @@ func (c *Connector) run(ctx context.Context) {
 		case <-c.stopCh:
 			return
 		case <-tickCh:
-			if frame := c.getLatestFrame(); len(frame) > 0 {
-				if err := c.publishSnapshot(frame, "continuous"); err != nil {
+			if len(c.getLatestFrame()) > 0 {
+				if err := c.publishLatestSnapshot("continuous"); err != nil {
 					c.logger.Warn("failed to publish continuous snapshot", "err", err)
 				}
 			}
@@ -223,8 +267,8 @@ func (c *Connector) run(ctx context.Context) {
 				triggerCh = nil
 				continue
 			}
-			if frame := c.getLatestFrame(); len(frame) > 0 {
-				if err := c.publishSnapshot(frame, "topic_trigger"); err != nil {
+			if len(c.getLatestFrame()) > 0 {
+				if err := c.publishLatestSnapshot("topic_trigger"); err != nil {
 					c.logger.Warn("failed to publish triggered snapshot", "err", err)
 				}
 			} else {
@@ -245,15 +289,31 @@ func (c *Connector) streamLoop(ctx context.Context) {
 		default:
 		}
 
+		parsed, parseErr := url.Parse(c.cfg.URL)
 		var err error
-		if strings.HasPrefix(c.cfg.URL, "http://") || strings.HasPrefix(c.cfg.URL, "https://") {
-			err = c.connectHTTPStream(ctx)
+		if parseErr != nil {
+			err = fmt.Errorf("invalid camera stream URL: %w", parseErr)
 		} else {
-			err = c.connectAndStream(ctx)
+			switch strings.ToLower(parsed.Scheme) {
+			case "http", "https":
+				err = c.connectHTTPStream(ctx)
+			case "ws", "wss":
+				err = c.connectWebSocketStream(ctx)
+			default:
+				err = c.connectAndStream(ctx)
+			}
 		}
 		if err != nil {
+			select {
+			case <-ctx.Done():
+				c.setStatus(false, "")
+				return
+			case <-c.stopCh:
+				return
+			default:
+			}
 			c.setStatus(false, err.Error())
-			c.logger.Warn("rtsp stream error, reconnecting", "err", err, "backoff", backoff)
+			c.logger.Warn("camera stream error, reconnecting", "err", err, "backoff", backoff)
 		} else {
 			backoff = time.Second
 		}
@@ -364,6 +424,27 @@ func (c *Connector) publishSnapshot(frame []byte, triggerSource string) error {
 	}
 	c.publishMu.Lock()
 	defer c.publishMu.Unlock()
+	return c.publishSnapshotLocked(frame, triggerSource)
+}
+
+func (c *Connector) publishLatestSnapshot(triggerSource string) error {
+	frame, version := c.latestFrameWithVersion()
+	if c.publisher == nil || len(frame) == 0 {
+		return nil
+	}
+	c.publishMu.Lock()
+	defer c.publishMu.Unlock()
+	if version <= c.publishedVersion {
+		return nil
+	}
+	if err := c.publishSnapshotLocked(frame, triggerSource); err != nil {
+		return err
+	}
+	c.publishedVersion = version
+	return nil
+}
+
+func (c *Connector) publishSnapshotLocked(frame []byte, triggerSource string) error {
 
 	slots := c.cfg.Slots
 	if slots <= 0 {
@@ -379,18 +460,18 @@ func (c *Connector) publishSnapshot(frame []byte, triggerSource string) error {
 	timestampMs := now.UnixMilli()
 
 	prefix := strings.TrimSuffix(c.cfg.TopicPrefix, "/")
-	picTopic := fmt.Sprintf("%s/capture/%d/pic", prefix, slot)
-	metaTopic := fmt.Sprintf("%s/capture/%d/meta", prefix, slot)
+	picTopic := fmt.Sprintf("%s/capture/frames/%d", prefix, slot)
+	metaTopic := picTopic + "/meta"
 	latestTopic := fmt.Sprintf("%s/capture/latest", prefix)
 	latestPicTopic := latestTopic + "/pic"
 	latestMetaTopic := latestTopic + "/meta"
 
-	// 1. Publish raw JPEG binary to <prefix>/capture/<slot>/pic.
+	// 1. Publish raw JPEG binary to <prefix>/capture/frames/<slot>.
 	if err := c.publisher(picTopic, frame, c.cfg.Retain, byte(c.cfg.QoS)); err != nil {
 		return fmt.Errorf("publish pic topic %s failed: %w", picTopic, err)
 	}
 
-	// 2. Publish JSON metadata to <prefix>/capture/<slot>/meta.
+	// 2. Publish JSON metadata to <prefix>/capture/frames/<slot>/meta.
 	meta := SnapshotMeta{
 		Camera:      c.name,
 		Slot:        slot,
