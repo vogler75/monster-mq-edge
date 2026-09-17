@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"time"
@@ -305,7 +306,24 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 		if cfg.RestApi.Enabled {
 			rest = restapi.New(cfg, authCache, storage.Retained, archives, bus, publishFn)
 		}
-		gqlSrv = gql.NewServer(cfg, resolver, hmiMgr, redfishMgr, rest, logger)
+		var tlsConfig *tls.Config
+		if cfg.GraphQL.TLSEnabled {
+			certPath := cfg.EffectiveGraphQLCertPath()
+			keyPath := cfg.EffectiveGraphQLKeyPath()
+			if err := EnsureCertificate(certPath, keyPath, logger); err != nil {
+				logger.Error("ensure certificate failed", "err", err)
+			}
+			var err error
+			tlsConfig, err = loadTLS(TLSParams{
+				CertPath: certPath,
+				KeyPath:  keyPath,
+				Password: cfg.EffectiveGraphQLKeyPassword(),
+			})
+			if err != nil {
+				logger.Error("load graphql tls config failed", "err", err)
+			}
+		}
+		gqlSrv = gql.NewServer(cfg, resolver, hmiMgr, redfishMgr, rest, tlsConfig, logger)
 	}
 
 	// 9. MCP server (Streamable HTTP / SSE)

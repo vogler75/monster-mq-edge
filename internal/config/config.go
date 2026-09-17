@@ -130,8 +130,16 @@ type LoggingConfig struct {
 }
 
 type GraphQLConfig struct {
-	Enabled bool `yaml:"Enabled"`
-	Port    int  `yaml:"Port"`
+	Enabled                 bool   `yaml:"Enabled"`
+	Address                 string `yaml:"Address,omitempty"`
+	Port                    int    `yaml:"Port"`
+	TLSEnabled              bool   `yaml:"TLSEnabled"`
+	TLSPort                 int    `yaml:"TLSPort"`
+	TLSAddress              string `yaml:"TLSAddress,omitempty"`
+	RequireHTTPSFromOutside bool   `yaml:"RequireHTTPSFromOutside"`
+	KeyStorePath            string `yaml:"KeyStorePath,omitempty"`
+	KeyPath                 string `yaml:"KeyPath,omitempty"`
+	KeyStorePassword        string `yaml:"KeyStorePassword,omitempty"`
 }
 
 type DashboardConfig struct {
@@ -267,7 +275,13 @@ func Default() *Config {
 		UserManagement:    UserManagementConfig{Enabled: false, PasswordAlgorithm: "BCRYPT", AnonymousEnabled: true, AclCacheEnabled: true, AllowAnonymousLocalhost: false},
 		Metrics:           MetricsConfig{Enabled: true, CollectionIntervalSeconds: 1, RetentionHours: 168, MaxHistoryRows: 3600},
 		Logging:           LoggingConfig{Level: "INFO", MqttSyslogEnabled: false, RingBufferSize: 1000},
-		GraphQL:           GraphQLConfig{Enabled: true, Port: 4000},
+		GraphQL: GraphQLConfig{
+			Enabled:                 true,
+			Port:                    4000,
+			TLSEnabled:              false,
+			TLSPort:                 4443,
+			RequireHTTPSFromOutside: false,
+		},
 		Dashboard:         DashboardConfig{Enabled: true, Path: ""},
 		RestApi:           RestApiConfig{Enabled: true},
 		MCP:               MCPConfig{Enabled: false, Port: 3000},
@@ -521,4 +535,38 @@ func (c *Config) GetQueueFlushIntervalMs() int {
 		return *c.QueueFlushIntervalMs
 	}
 	return 50
+}
+
+func (c *Config) EffectiveGraphQLCertPath() string {
+	if c.GraphQL.KeyStorePath != "" {
+		return c.GraphQL.KeyStorePath
+	}
+	if c.SSL.KeyStorePath != "" {
+		return c.SSL.KeyStorePath
+	}
+	return "data/server.crt"
+}
+
+func (c *Config) EffectiveGraphQLKeyPath() string {
+	if c.GraphQL.KeyPath != "" {
+		return c.GraphQL.KeyPath
+	}
+	if c.SSL.KeyPath != "" {
+		return c.SSL.KeyPath
+	}
+	return "data/server.key"
+}
+
+func (c *Config) EffectiveGraphQLKeyPassword() string {
+	if c.GraphQL.KeyStorePassword != "" {
+		return c.GraphQL.KeyStorePassword
+	}
+	return c.SSL.KeyStorePassword
+}
+
+func (c *Config) EffectiveGraphQLTLSPort() int {
+	if c.GraphQL.TLSPort > 0 {
+		return c.GraphQL.TLSPort
+	}
+	return 4443
 }

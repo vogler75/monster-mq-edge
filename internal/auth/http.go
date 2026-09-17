@@ -20,7 +20,7 @@ var LocalhostUser = stores.User{
 	IsAdmin:      true,
 }
 
-// IsLocalhost returns true if the remote address string resolves to IPv4 127.0.0.1.
+// IsLocalhost returns true if the remote address string resolves to IPv4 127.0.0.1, IPv6 ::1, or localhost.
 func IsLocalhost(remoteAddr string) bool {
 	if remoteAddr == "" {
 		return false
@@ -29,7 +29,7 @@ func IsLocalhost(remoteAddr string) bool {
 	if err != nil {
 		host = remoteAddr
 	}
-	return host == "127.0.0.1"
+	return host == "127.0.0.1" || host == "::1" || host == "localhost"
 }
 
 // IsLocalhostRequest returns true if the HTTP request originated from IPv4 127.0.0.1.
