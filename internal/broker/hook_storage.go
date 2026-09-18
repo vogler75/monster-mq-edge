@@ -307,6 +307,10 @@ func (h *StorageHook) OnRetainMessage(cl *mqtt.Client, pk packets.Packet, r int6
 	if cl != nil {
 		clientID = cl.ID
 	}
+	createdAt := time.Now().UTC()
+	if pk.Created > 0 {
+		createdAt = time.Unix(pk.Created, 0).UTC()
+	}
 	msg := stores.BrokerMessage{
 		MessageUUID: uuid.NewString(),
 		TopicName:   pk.TopicName,
@@ -314,7 +318,14 @@ func (h *StorageHook) OnRetainMessage(cl *mqtt.Client, pk packets.Packet, r int6
 		QoS:         pk.FixedHeader.Qos,
 		IsRetain:    true,
 		ClientID:    clientID,
-		Time:        time.Now().UTC(),
+		Time:        createdAt,
+	}
+	if pk.Expiry > pk.Created && pk.Created > 0 {
+		v := uint32(pk.Expiry - pk.Created)
+		msg.MessageExpiryInterval = &v
+	} else if pk.Properties.MessageExpiryInterval > 0 {
+		v := pk.Properties.MessageExpiryInterval
+		msg.MessageExpiryInterval = &v
 	}
 	if err := h.store.Retained.AddAll(ctx, []stores.BrokerMessage{msg}); err != nil {
 		h.logger.Warn("retained persist failed", "topic", pk.TopicName, "err", err)
@@ -338,8 +349,10 @@ func (h *StorageHook) OnSelectRetainedMessages(filter string) ([]packets.Packet,
 			TopicName: msg.TopicName,
 			Payload:   msg.Payload,
 		}
-		if msg.MessageExpiryInterval != nil {
+		pk.Created = msg.Time.Unix()
+		if msg.MessageExpiryInterval != nil && *msg.MessageExpiryInterval > 0 {
 			pk.Properties.MessageExpiryInterval = *msg.MessageExpiryInterval
+			pk.Expiry = pk.Created + int64(*msg.MessageExpiryInterval)
 		}
 		pks = append(pks, pk)
 		return true
@@ -348,4 +361,34 @@ func (h *StorageHook) OnSelectRetainedMessages(filter string) ([]packets.Packet,
 		return nil, err
 	}
 	return pks, nil
+}
+
+// StartRetention starts a periodic background goroutine to purge expired retained messages
+// from the persistent store. Returns a cancel function.
+func (h *StorageHook) StartRetention(ctx context.Context, interval time.Duration) context.CancelFunc {
+	ctx, cancel := context.WithCancel(ctx)
+	if h.retainedInMemory {
+		return cancel
+	}
+	go func() {
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if _, err := h.store.Retained.PurgeExpired(ctx); err != nil {
+					h.logger.Warn("retained messages purge failed", "err", err)
+				}
+			}
+		}
+	}()
+	// Run once immediately on startup
+	go func() {
+		if _, err := h.store.Retained.PurgeExpired(ctx); err != nil {
+			h.logger.Warn("retained messages initial purge failed", "err", err)
+		}
+	}()
+	return cancel
 }

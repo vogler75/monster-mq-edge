@@ -258,6 +258,21 @@ func (s *MessageStore) PurgeOlderThan(ctx context.Context, t time.Time) (stores.
 	return stores.PurgeResult{DeletedRows: res.RowsAffected()}, nil
 }
 
+func (s *MessageStore) PurgeExpired(ctx context.Context) (stores.PurgeResult, error) {
+	now := time.Now().UnixMilli()
+	q := fmt.Sprintf(`DELETE FROM %s 
+                      WHERE message_expiry_interval IS NOT NULL 
+                        AND message_expiry_interval > 0 
+                        AND creation_time IS NOT NULL 
+                        AND ($1 - creation_time) / 1000 >= message_expiry_interval`, s.tableName())
+	res, err := s.db.pool.Exec(ctx, q, now)
+	if err != nil {
+		return stores.PurgeResult{Err: err}, err
+	}
+	return stores.PurgeResult{DeletedRows: res.RowsAffected()}, nil
+}
+
+
 // MessageArchive -----------------------------------------------------------
 
 type MessageArchive struct {

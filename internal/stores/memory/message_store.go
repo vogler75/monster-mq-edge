@@ -73,6 +73,11 @@ func (s *MessageStore) FindMatchingMessages(_ context.Context, pattern string, y
 		if !ok {
 			continue
 		}
+		if m.MessageExpiryInterval != nil && *m.MessageExpiryInterval > 0 && !m.Time.IsZero() {
+			if (time.Now().UnixMilli()-m.Time.UnixMilli())/1000 >= int64(*m.MessageExpiryInterval) {
+				continue
+			}
+		}
 		copy := m
 		if !yield(copy) {
 			return nil
@@ -107,6 +112,22 @@ func (s *MessageStore) PurgeOlderThan(_ context.Context, t time.Time) (stores.Pu
 		if m.Time.Before(t) {
 			delete(s.data, k)
 			n++
+		}
+	}
+	return stores.PurgeResult{DeletedRows: n}, nil
+}
+
+func (s *MessageStore) PurgeExpired(_ context.Context) (stores.PurgeResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now().UnixMilli()
+	var n int64
+	for k, m := range s.data {
+		if m.MessageExpiryInterval != nil && *m.MessageExpiryInterval > 0 && !m.Time.IsZero() {
+			if (now-m.Time.UnixMilli())/1000 >= int64(*m.MessageExpiryInterval) {
+				delete(s.data, k)
+				n++
+			}
 		}
 	}
 	return stores.PurgeResult{DeletedRows: n}, nil

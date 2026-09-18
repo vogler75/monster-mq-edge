@@ -283,3 +283,19 @@ func (s *MessageStore) PurgeOlderThan(ctx context.Context, t time.Time) (stores.
 	n, _ := res.RowsAffected()
 	return stores.PurgeResult{DeletedRows: n}, nil
 }
+
+func (s *MessageStore) PurgeExpired(ctx context.Context) (stores.PurgeResult, error) {
+	now := time.Now().UnixMilli()
+	q := fmt.Sprintf(`DELETE FROM %s 
+                      WHERE message_expiry_interval IS NOT NULL 
+                        AND message_expiry_interval > 0 
+                        AND creation_time IS NOT NULL 
+                        AND (? - creation_time) / 1000 >= message_expiry_interval`, s.tableName)
+	res, err := s.db.Exec(q, now)
+	if err != nil {
+		return stores.PurgeResult{Err: err}, err
+	}
+	n, _ := res.RowsAffected()
+	return stores.PurgeResult{DeletedRows: n}, nil
+}
+
