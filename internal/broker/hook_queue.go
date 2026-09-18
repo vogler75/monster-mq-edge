@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -39,18 +40,23 @@ type QueueHook struct {
 	// length check instead of resolving subscribers on every message.
 	offline         map[string]struct{}
 	clientUsernames map[string]string
+
+	pendingByPacketID map[string]map[uint16]string // clientID -> packetID -> messageUUID
+	pendingByUUID     map[string]map[string]uint16 // clientID -> messageUUID -> packetID
 }
 
 func NewQueueHook(s *stores.Storage, subs *topic.SubscriptionIndex, server *mqtt.Server, logger *slog.Logger, maxQueue int) *QueueHook {
 	h := &QueueHook{
-		store:            s,
-		subs:             subs,
-		server:           server,
-		logger:           logger,
-		maxQueueMessages: maxQueue,
-		persistent:       make(map[string]bool),
-		offline:          make(map[string]struct{}),
-		clientUsernames:  make(map[string]string),
+		store:             s,
+		subs:              subs,
+		server:            server,
+		logger:            logger,
+		maxQueueMessages:  maxQueue,
+		persistent:        make(map[string]bool),
+		offline:           make(map[string]struct{}),
+		clientUsernames:   make(map[string]string),
+		pendingByPacketID: make(map[string]map[uint16]string),
+		pendingByUUID:     make(map[string]map[string]uint16),
 	}
 	h.hydratePersistentClients()
 	return h
@@ -88,6 +94,8 @@ func (h *QueueHook) Provides(b byte) bool {
 		mqtt.OnSessionEstablished,
 		mqtt.OnDisconnect,
 		mqtt.OnClientExpired,
+		mqtt.OnQosComplete,
+		mqtt.StoredQueuedMessages,
 	}, []byte{b})
 }
 
@@ -215,6 +223,7 @@ func (h *QueueHook) OnSessionEstablished(cl *mqtt.Client, _ packets.Packet) {
 	h.mu.Unlock()
 
 	if cl.Properties.Clean {
+		h.clearPendingAcks(cl.ID)
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if _, err := h.store.Queue.PurgeForClient(ctx, cl.ID); err != nil {
@@ -224,13 +233,6 @@ func (h *QueueHook) OnSessionEstablished(cl *mqtt.Client, _ packets.Packet) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-
-	if cl.State.Inflight.Len() > 0 {
-		if _, err := h.store.Queue.PurgeForClient(ctx, cl.ID); err != nil {
-			h.logger.Warn("queue hook: purge after mochi inflight resend failed", "client", cl.ID, "err", err)
-		}
-		return
-	}
 
 	if err := h.store.Queue.ResetVisibility(ctx, cl.ID); err != nil {
 		h.logger.Warn("queue hook: reset visibility failed", "client", cl.ID, "err", err)
@@ -255,6 +257,12 @@ func (h *QueueHook) OnSessionEstablished(cl *mqtt.Client, _ packets.Packet) {
 				continue
 			}
 
+			// If message is already tracked as pending ack for this client (e.g. resent by mochi in-process),
+			// do not duplicate write or allocate a new packet ID.
+			if h.isPendingAckUUID(cl.ID, m.MessageUUID) {
+				continue
+			}
+
 			pk := packets.Packet{
 				FixedHeader: packets.FixedHeader{
 					Type:   packets.Publish,
@@ -265,22 +273,114 @@ func (h *QueueHook) OnSessionEstablished(cl *mqtt.Client, _ packets.Packet) {
 				Payload:   m.Payload,
 				Origin:    cl.ID,
 			}
-			if m.QoS > 0 {
-				if pid, err := cl.NextPacketID(); err == nil {
-					pk.PacketID = uint16(pid)
+
+			if m.QoS == 0 {
+				if err := cl.WritePacket(pk); err != nil {
+					h.logger.Warn("queue hook: write packet failed", "client", cl.ID, "topic", m.TopicName, "err", err)
+					return
+				}
+				if err := h.store.Queue.Ack(ctx, cl.ID, m.MessageUUID); err != nil {
+					h.logger.Warn("queue hook: ack failed", "client", cl.ID, "uuid", m.MessageUUID, "err", err)
+				}
+			} else {
+				// QoS 1 or QoS 2: allocate packet ID, add to inflight, and track correlation
+				pid, err := cl.NextPacketID()
+				if err != nil {
+					h.logger.Warn("queue hook: next packet id failed", "client", cl.ID, "err", err)
+					return
+				}
+				pk.PacketID = uint16(pid)
+				if ok := cl.State.Inflight.Set(pk); ok {
+					cl.State.Inflight.DecreaseSendQuota()
+					if h.server != nil {
+						atomic.AddInt64(&h.server.Info.Inflight, 1)
+					}
+				}
+				h.recordPendingAck(cl.ID, pk.PacketID, m.MessageUUID)
+
+				if err := cl.WritePacket(pk); err != nil {
+					h.logger.Warn("queue hook: write packet failed", "client", cl.ID, "topic", m.TopicName, "err", err)
+					cl.State.Inflight.Delete(pk.PacketID)
+					cl.State.Inflight.IncreaseSendQuota()
+					if h.server != nil {
+						atomic.AddInt64(&h.server.Info.Inflight, -1)
+					}
+					h.deletePendingAck(cl.ID, pk.PacketID)
+					return
 				}
 			}
-			if err := cl.WritePacket(pk); err != nil {
-				h.logger.Warn("queue hook: write packet failed", "client", cl.ID, "topic", m.TopicName, "err", err)
-				// leave the message for the next reconnect via visibility timeout
-				return
-			}
-			// Best effort: ack on successful write. For QoS 1/2 a more rigorous
-			// design would wait for PUBACK / PUBCOMP via OnQosComplete before
-			// removing the row; for QoS 0 the row is removed immediately.
-			if err := h.store.Queue.Ack(ctx, cl.ID, m.MessageUUID); err != nil {
-				h.logger.Warn("queue hook: ack failed", "client", cl.ID, "uuid", m.MessageUUID, "err", err)
-			}
+		}
+	}
+}
+
+func (h *QueueHook) recordPendingAck(clientID string, packetID uint16, messageUUID string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.pendingByPacketID[clientID] == nil {
+		h.pendingByPacketID[clientID] = make(map[uint16]string)
+	}
+	if h.pendingByUUID[clientID] == nil {
+		h.pendingByUUID[clientID] = make(map[string]uint16)
+	}
+	h.pendingByPacketID[clientID][packetID] = messageUUID
+	h.pendingByUUID[clientID][messageUUID] = packetID
+}
+
+func (h *QueueHook) isPendingAckUUID(clientID string, messageUUID string) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if m, ok := h.pendingByUUID[clientID]; ok {
+		_, exists := m[messageUUID]
+		return exists
+	}
+	return false
+}
+
+func (h *QueueHook) deletePendingAck(clientID string, packetID uint16) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if uuid, ok := h.pendingByPacketID[clientID][packetID]; ok {
+		delete(h.pendingByPacketID[clientID], packetID)
+		if h.pendingByUUID[clientID] != nil {
+			delete(h.pendingByUUID[clientID], uuid)
+		}
+		if len(h.pendingByPacketID[clientID]) == 0 {
+			delete(h.pendingByPacketID, clientID)
+			delete(h.pendingByUUID, clientID)
+		}
+	}
+}
+
+func (h *QueueHook) clearPendingAcks(clientID string) {
+	h.mu.Lock()
+	delete(h.pendingByPacketID, clientID)
+	delete(h.pendingByUUID, clientID)
+	h.mu.Unlock()
+}
+
+func (h *QueueHook) OnQosComplete(cl *mqtt.Client, pk packets.Packet) {
+	if cl == nil || pk.PacketID == 0 {
+		return
+	}
+	h.mu.Lock()
+	uuid, ok := h.pendingByPacketID[cl.ID][pk.PacketID]
+	if ok {
+		delete(h.pendingByPacketID[cl.ID], pk.PacketID)
+		if h.pendingByUUID[cl.ID] != nil {
+			delete(h.pendingByUUID[cl.ID], uuid)
+		}
+		if len(h.pendingByPacketID[cl.ID]) == 0 {
+			delete(h.pendingByPacketID, cl.ID)
+			delete(h.pendingByUUID, cl.ID)
+		}
+	}
+	h.mu.Unlock()
+
+	if ok {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := h.store.Queue.Ack(ctx, cl.ID, uuid); err != nil {
+			h.logger.Warn("queue hook: ack failed on qos complete", "client", cl.ID, "packet_id", pk.PacketID, "uuid", uuid, "err", err)
 		}
 	}
 }
@@ -296,6 +396,9 @@ func (h *QueueHook) OnDisconnect(cl *mqtt.Client, _ error, expire bool) {
 		h.clientUsernames[cl.ID] = string(cl.Properties.Username)
 	}
 	h.mu.Unlock()
+	if expire {
+		h.clearPendingAcks(cl.ID)
+	}
 }
 
 func (h *QueueHook) OnClientExpired(cl *mqtt.Client) {
@@ -304,4 +407,5 @@ func (h *QueueHook) OnClientExpired(cl *mqtt.Client) {
 	delete(h.offline, cl.ID)
 	delete(h.clientUsernames, cl.ID)
 	h.mu.Unlock()
+	h.clearPendingAcks(cl.ID)
 }

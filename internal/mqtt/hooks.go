@@ -57,6 +57,7 @@ const (
 	StoredSysInfo
 	OnSelectRetainedMessages
 	StoredClientByID
+	StoredQueuedMessages
 )
 
 var (
