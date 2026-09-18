@@ -274,6 +274,11 @@ func (s *Server) AddHook(hook Hook, config any) error {
 	return s.hooks.Add(hook, config)
 }
 
+// Hooks returns the server's hooks manager.
+func (s *Server) Hooks() *Hooks {
+	return s.hooks
+}
+
 // AddHooksFromConfig adds hooks to the server which were specified in the hooks config (usually from a config file).
 // New built-in hooks should be added to this list.
 func (s *Server) AddHooksFromConfig(hooks []HookLoadConfig) error {
@@ -880,7 +885,7 @@ func (s *Server) Unsubscribe(filter string, subscriptionId int) error {
 	})
 
 	s.Topics.InlineUnsubscribe(subscriptionId, filter)
-	s.hooks.OnUnsubscribed(s.inlineClient, pk)
+	s.hooks.OnUnsubscribed(s.inlineClient, pk, []byte{packets.CodeSuccess.Code})
 	return nil
 }
 
@@ -1437,7 +1442,7 @@ func (s *Server) processUnsubscribe(cl *Client, pk packets.Packet) error {
 		ack.Properties.ReasonString = code.Reason
 	}
 
-	s.hooks.OnUnsubscribed(cl, pk)
+	s.hooks.OnUnsubscribed(cl, pk, reasonCodes)
 	return cl.WritePacket(ack)
 }
 
@@ -1461,7 +1466,7 @@ func (s *Server) UnsubscribeClient(cl *Client) {
 		filters[i] = v
 		i++
 	}
-	s.hooks.OnUnsubscribed(cl, packets.Packet{FixedHeader: packets.FixedHeader{Type: packets.Unsubscribe}, Filters: filters})
+	s.hooks.OnUnsubscribed(cl, packets.Packet{FixedHeader: packets.FixedHeader{Type: packets.Unsubscribe}, Filters: filters}, nil)
 }
 
 // processAuth processes an Auth packet.

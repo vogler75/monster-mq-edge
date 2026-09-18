@@ -3,6 +3,7 @@ package broker
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"log/slog"
 	"sync"
 	"time"
@@ -36,7 +37,8 @@ type QueueHook struct {
 	// disconnected — the only ones OnPublished ever enqueues for. Kept
 	// separately so the publish hot path can bail out with a single
 	// length check instead of resolving subscribers on every message.
-	offline map[string]struct{}
+	offline         map[string]struct{}
+	clientUsernames map[string]string
 }
 
 func NewQueueHook(s *stores.Storage, subs *topic.SubscriptionIndex, server *mqtt.Server, logger *slog.Logger, maxQueue int) *QueueHook {
@@ -48,6 +50,7 @@ func NewQueueHook(s *stores.Storage, subs *topic.SubscriptionIndex, server *mqtt
 		maxQueueMessages: maxQueue,
 		persistent:       make(map[string]bool),
 		offline:          make(map[string]struct{}),
+		clientUsernames:  make(map[string]string),
 	}
 	h.hydratePersistentClients()
 	return h
@@ -60,6 +63,14 @@ func (h *QueueHook) hydratePersistentClients() {
 			h.mu.Lock()
 			h.persistent[info.ClientID] = true
 			h.offline[info.ClientID] = struct{}{} // nobody is connected yet at hydrate time
+			if info.Information != "" {
+				var parsed struct {
+					Username string `json:"Username"`
+				}
+				if json.Unmarshal([]byte(info.Information), &parsed) == nil && parsed.Username != "" {
+					h.clientUsernames[info.ClientID] = parsed.Username
+				}
+			}
 			h.mu.Unlock()
 		}
 		return true
@@ -148,6 +159,28 @@ func (h *QueueHook) collectOfflineSubscribers(ctx context.Context, topicName str
 		if cl, ok := h.server.Clients.Get(cid); ok && !cl.Closed() {
 			continue
 		}
+
+		// Defense-in-depth: check if offline client is authorized to subscribe/read topicName
+		if h.server != nil {
+			var clientForCheck *mqtt.Client
+			if cl, ok := h.server.Clients.Get(cid); ok {
+				clientForCheck = cl
+			} else {
+				h.mu.RLock()
+				uname := h.clientUsernames[cid]
+				h.mu.RUnlock()
+				clientForCheck = &mqtt.Client{
+					ID: cid,
+					Properties: mqtt.ClientProperties{
+						Username: []byte(uname),
+					},
+				}
+			}
+			if !h.server.Hooks().OnACLCheck(clientForCheck, topicName, false) {
+				continue
+			}
+		}
+
 		live = append(live, cid)
 	}
 	return live, nil
@@ -173,8 +206,10 @@ func (h *QueueHook) OnSessionEstablished(cl *mqtt.Client, _ packets.Packet) {
 	h.mu.Lock()
 	if persistent {
 		h.persistent[cl.ID] = true
+		h.clientUsernames[cl.ID] = string(cl.Properties.Username)
 	} else {
 		delete(h.persistent, cl.ID)
+		delete(h.clientUsernames, cl.ID)
 	}
 	delete(h.offline, cl.ID)
 	h.mu.Unlock()
@@ -206,6 +241,15 @@ func (h *QueueHook) OnSessionEstablished(cl *mqtt.Client, _ packets.Packet) {
 			return
 		}
 		for _, m := range batch {
+			// Defense-in-depth: verify ACL authorization before writing packet to reconnected client
+			if h.server != nil && !h.server.Hooks().OnACLCheck(cl, m.TopicName, false) {
+				h.logger.Warn("queue hook: dropping queued message due to ACL denial on replay", "client", cl.ID, "topic", m.TopicName)
+				if err := h.store.Queue.Ack(ctx, cl.ID, m.MessageUUID); err != nil {
+					h.logger.Warn("queue hook: ack unauthorized message failed", "client", cl.ID, "uuid", m.MessageUUID, "err", err)
+				}
+				continue
+			}
+
 			pk := packets.Packet{
 				FixedHeader: packets.FixedHeader{
 					Type:   packets.Publish,
@@ -241,8 +285,10 @@ func (h *QueueHook) OnDisconnect(cl *mqtt.Client, _ error, expire bool) {
 	if expire {
 		delete(h.persistent, cl.ID)
 		delete(h.offline, cl.ID)
+		delete(h.clientUsernames, cl.ID)
 	} else if h.persistent[cl.ID] {
 		h.offline[cl.ID] = struct{}{}
+		h.clientUsernames[cl.ID] = string(cl.Properties.Username)
 	}
 	h.mu.Unlock()
 }
@@ -251,5 +297,6 @@ func (h *QueueHook) OnClientExpired(cl *mqtt.Client) {
 	h.mu.Lock()
 	delete(h.persistent, cl.ID)
 	delete(h.offline, cl.ID)
+	delete(h.clientUsernames, cl.ID)
 	h.mu.Unlock()
 }

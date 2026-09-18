@@ -309,6 +309,13 @@ func (cl *Client) ResendInflightMessages(force bool) error {
 
 	for _, tk := range cl.State.Inflight.GetAll(false) {
 		if tk.FixedHeader.Type == packets.Publish {
+			if !cl.ops.hooks.OnACLCheck(cl, tk.TopicName, false) {
+				if ok := cl.State.Inflight.Delete(tk.PacketID); ok {
+					cl.ops.hooks.OnQosDropped(cl, tk)
+					atomic.AddInt64(&cl.ops.info.Inflight, -1)
+				}
+				continue
+			}
 			tk.FixedHeader.Dup = true // [MQTT-3.3.1-1] [MQTT-3.3.1-3]
 		}
 
