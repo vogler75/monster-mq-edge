@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -24,6 +25,11 @@ type Server struct {
 	logger     *slog.Logger
 	mcpServer  *mcp.Server
 	httpServer *http.Server
+
+	mu      sync.Mutex
+	started bool
+	stopped bool
+	done    chan struct{}
 }
 
 func NewServer(cfg *config.Config, storage *stores.Storage, archives *archive.Manager, authCache *auth.Cache, publishFn func(topic string, payload []byte, retain bool, qos byte) error, logger *slog.Logger) *Server {
@@ -42,19 +48,15 @@ func NewServer(cfg *config.Config, storage *stores.Storage, archives *archive.Ma
 		publishFn: publishFn,
 		logger:    logger,
 		mcpServer: mcpSrv,
+		done:      make(chan struct{}),
 	}
 
-	s.registerTools()
-	return s
-}
-
-func (s *Server) Start() error {
 	opts := &mcp.StreamableHTTPOptions{
 		Stateless:    true,
 		JSONResponse: true,
 	}
 	handler := mcp.NewStreamableHTTPHandler(func(req *http.Request) *mcp.Server {
-		return s.mcpServer
+		return mcpSrv
 	}, opts)
 
 	mux := http.NewServeMux()
@@ -62,10 +64,29 @@ func (s *Server) Start() error {
 	mux.Handle("/mcp/", s.authMiddleware(handler))
 
 	s.httpServer = &http.Server{
-		Addr:              fmt.Sprintf(":%d", s.cfg.MCP.Port),
+		Addr:              fmt.Sprintf(":%d", cfg.MCP.Port),
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+
+	s.registerTools()
+	return s
+}
+
+func (s *Server) Start() error {
+	s.mu.Lock()
+	if s.stopped {
+		s.mu.Unlock()
+		return nil
+	}
+	if s.started {
+		s.mu.Unlock()
+		return fmt.Errorf("mcp server already started")
+	}
+	s.started = true
+	s.mu.Unlock()
+
+	defer close(s.done)
 
 	s.logger.Info("mcp server listening", "port", s.cfg.MCP.Port)
 	if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -75,10 +96,24 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) Stop(ctx context.Context) error {
-	if s.httpServer == nil {
+	s.mu.Lock()
+	if s.stopped {
+		s.mu.Unlock()
 		return nil
 	}
-	return s.httpServer.Shutdown(ctx)
+	s.stopped = true
+	started := s.started
+	s.mu.Unlock()
+
+	err := s.httpServer.Shutdown(ctx)
+	if started {
+		select {
+		case <-s.done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return err
 }
 
 func (s *Server) authMiddleware(next http.Handler) http.Handler {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	gqlgraphql "github.com/99designs/gqlgen/graphql"
@@ -36,9 +37,19 @@ type Server struct {
 	logger  *slog.Logger
 	router  *chi.Mux
 	httpSrv *http.Server
+
+	mu      sync.Mutex
+	started bool
+	stopped bool
+	done    chan struct{}
 }
 
 func NewServer(cfg *config.Config, resolver *resolvers.Resolver, hmiMgr *hmi.Manager, redfishMgr *redfish.Manager, rest *restapi.Handler, logger *slog.Logger) *Server {
+	var authCache *auth.Cache
+	if resolver != nil {
+		authCache = resolver.AuthCache
+	}
+
 	es := generated.NewExecutableSchema(generated.Config{Resolvers: resolver})
 	gql := handler.New(es)
 	gql.AddTransport(transport.Options{})
@@ -63,7 +74,7 @@ func NewServer(cfg *config.Config, resolver *resolvers.Resolver, hmiMgr *hmi.Man
 			if value == "" {
 				value, _ = payload["authorization"].(string)
 			}
-			return authenticateContext(ctx, value, cfg, resolver.AuthCache)
+			return authenticateContext(ctx, value, cfg, authCache)
 		},
 	})
 	gql.SetQueryCache(lru.New[*ast.QueryDocument](100))
@@ -100,7 +111,7 @@ func NewServer(cfg *config.Config, resolver *resolvers.Resolver, hmiMgr *hmi.Man
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
 	r.Use(corsMiddleware)
-	authenticatedGQL := httpAuthMiddleware(cfg, resolver.AuthCache, gql)
+	authenticatedGQL := httpAuthMiddleware(cfg, authCache, gql)
 	r.Handle("/graphql", authenticatedGQL)
 	r.Handle("/graphql/", authenticatedGQL)
 	// Apollo-style alias the existing dashboard might use.
@@ -207,7 +218,15 @@ func NewServer(cfg *config.Config, resolver *resolvers.Resolver, hmiMgr *hmi.Man
 	})
 
 	return &Server{
-		cfg: cfg, logger: logger, router: r,
+		cfg:    cfg,
+		logger: logger,
+		router: r,
+		httpSrv: &http.Server{
+			Addr:              fmt.Sprintf(":%d", cfg.GraphQL.Port),
+			Handler:           r,
+			ReadHeaderTimeout: 10 * time.Second,
+		},
+		done: make(chan struct{}),
 	}
 }
 
@@ -267,11 +286,20 @@ func rootFields(selections ast.SelectionSet) []*ast.Field {
 }
 
 func (s *Server) Start() error {
-	s.httpSrv = &http.Server{
-		Addr:              fmt.Sprintf(":%d", s.cfg.GraphQL.Port),
-		Handler:           s.router,
-		ReadHeaderTimeout: 10 * time.Second,
+	s.mu.Lock()
+	if s.stopped {
+		s.mu.Unlock()
+		return nil
 	}
+	if s.started {
+		s.mu.Unlock()
+		return fmt.Errorf("graphql server already started")
+	}
+	s.started = true
+	s.mu.Unlock()
+
+	defer close(s.done)
+
 	s.logger.Info("graphql listening", "port", s.cfg.GraphQL.Port)
 	if err := s.httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return err
@@ -280,10 +308,24 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) Stop(ctx context.Context) error {
-	if s.httpSrv == nil {
+	s.mu.Lock()
+	if s.stopped {
+		s.mu.Unlock()
 		return nil
 	}
-	return s.httpSrv.Shutdown(ctx)
+	s.stopped = true
+	started := s.started
+	s.mu.Unlock()
+
+	err := s.httpSrv.Shutdown(ctx)
+	if started {
+		select {
+		case <-s.done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return err
 }
 
 func corsMiddleware(next http.Handler) http.Handler {
