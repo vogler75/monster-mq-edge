@@ -97,7 +97,7 @@ type Hook interface {
 	OnSubscribed(cl *Client, pk packets.Packet, reasonCodes []byte)
 	OnSelectSubscribers(subs *Subscribers, pk packets.Packet) *Subscribers
 	OnUnsubscribe(cl *Client, pk packets.Packet) packets.Packet
-	OnUnsubscribed(cl *Client, pk packets.Packet)
+	OnUnsubscribed(cl *Client, pk packets.Packet, reasonCodes []byte)
 	OnPublish(cl *Client, pk packets.Packet) (packets.Packet, error)
 	OnPublished(cl *Client, pk packets.Packet)
 	OnPublishDropped(cl *Client, pk packets.Packet)
@@ -386,10 +386,10 @@ func (h *Hooks) OnUnsubscribe(cl *Client, pk packets.Packet) packets.Packet {
 }
 
 // OnUnsubscribed is called when a client unsubscribes from one or more filters.
-func (h *Hooks) OnUnsubscribed(cl *Client, pk packets.Packet) {
+func (h *Hooks) OnUnsubscribed(cl *Client, pk packets.Packet, reasonCodes []byte) {
 	for _, hook := range h.GetAll() {
 		if hook.Provides(OnUnsubscribed) {
-			hook.OnUnsubscribed(cl, pk)
+			hook.OnUnsubscribed(cl, pk, reasonCodes)
 		}
 	}
 }
@@ -834,7 +834,7 @@ func (h *HookBase) OnUnsubscribe(cl *Client, pk packets.Packet) packets.Packet {
 }
 
 // OnUnsubscribed is called when a client unsubscribes from one or more filters.
-func (h *HookBase) OnUnsubscribed(cl *Client, pk packets.Packet) {}
+func (h *HookBase) OnUnsubscribed(cl *Client, pk packets.Packet, reasonCodes []byte) {}
 
 // OnPublish is called when a client publishes a message.
 func (h *HookBase) OnPublish(cl *Client, pk packets.Packet) (packets.Packet, error) {

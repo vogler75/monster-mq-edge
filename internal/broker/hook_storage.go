@@ -31,6 +31,7 @@ type StorageHook struct {
 	nodeID           string
 	metrics          MetricsCounter
 	retainedInMemory bool // when true, OnRetainMessage skips DB persistence
+	server           *mqtt.Server
 }
 
 // ArchiveDispatcher receives every published message for archive-group fanout.
@@ -48,8 +49,8 @@ type MetricsCounter interface {
 	IncOut()
 }
 
-func NewStorageHook(s *stores.Storage, bus *pubsub.Bus, subs *topic.SubscriptionIndex, dispatcher ArchiveDispatcher, nodeID string, logger *slog.Logger, m MetricsCounter, retainedInMemory bool) *StorageHook {
-	return &StorageHook{store: s, bus: bus, subs: subs, archives: dispatcher, logger: logger, nodeID: nodeID, metrics: m, retainedInMemory: retainedInMemory}
+func NewStorageHook(s *stores.Storage, bus *pubsub.Bus, subs *topic.SubscriptionIndex, dispatcher ArchiveDispatcher, nodeID string, logger *slog.Logger, m MetricsCounter, retainedInMemory bool, server *mqtt.Server) *StorageHook {
+	return &StorageHook{store: s, bus: bus, subs: subs, archives: dispatcher, logger: logger, nodeID: nodeID, metrics: m, retainedInMemory: retainedInMemory, server: server}
 }
 
 func (h *StorageHook) ID() string { return "monstermq-storage" }
@@ -81,10 +82,32 @@ func (h *StorageHook) OnSessionEstablished(cl *mqtt.Client, _ packets.Packet) {
 		UpdateTime:      time.Now(),
 		ClientAddress:   cl.Net.Remote,
 		ProtocolVersion: pv,
-		Information:     fmt.Sprintf(`{"ProtocolVersion":%d}`, pv),
+		Information:     fmt.Sprintf(`{"ProtocolVersion":%d,"Username":%q}`, pv, string(cl.Properties.Username)),
 	}
 	if err := h.store.Sessions.SetClient(context.Background(), info); err != nil {
 		h.logger.Warn("session persist failed", "client", cl.ID, "err", err)
+	}
+
+	if !cl.Properties.Clean {
+		ctx := context.Background()
+		persistedSubs, err := h.store.Subscriptions.GetSubscriptionsForClient(ctx, cl.ID)
+		if err == nil && len(persistedSubs) > 0 {
+			var toDelete []stores.MqttSubscription
+			for _, sub := range persistedSubs {
+				if !mqtt.IsValidFilter(sub.TopicFilter, false) || (h.server != nil && !h.server.Hooks().OnACLCheck(cl, sub.TopicFilter, false)) {
+					toDelete = append(toDelete, sub)
+					if h.subs != nil {
+						h.subs.Unsubscribe(cl.ID, sub.TopicFilter)
+					}
+				}
+			}
+			if len(toDelete) > 0 {
+				h.logger.Warn("pruned rejected or invalid persisted subscriptions", "client", cl.ID, "count", len(toDelete))
+				if err := h.store.Subscriptions.DelSubscriptions(ctx, toDelete); err != nil {
+					h.logger.Warn("failed to delete rejected subscriptions from store", "client", cl.ID, "err", err)
+				}
+			}
+		}
 	}
 }
 
@@ -106,36 +129,55 @@ func (h *StorageHook) OnClientExpired(cl *mqtt.Client) {
 	}
 }
 
-func (h *StorageHook) OnSubscribed(cl *mqtt.Client, pk packets.Packet, _ []byte) {
+func (h *StorageHook) OnSubscribed(cl *mqtt.Client, pk packets.Packet, reasonCodes []byte) {
 	rows := make([]stores.MqttSubscription, 0, len(pk.Filters))
-	for _, f := range pk.Filters {
+	for i, f := range pk.Filters {
+		granted := false
+		grantedQoS := f.Qos
+		if len(reasonCodes) == 0 {
+			granted = true
+		} else if i < len(reasonCodes) && reasonCodes[i] <= packets.CodeGrantedQos2.Code {
+			granted = true
+			grantedQoS = reasonCodes[i]
+		}
+		if !granted {
+			continue
+		}
+
 		rows = append(rows, stores.MqttSubscription{
 			ClientID:          cl.ID,
 			TopicFilter:       f.Filter,
-			QoS:               f.Qos,
+			QoS:               grantedQoS,
 			NoLocal:           f.NoLocal,
 			RetainAsPublished: f.RetainAsPublished,
 			RetainHandling:    f.RetainHandling,
 		})
 		if h.subs != nil {
-			h.subs.Subscribe(cl.ID, f.Filter, f.Qos)
+			h.subs.Subscribe(cl.ID, f.Filter, grantedQoS)
 		}
 	}
-	if err := h.store.Subscriptions.AddSubscriptions(context.Background(), rows); err != nil {
-		h.logger.Warn("subscriptions persist failed", "client", cl.ID, "err", err)
+	if len(rows) > 0 {
+		if err := h.store.Subscriptions.AddSubscriptions(context.Background(), rows); err != nil {
+			h.logger.Warn("subscriptions persist failed", "client", cl.ID, "err", err)
+		}
 	}
 }
 
-func (h *StorageHook) OnUnsubscribed(cl *mqtt.Client, pk packets.Packet) {
+func (h *StorageHook) OnUnsubscribed(cl *mqtt.Client, pk packets.Packet, reasonCodes []byte) {
 	rows := make([]stores.MqttSubscription, 0, len(pk.Filters))
-	for _, f := range pk.Filters {
+	for i, f := range pk.Filters {
+		if len(reasonCodes) > 0 && i < len(reasonCodes) && reasonCodes[i] >= packets.ErrUnspecifiedError.Code {
+			continue
+		}
 		rows = append(rows, stores.MqttSubscription{ClientID: cl.ID, TopicFilter: f.Filter})
 		if h.subs != nil {
 			h.subs.Unsubscribe(cl.ID, f.Filter)
 		}
 	}
-	if err := h.store.Subscriptions.DelSubscriptions(context.Background(), rows); err != nil {
-		h.logger.Warn("subscriptions delete failed", "client", cl.ID, "err", err)
+	if len(rows) > 0 {
+		if err := h.store.Subscriptions.DelSubscriptions(context.Background(), rows); err != nil {
+			h.logger.Warn("subscriptions delete failed", "client", cl.ID, "err", err)
+		}
 	}
 }
 

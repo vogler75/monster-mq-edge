@@ -164,7 +164,7 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 		counter = collector
 	}
 	retainedInMemory := cfg.RetainedStore() == config.StoreMemory
-	storageHook := NewStorageHook(storage, bus, subs, archives, cfg.NodeID, logger, counter, retainedInMemory)
+	storageHook := NewStorageHook(storage, bus, subs, archives, cfg.NodeID, logger, counter, retainedInMemory, server)
 	if err := server.AddHook(storageHook, nil); err != nil {
 		return nil, fmt.Errorf("add storage hook: %w", err)
 	}
@@ -420,6 +420,9 @@ func configureMetricsStore(cfg *config.Config, storage *stores.Storage) error {
 // scanning the storage layer per published message.
 func hydrateSubscriptionIndex(ctx context.Context, subs *topic.SubscriptionIndex, storage *stores.Storage) error {
 	return storage.Subscriptions.IterateSubscriptions(ctx, func(s stores.MqttSubscription) bool {
+		if !mqtt.IsValidFilter(s.TopicFilter, false) {
+			return true
+		}
 		subs.Subscribe(s.ClientID, s.TopicFilter, s.QoS)
 		return true
 	})
