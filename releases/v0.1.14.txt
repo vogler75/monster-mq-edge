@@ -1,0 +1,25 @@
+Release v0.1.14
+Built from commit: 9ac38d8
+Date: 2026-09-18 20:24:09
+
+Changes since v0.1.13:
+---
+9ac38d8 fix(graphql): synchronize server startup and shutdown to prevent races (#15)
+d7eafee fix(hmi): validate dashboard names and enforce path containment (#14)
+38bf3cf fix(sqlite): query payload_json in GetHistory when payload_blob is null (#13)
+23a7d06 fix: enforce MessageExpiryInterval and purge for retained messages (#12)
+da97cb9 fix: enforce MaxMessageSize on MQTT server and boundary packets (#11)
+2acfa9c fix: persist QoS 1 and 2 queued messages until client acknowledgment (#10)
+292d032 fix: restore persistent subscriptions into live broker after restart (#9)
+1e836e4 fix: reject persistence and queued delivery for denied subscriptions (#8)
+5138caf feat(auth): add AllowAnonymousLocalhost for unauthenticated 127.0.0.1 access
+5287695 docs(camera): document camera snapshot bridge in README
+6a9eedb feat(rest): add edge REST API with wildcard and raw reads
+63f09be feat(camera): add per-camera H.264 decode mode and reduce CPU use
+80efee0 feat(camera): add native Go H.264 decoding for RTSP snapshots
+db04ef3 feat(camera): add WebSocket MJPEG streaming
+4d07c1b fix(mcp): validate bearer sessions and enforce ACLs
+f1832af fix(graphql): enforce authentication and authorization
+97cfe90 Add MJPEG camera bridge and snapshot topics
+bbef692 Create plan-rtsp-camera-snapshots.md
+be8f1ea fix(publish): do not rebuild debian packages during publish
