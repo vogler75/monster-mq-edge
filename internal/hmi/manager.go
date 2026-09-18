@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +18,20 @@ import (
 	"monstermq.io/edge/internal/config"
 	"monstermq.io/edge/internal/stores"
 )
+
+var validDashboardNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
+
+// ValidateDashboardName ensures the dashboard identifier is safe and cannot traverse directories.
+func ValidateDashboardName(name string) error {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return fmt.Errorf("dashboard name cannot be empty")
+	}
+	if !validDashboardNamePattern.MatchString(trimmed) {
+		return fmt.Errorf("invalid dashboard name %q: must match [A-Za-z0-9][A-Za-z0-9_-]{0,63}", name)
+	}
+	return nil
+}
 
 type HmiConfig struct {
 	UrlPath     string `json:"urlPath"`
@@ -189,6 +204,9 @@ func (m *Manager) GetMainDashboardName() string {
 }
 
 func (m *Manager) IsHmiEnabled(name string) bool {
+	if err := ValidateDashboardName(name); err != nil {
+		return false
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -259,6 +277,9 @@ func (m *Manager) ListHmis() ([]*HmiDevice, error) {
 }
 
 func (m *Manager) GetHmi(name string) (*HmiDevice, error) {
+	if err := ValidateDashboardName(name); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -442,6 +463,9 @@ func (m *Manager) saveHmiDeviceLocked(name string, nodeID string, enabled *bool,
 }
 
 func (m *Manager) DeleteHmiDevice(name string) error {
+	if err := ValidateDashboardName(name); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -461,6 +485,9 @@ func (m *Manager) DeleteHmiDevice(name string) error {
 }
 
 func (m *Manager) ToggleHmiDevice(name string, enabled bool) (*HmiDevice, error) {
+	if err := ValidateDashboardName(name); err != nil {
+		return nil, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -478,6 +505,9 @@ func (m *Manager) ToggleHmiDevice(name string, enabled bool) (*HmiDevice, error)
 }
 
 func (m *Manager) ReassignHmiDevice(name string, nodeID string) (*HmiDevice, error) {
+	if err := ValidateDashboardName(name); err != nil {
+		return nil, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -494,41 +524,99 @@ func (m *Manager) ReassignHmiDevice(name string, nodeID string) (*HmiDevice, err
 	return m.getHmiStatsLocked(name, meta.MainDashboard, stores.DeviceConfig{Name: name, NodeID: nodeID})
 }
 
+// ResolveDashboardPath validates dashName and relative path, returning the safe absolute target path
+// contained within the dashboard directory.
+func (m *Manager) ResolveDashboardPath(dashName, relPath string) (string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.resolveDashboardPathLocked(dashName, relPath)
+}
+
 func (m *Manager) resolveDashboardPathLocked(dashName, relPath string) (string, error) {
-	basePath, err := filepath.Abs(filepath.Join(m.baseDir, dashName))
+	if err := ValidateDashboardName(dashName); err != nil {
+		return "", err
+	}
+
+	cleanBase, err := filepath.Abs(filepath.Clean(filepath.Join(m.baseDir, dashName)))
 	if err != nil {
 		return "", err
 	}
 
-	targetPath, err := filepath.Abs(filepath.Join(basePath, relPath))
-	if err != nil {
-		return "", err
-	}
+	// Normalize path separators: convert backslashes to slashes
+	normalizedRel := strings.ReplaceAll(relPath, "\\", "/")
+	// If caller passes an absolute path or leading slash, clean and strip leading slash, but preserve traversal
+	normalizedRel = strings.TrimPrefix(normalizedRel, "/")
 
-	if !strings.HasPrefix(targetPath, basePath) {
+	targetPath := filepath.Clean(filepath.Join(cleanBase, filepath.FromSlash(normalizedRel)))
+
+	// Lexical containment check
+	relToDash, err := filepath.Rel(cleanBase, targetPath)
+	if err != nil || relToDash == ".." || strings.HasPrefix(relToDash, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("invalid path: access outside of dashboard directory forbidden")
+	}
+
+	// Also verify containment within m.baseDir
+	cleanRoot, err := filepath.Abs(filepath.Clean(m.baseDir))
+	if err != nil {
+		return "", err
+	}
+	relToRoot, err := filepath.Rel(cleanRoot, targetPath)
+	if err != nil || relToRoot == ".." || strings.HasPrefix(relToRoot, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("invalid path: access outside of HMI root forbidden")
+	}
+
+	// Symlink containment check for existing paths
+	if realTarget, err := filepath.EvalSymlinks(targetPath); err == nil {
+		if realBase, err := filepath.EvalSymlinks(cleanBase); err == nil {
+			realRel, err := filepath.Rel(realBase, realTarget)
+			if err != nil || realRel == ".." || strings.HasPrefix(realRel, ".."+string(filepath.Separator)) {
+				return "", fmt.Errorf("invalid path: symlink target outside of dashboard directory forbidden")
+			}
+		}
 	}
 
 	return targetPath, nil
 }
 
 func (m *Manager) ListDashboardFiles(dashName string) ([]DashboardFile, error) {
+	if err := ValidateDashboardName(dashName); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	dashDir := filepath.Join(m.baseDir, dashName)
+	dashDir, err := filepath.Abs(filepath.Clean(filepath.Join(m.baseDir, dashName)))
+	if err != nil {
+		return nil, err
+	}
 	if _, err := os.Stat(dashDir); err != nil {
 		return nil, fmt.Errorf("dashboard %q not found", dashName)
 	}
 
+	realDashDir, _ := filepath.EvalSymlinks(dashDir)
+
 	var files []DashboardFile
-	err := filepath.Walk(dashDir, func(path string, info os.FileInfo, err error) error {
+	err = filepath.Walk(dashDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
 			return nil
 		}
-		rel, _ := filepath.Rel(dashDir, path)
+
+		// Check if file is a symlink or inside a symlinked dir escaping dashboard
+		if realDashDir != "" {
+			if realPath, err := filepath.EvalSymlinks(path); err == nil {
+				realRel, err := filepath.Rel(realDashDir, realPath)
+				if err != nil || realRel == ".." || strings.HasPrefix(realRel, ".."+string(filepath.Separator)) {
+					return nil // omit escaping symlinks
+				}
+			}
+		}
+
+		rel, err := filepath.Rel(dashDir, path)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return nil
+		}
 		files = append(files, DashboardFile{
-			Path:      rel,
+			Path:      filepath.ToSlash(rel),
 			SizeBytes: info.Size(),
 		})
 		return nil
@@ -579,6 +667,10 @@ func (m *Manager) DeleteDashboardFile(dashName, relPath string) error {
 }
 
 func (m *Manager) UploadDashboardZip(name string, zipBase64 string, setAsMain bool) (*HmiDevice, error) {
+	if err := ValidateDashboardName(name); err != nil {
+		return nil, err
+	}
+
 	zipData, err := base64.StdEncoding.DecodeString(zipBase64)
 	if err != nil {
 		return nil, fmt.Errorf("invalid base64 encoding: %w", err)
@@ -592,11 +684,6 @@ func (m *Manager) UploadDashboardZip(name string, zipBase64 string, setAsMain bo
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	name = strings.TrimSpace(name)
-	if name == "" || strings.Contains(name, "/") || strings.Contains(name, "\\") || strings.HasPrefix(name, ".") {
-		return nil, fmt.Errorf("invalid dashboard name %q", name)
-	}
-
 	dashDir := filepath.Join(m.baseDir, name)
 	_ = os.RemoveAll(dashDir)
 	if err := os.MkdirAll(dashDir, 0755); err != nil {
@@ -604,6 +691,11 @@ func (m *Manager) UploadDashboardZip(name string, zipBase64 string, setAsMain bo
 	}
 
 	for _, f := range r.File {
+		// Reject zip entries that are symbolic links
+		if f.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
+
 		targetPath, err := m.resolveDashboardPathLocked(name, f.Name)
 		if err != nil {
 			continue
@@ -618,7 +710,7 @@ func (m *Manager) UploadDashboardZip(name string, zipBase64 string, setAsMain bo
 			continue
 		}
 
-		outFile, err := os.OpenFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
+		outFile, err := os.OpenFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode()&0755)
 		if err != nil {
 			continue
 		}
@@ -648,28 +740,59 @@ func (m *Manager) UploadDashboardZip(name string, zipBase64 string, setAsMain bo
 }
 
 func (m *Manager) ExportDashboardZip(name string) (string, error) {
+	if err := ValidateDashboardName(name); err != nil {
+		return "", err
+	}
+
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	dashDir := filepath.Join(m.baseDir, name)
+	cleanBase, err := filepath.Abs(filepath.Clean(filepath.Join(m.baseDir, name)))
+	if err != nil {
+		return "", err
+	}
+
+	// Verify dashDir is inside baseDir
+	cleanRoot, err := filepath.Abs(filepath.Clean(m.baseDir))
+	if err != nil {
+		return "", err
+	}
+	relBase, err := filepath.Rel(cleanRoot, cleanBase)
+	if err != nil || relBase == ".." || strings.HasPrefix(relBase, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("dashboard %q outside root", name)
+	}
+
+	dashDir := cleanBase
 	if _, err := os.Stat(dashDir); err != nil {
 		return "", fmt.Errorf("dashboard %q not found", name)
 	}
 
+	realDashDir, _ := filepath.EvalSymlinks(dashDir)
+
 	var buf bytes.Buffer
 	w := zip.NewWriter(&buf)
 
-	err := filepath.Walk(dashDir, func(path string, info os.FileInfo, err error) error {
+	err = filepath.Walk(dashDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
 			return nil
 		}
 
+		// Don't export symlinks pointing outside dashboard directory
+		if realDashDir != "" {
+			if realPath, err := filepath.EvalSymlinks(path); err == nil {
+				realRel, err := filepath.Rel(realDashDir, realPath)
+				if err != nil || realRel == ".." || strings.HasPrefix(realRel, ".."+string(filepath.Separator)) {
+					return nil // skip external symlinks
+				}
+			}
+		}
+
 		rel, err := filepath.Rel(dashDir, path)
-		if err != nil {
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return nil
 		}
 
-		f, err := w.Create(rel)
+		f, err := w.Create(filepath.ToSlash(rel))
 		if err != nil {
 			return err
 		}
