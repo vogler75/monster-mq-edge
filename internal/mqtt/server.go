@@ -1135,6 +1135,10 @@ func (s *Server) publishToClient(cl *Client, sub packets.Subscription, pk packet
 	}
 
 	if out.FixedHeader.Qos > 0 {
+		if (cl.Net.Conn == nil || cl.Closed()) && s.hooks.Provides(StoredQueuedMessages) {
+			return out, packets.CodeDisconnect
+		}
+
 		if cl.State.Inflight.Len() >= int(s.Options.Capabilities.MaximumInflight) {
 			// add hook?
 			atomic.AddInt64(&s.Info.InflightDropped, 1)
