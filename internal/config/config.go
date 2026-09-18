@@ -339,6 +339,9 @@ func (c *Config) Validate() error {
 			c.NodeID = "edge"
 		}
 	}
+	if c.MaxMessageSize < 0 {
+		return fmt.Errorf("MaxMessageSize must be non-negative")
+	}
 	if c.DefaultStoreType == "" {
 		return fmt.Errorf("DefaultStoreType is required")
 	}

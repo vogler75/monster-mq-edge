@@ -127,7 +127,15 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 	}
 
 	// 4. Mochi broker
-	server := mqtt.New(&mqtt.Options{InlineClient: true, Logger: logger})
+	caps := mqtt.NewDefaultServerCapabilities()
+	if cfg.MaxMessageSize > 0 {
+		caps.MaximumPacketSize = uint32(cfg.MaxMessageSize)
+	}
+	server := mqtt.New(&mqtt.Options{
+		InlineClient: true,
+		Logger:       logger,
+		Capabilities: caps,
+	})
 
 	if cfg.UserManagement.Enabled {
 		authHook := NewAuthHook(
