@@ -483,6 +483,13 @@ func (s *Server) attachClient(cl *Client, listener string) error {
 
 	err = cl.Read(s.receivePacket)
 	if err != nil {
+		if !cl.Closed() {
+			if code, ok := err.(packets.Code); ok &&
+				cl.Properties.ProtocolVersion == 5 &&
+				code.Code >= packets.ErrUnspecifiedError.Code {
+				_ = s.DisconnectClient(cl, code)
+			}
+		}
 		s.sendLWT(cl)
 		cl.Stop(err)
 	} else {
