@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	gqlgraphql "github.com/99designs/gqlgen/graphql"
@@ -41,9 +42,18 @@ type Server struct {
 	tlsConfig *tls.Config
 	httpSrv   *http.Server
 	httpsSrv  *http.Server
+
+	mu      sync.Mutex
+	started bool
+	stopped bool
+	done    chan struct{}
 }
 
 func NewServer(cfg *config.Config, resolver *resolvers.Resolver, hmiMgr *hmi.Manager, redfishMgr *redfish.Manager, rest *restapi.Handler, mcpHandler http.Handler, tlsConfig *tls.Config, logger *slog.Logger) *Server {
+	var authCache *auth.Cache
+	if resolver != nil {
+		authCache = resolver.AuthCache
+	}
 	es := generated.NewExecutableSchema(generated.Config{Resolvers: resolver})
 	gql := handler.New(es)
 	gql.AddTransport(transport.Options{})
@@ -68,7 +78,7 @@ func NewServer(cfg *config.Config, resolver *resolvers.Resolver, hmiMgr *hmi.Man
 			if value == "" {
 				value, _ = payload["authorization"].(string)
 			}
-			return authenticateContext(ctx, value, cfg, resolver.AuthCache)
+			return authenticateContext(ctx, value, cfg, authCache)
 		},
 	})
 	gql.SetQueryCache(lru.New[*ast.QueryDocument](100))
@@ -108,7 +118,7 @@ func NewServer(cfg *config.Config, resolver *resolvers.Resolver, hmiMgr *hmi.Man
 	if cfg.GraphQL.TLSEnabled() && cfg.GraphQL.RequireHTTPSFromOutside {
 		r.Use(requireHTTPSMiddleware(cfg))
 	}
-	authenticatedGQL := httpAuthMiddleware(cfg, resolver.AuthCache, gql)
+	authenticatedGQL := httpAuthMiddleware(cfg, authCache, gql)
 	r.Handle("/graphql", authenticatedGQL)
 	r.Handle("/graphql/", authenticatedGQL)
 	// Apollo-style alias the existing dashboard might use.
@@ -223,8 +233,41 @@ func NewServer(cfg *config.Config, resolver *resolvers.Resolver, hmiMgr *hmi.Man
 		r.Handle("/*", dashHandler)
 	}
 
+	var httpSrv *http.Server
+	if cfg.GraphQL.HTTPEnabled() {
+		httpAddr := cfg.GraphQL.Address
+		if httpAddr == "" {
+			httpAddr = "0.0.0.0"
+		}
+		httpSrv = &http.Server{
+			Addr:              fmt.Sprintf("%s:%d", httpAddr, cfg.GraphQL.Port),
+			Handler:           r,
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+	}
+
+	var httpsSrv *http.Server
+	if cfg.GraphQL.TLSEnabled() && tlsConfig != nil {
+		tlsAddr := cfg.GraphQL.TLSAddress
+		if tlsAddr == "" {
+			tlsAddr = "0.0.0.0"
+		}
+		httpsSrv = &http.Server{
+			Addr:              fmt.Sprintf("%s:%d", tlsAddr, cfg.GraphQL.TLSPort),
+			Handler:           r,
+			TLSConfig:         tlsConfig,
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+	}
+
 	return &Server{
-		cfg: cfg, logger: logger, router: r, tlsConfig: tlsConfig,
+		cfg:       cfg,
+		logger:    logger,
+		router:    r,
+		tlsConfig: tlsConfig,
+		httpSrv:   httpSrv,
+		httpsSrv:  httpsSrv,
+		done:      make(chan struct{}),
 	}
 }
 
@@ -284,21 +327,26 @@ func rootFields(selections ast.SelectionSet) []*ast.Field {
 }
 
 func (s *Server) Start() error {
+	s.mu.Lock()
+	if s.stopped {
+		s.mu.Unlock()
+		return nil
+	}
+	if s.started {
+		s.mu.Unlock()
+		return fmt.Errorf("graphql server already started")
+	}
+	s.started = true
+	s.mu.Unlock()
+
+	defer close(s.done)
+
 	errCh := make(chan error, 2)
 	servers := 0
 
-	if s.cfg.GraphQL.HTTPEnabled() {
+	if s.httpSrv != nil {
 		servers++
-		httpAddr := s.cfg.GraphQL.Address
-		if httpAddr == "" {
-			httpAddr = "0.0.0.0"
-		}
-		s.httpSrv = &http.Server{
-			Addr:              fmt.Sprintf("%s:%d", httpAddr, s.cfg.GraphQL.Port),
-			Handler:           s.router,
-			ReadHeaderTimeout: 10 * time.Second,
-		}
-		s.logger.Info("graphql http listening", "addr", httpAddr, "port", s.cfg.GraphQL.Port)
+		s.logger.Info("graphql http listening", "addr", s.httpSrv.Addr)
 
 		go func() {
 			err := s.httpSrv.ListenAndServe()
@@ -311,20 +359,9 @@ func (s *Server) Start() error {
 		}()
 	}
 
-	if s.cfg.GraphQL.TLSEnabled() && s.tlsConfig != nil {
+	if s.httpsSrv != nil {
 		servers++
-		tlsAddr := s.cfg.GraphQL.TLSAddress
-		if tlsAddr == "" {
-			tlsAddr = "0.0.0.0"
-		}
-		tlsPort := s.cfg.GraphQL.TLSPort
-		s.httpsSrv = &http.Server{
-			Addr:              fmt.Sprintf("%s:%d", tlsAddr, tlsPort),
-			Handler:           s.router,
-			TLSConfig:         s.tlsConfig,
-			ReadHeaderTimeout: 10 * time.Second,
-		}
-		s.logger.Info("graphql https listening", "addr", tlsAddr, "port", tlsPort)
+		s.logger.Info("graphql https listening", "addr", s.httpsSrv.Addr)
 
 		go func() {
 			err := s.httpsSrv.ListenAndServeTLS("", "")
@@ -351,6 +388,15 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) Stop(ctx context.Context) error {
+	s.mu.Lock()
+	if s.stopped {
+		s.mu.Unlock()
+		return nil
+	}
+	s.stopped = true
+	started := s.started
+	s.mu.Unlock()
+
 	var firstErr error
 	if s.httpSrv != nil {
 		if err := s.httpSrv.Shutdown(ctx); err != nil && firstErr == nil {
@@ -360,6 +406,16 @@ func (s *Server) Stop(ctx context.Context) error {
 	if s.httpsSrv != nil {
 		if err := s.httpsSrv.Shutdown(ctx); err != nil && firstErr == nil {
 			firstErr = err
+		}
+	}
+
+	if started {
+		select {
+		case <-s.done:
+		case <-ctx.Done():
+			if firstErr == nil {
+				firstErr = ctx.Err()
+			}
 		}
 	}
 	return firstErr
