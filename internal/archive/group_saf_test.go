@@ -182,6 +182,9 @@ func (m *mockLastValStore) FindMatchingTopics(ctx context.Context, pattern strin
 func (m *mockLastValStore) PurgeOlderThan(ctx context.Context, olderThan time.Time) (stores.PurgeResult, error) {
 	return stores.PurgeResult{}, nil
 }
+func (m *mockLastValStore) PurgeExpired(ctx context.Context) (stores.PurgeResult, error) {
+	return stores.PurgeResult{}, nil
+}
 func (m *mockLastValStore) Close() error { return nil }
 
 func TestGroupReadOnly(t *testing.T) {

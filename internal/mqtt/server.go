@@ -1044,6 +1044,17 @@ func (s *Server) retainMessage(cl *Client, pk packets.Packet) {
 		return
 	}
 
+	if pk.Created == 0 {
+		pk.Created = time.Now().Unix()
+	}
+
+	if pk.Expiry == 0 {
+		if expiry := minimum(s.Options.Capabilities.MaximumMessageExpiryInterval,
+			int64(pk.Properties.MessageExpiryInterval)); expiry > 0 {
+			pk.Expiry = pk.Created + expiry
+		}
+	}
+
 	if s.hooks.Provides(OnSelectRetainedMessages) {
 		var r int64
 		if len(pk.Payload) == 0 {
@@ -1219,7 +1230,11 @@ func (s *Server) publishRetainedToClient(cl *Client, sub packets.Subscription, e
 		pks = s.Topics.Messages(sub.Filter)
 	}
 
+	now := time.Now().Unix()
 	for _, pkv := range pks { // [MQTT-3.8.4-4]
+		if pkv.Expiry > 0 && pkv.Expiry <= now {
+			continue
+		}
 		_, err := s.publishToClient(cl, sub, pkv)
 		if err != nil {
 			s.Log.Debug("failed to publish retained message", "error", err, "client", cl.ID, "listener", cl.Net.Listener, "packet", pkv)

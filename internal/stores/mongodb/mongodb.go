@@ -128,6 +128,13 @@ func docToBrokerMessage(doc bson.M) *stores.BrokerMessage {
 	} else if t, ok := doc["time"].(time.Time); ok {
 		m.Time = t
 	}
+	if v, ok := doc["message_expiry_interval"].(int64); ok {
+		u := uint32(v)
+		m.MessageExpiryInterval = &u
+	} else if v, ok := doc["message_expiry_interval"].(int32); ok {
+		u := uint32(v)
+		m.MessageExpiryInterval = &u
+	}
 	return m
 }
 
@@ -229,6 +236,12 @@ func (s *MessageStore) FindMatchingMessages(ctx context.Context, pattern string,
 			continue
 		}
 		msg := docToBrokerMessage(doc)
+		now := time.Now().UnixMilli()
+		if msg.MessageExpiryInterval != nil && *msg.MessageExpiryInterval > 0 && !msg.Time.IsZero() {
+			if (now-msg.Time.UnixMilli())/1000 >= int64(*msg.MessageExpiryInterval) {
+				continue
+			}
+		}
 		msg.IsRetain = true
 		if !yield(*msg) {
 			return nil
@@ -260,6 +273,24 @@ func (s *MessageStore) FindMatchingTopics(ctx context.Context, pattern string, y
 
 func (s *MessageStore) PurgeOlderThan(ctx context.Context, t time.Time) (stores.PurgeResult, error) {
 	res, err := s.coll().DeleteMany(ctx, bson.M{"time": bson.M{"$lt": t.UTC()}})
+	if err != nil {
+		return stores.PurgeResult{Err: err}, err
+	}
+	return stores.PurgeResult{DeletedRows: res.DeletedCount}, nil
+}
+
+func (s *MessageStore) PurgeExpired(ctx context.Context) (stores.PurgeResult, error) {
+	now := time.Now().UTC()
+	filter := bson.M{
+		"message_expiry_interval": bson.M{"$gt": 0},
+		"$expr": bson.M{
+			"$lte": []any{
+				bson.M{"$add": []any{"$time", bson.M{"$multiply": []any{"$message_expiry_interval", 1000}}}},
+				now,
+			},
+		},
+	}
+	res, err := s.coll().DeleteMany(ctx, filter)
 	if err != nil {
 		return stores.PurgeResult{Err: err}, err
 	}

@@ -55,9 +55,11 @@ type Server struct {
 	gqlSrv      *gql.Server
 	mcpSrv      *mcp.Server
 	redfishMgr  *redfish.Manager
-	hostMonitor *hostinfo.Collector
-	metricsCtx  context.Context
-	metricsStop context.CancelFunc
+	hostMonitor  *hostinfo.Collector
+	storageHook  *StorageHook
+	retainedStop context.CancelFunc
+	metricsCtx   context.Context
+	metricsStop  context.CancelFunc
 }
 
 func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, error) {
@@ -349,6 +351,7 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 		storage: storage, bus: bus, subs: subs, archives: archives, authCache: authCache,
 		collector: collector, bridges: bridges, winCCUa: winCCUa, winCCOa: winCCOa, rtspCameras: rtspCameras, gqlSrv: gqlSrv,
 		mcpSrv: mcpSrv, redfishMgr: redfishMgr, hostMonitor: hostMonitor,
+		storageHook: storageHook,
 	}, nil
 }
 
@@ -459,6 +462,9 @@ func (s *Server) Serve() error {
 	if s.archives != nil {
 		s.archives.RunRetention(context.Background())
 	}
+	if s.storageHook != nil {
+		s.retainedStop = s.storageHook.StartRetention(context.Background(), time.Second)
+	}
 	if s.bridges != nil {
 		if err := s.bridges.Start(context.Background()); err != nil {
 			s.logger.Warn("bridges start error", "err", err)
@@ -531,6 +537,9 @@ func (s *Server) Close() error {
 	}
 	if s.archives != nil {
 		s.archives.Stop()
+	}
+	if s.retainedStop != nil {
+		s.retainedStop()
 	}
 	if err := s.mochi.Close(); err != nil {
 		return err

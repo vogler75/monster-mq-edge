@@ -14,6 +14,7 @@ type MessageStore interface {
 	FindMatchingMessages(ctx context.Context, pattern string, yield func(BrokerMessage) bool) error
 	FindMatchingTopics(ctx context.Context, pattern string, yield func(string) bool) error
 	PurgeOlderThan(ctx context.Context, t time.Time) (PurgeResult, error)
+	PurgeExpired(ctx context.Context) (PurgeResult, error)
 	EnsureTable(ctx context.Context) error
 	Close() error
 }
