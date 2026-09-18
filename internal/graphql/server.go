@@ -19,7 +19,6 @@ import (
 	"github.com/vektah/gqlparser/v2/ast"
 
 	"os"
-	"path/filepath"
 	"strings"
 
 	"monstermq.io/edge/internal/auth"
@@ -175,13 +174,12 @@ func NewServer(cfg *config.Config, resolver *resolvers.Resolver, hmiMgr *hmi.Man
 				fileSubPath = "index.html"
 			}
 
-			dir := cfg.HMI.Path
-			if dir == "" {
-				logger.Warn("HMI.Path is not specified in configuration. HMI server will not be started.")
-				http.Error(w, "HMI server not configured (HMI.Path missing)", http.StatusNotFound)
+			fullPath, err := hmiMgr.ResolveDashboardPath(dashName, fileSubPath)
+			if err != nil {
+				http.NotFound(w, r)
 				return
 			}
-			fullPath := filepath.Join(dir, dashName, fileSubPath)
+
 			if info, err := os.Stat(fullPath); err == nil && !info.IsDir() {
 				http.ServeFile(w, r, fullPath)
 				return
