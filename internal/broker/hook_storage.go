@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	mqtt "monstermq.io/edge/internal/mqtt"
+	"monstermq.io/edge/internal/mqtt/hooks/storage"
 	"monstermq.io/edge/internal/mqtt/packets"
 
 	"monstermq.io/edge/internal/pubsub"
@@ -69,27 +70,42 @@ func (h *StorageHook) Provides(b byte) bool {
 		mqtt.OnPacketSent,
 		mqtt.OnSelectRetainedMessages,
 		mqtt.OnClientExpired,
+		mqtt.StoredClientByID,
 	}, []byte{b})
 }
 
 func (h *StorageHook) OnSessionEstablished(cl *mqtt.Client, _ packets.Packet) {
-	pv := int(cl.Properties.ProtocolVersion)
-	info := stores.SessionInfo{
-		ClientID:        cl.ID,
-		NodeID:          h.nodeID,
-		CleanSession:    cl.Properties.Clean,
-		Connected:       true,
-		UpdateTime:      time.Now(),
-		ClientAddress:   cl.Net.Remote,
-		ProtocolVersion: pv,
-		Information:     fmt.Sprintf(`{"ProtocolVersion":%d,"Username":%q}`, pv, string(cl.Properties.Username)),
+	ctx := context.Background()
+	if cl.Properties.Clean {
+		if err := h.store.Sessions.DelClient(ctx, cl.ID); err != nil {
+			h.logger.Warn("clean session purge failed", "client", cl.ID, "err", err)
+		}
+		if h.subs != nil {
+			h.subs.DisconnectClient(cl.ID)
+		}
 	}
-	if err := h.store.Sessions.SetClient(context.Background(), info); err != nil {
+
+	pv := int(cl.Properties.ProtocolVersion)
+	var sei int64
+	if cl.Properties.Props.SessionExpiryIntervalFlag {
+		sei = int64(cl.Properties.Props.SessionExpiryInterval)
+	}
+	info := stores.SessionInfo{
+		ClientID:              cl.ID,
+		NodeID:                h.nodeID,
+		CleanSession:          cl.Properties.Clean,
+		Connected:             true,
+		UpdateTime:            time.Now(),
+		ClientAddress:         cl.Net.Remote,
+		ProtocolVersion:       pv,
+		SessionExpiryInterval: sei,
+		Information:           fmt.Sprintf(`{"ProtocolVersion":%d,"Username":%q,"sessionExpiryInterval":%d,"clientAddress":%q}`, pv, string(cl.Properties.Username), sei, cl.Net.Remote),
+	}
+	if err := h.store.Sessions.SetClient(ctx, info); err != nil {
 		h.logger.Warn("session persist failed", "client", cl.ID, "err", err)
 	}
 
 	if !cl.Properties.Clean {
-		ctx := context.Background()
 		persistedSubs, err := h.store.Subscriptions.GetSubscriptionsForClient(ctx, cl.ID)
 		if err == nil && len(persistedSubs) > 0 {
 			var toDelete []stores.MqttSubscription
@@ -109,6 +125,67 @@ func (h *StorageHook) OnSessionEstablished(cl *mqtt.Client, _ packets.Packet) {
 			}
 		}
 	}
+}
+
+func (h *StorageHook) StoredClientByID(id string, username []byte) (string, []storage.Subscription, []storage.Message, error) {
+	ctx := context.Background()
+	sess, err := h.store.Sessions.GetSession(ctx, id)
+	if err != nil || sess == nil {
+		return "", nil, nil, err
+	}
+	if sess.CleanSession {
+		return "", nil, nil, nil
+	}
+
+	// Check if session has expired
+	if sess.SessionExpiryInterval > 0 {
+		if sess.UpdateTime.Add(time.Duration(sess.SessionExpiryInterval) * time.Second).Before(time.Now()) {
+			_ = h.store.Sessions.DelClient(ctx, id)
+			if h.subs != nil {
+				h.subs.DisconnectClient(id)
+			}
+			return "", nil, nil, nil
+		}
+	}
+
+	persistedSubs, err := h.store.Subscriptions.GetSubscriptionsForClient(ctx, id)
+	if err != nil {
+		return "", nil, nil, err
+	}
+
+	res := make([]storage.Subscription, 0, len(persistedSubs))
+	for _, sub := range persistedSubs {
+		if !mqtt.IsValidFilter(sub.TopicFilter, false) {
+			continue
+		}
+		if len(username) > 0 && h.server != nil {
+			dummyCl := &mqtt.Client{
+				ID: id,
+				Properties: mqtt.ClientProperties{
+					Username: username,
+				},
+			}
+			if !h.server.Hooks().OnACLCheck(dummyCl, sub.TopicFilter, false) {
+				continue
+			}
+		}
+
+		res = append(res, storage.Subscription{
+			Client:            sub.ClientID,
+			Filter:            sub.TopicFilter,
+			Qos:               sub.QoS,
+			NoLocal:           sub.NoLocal,
+			RetainAsPublished: sub.RetainAsPublished,
+			RetainHandling:    sub.RetainHandling,
+			Identifier:        sub.SubscriptionID,
+		})
+	}
+
+	remote := sess.ClientAddress
+	if remote == "" {
+		remote = "persisted"
+	}
+	return remote, res, nil, nil
 }
 
 func (h *StorageHook) OnDisconnect(cl *mqtt.Client, _ error, expire bool) {

@@ -742,6 +742,22 @@ func scanSession(scanner pgx.Row) (*stores.SessionInfo, error) {
 	}
 	if infoStr != nil {
 		info.Information = *infoStr
+		if *infoStr != "" {
+			var meta struct {
+				SessionExpiryInterval int64  `json:"sessionExpiryInterval"`
+				ClientAddress         string `json:"clientAddress"`
+				ProtocolVersion       int    `json:"ProtocolVersion"`
+			}
+			if json.Unmarshal([]byte(*infoStr), &meta) == nil {
+				info.SessionExpiryInterval = meta.SessionExpiryInterval
+				if meta.ClientAddress != "" {
+					info.ClientAddress = meta.ClientAddress
+				}
+				if meta.ProtocolVersion != 0 {
+					info.ProtocolVersion = meta.ProtocolVersion
+				}
+			}
+		}
 	}
 	if lwTopic != nil {
 		info.LastWillTopic = *lwTopic

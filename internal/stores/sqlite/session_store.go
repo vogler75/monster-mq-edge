@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -138,6 +139,22 @@ func scanSession(scanner interface{ Scan(...any) error }) (*stores.SessionInfo, 
 	info.CleanSession = clean.Bool
 	info.Connected = connected.Bool
 	info.Information = information.String
+	if information.Valid && information.String != "" {
+		var meta struct {
+			SessionExpiryInterval int64  `json:"sessionExpiryInterval"`
+			ClientAddress         string `json:"clientAddress"`
+			ProtocolVersion       int    `json:"ProtocolVersion"`
+		}
+		if json.Unmarshal([]byte(information.String), &meta) == nil {
+			info.SessionExpiryInterval = meta.SessionExpiryInterval
+			if meta.ClientAddress != "" {
+				info.ClientAddress = meta.ClientAddress
+			}
+			if meta.ProtocolVersion != 0 {
+				info.ProtocolVersion = meta.ProtocolVersion
+			}
+		}
+	}
 	if updateTime.Valid {
 		if t, err := time.Parse(time.RFC3339Nano, updateTime.String); err == nil {
 			info.UpdateTime = t

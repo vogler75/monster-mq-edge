@@ -493,11 +493,6 @@ func (s *Server) attachClient(cl *Client, listener string) error {
 	expire := (cl.Properties.ProtocolVersion == 5 && cl.Properties.Props.SessionExpiryInterval == 0) || (cl.Properties.ProtocolVersion < 5 && cl.Properties.Clean)
 	s.hooks.OnDisconnect(cl, err, expire)
 
-	if s.hooks.Provides(StoredClientByID) {
-		// Hooks are capable of reloading a persistent client session, so I can forget it
-		expire = true
-	}
-
 	if expire && !cl.IsTakenOver() {
 		cl.ClearInflights()
 		s.UnsubscribeClient(cl)
@@ -610,7 +605,7 @@ func (s *Server) inheritClientSession(pk packets.Packet, cl *Client) bool {
 	}
 
 	// Look up a stored client that's not in memory yet:
-	if s.hooks.Provides(StoredClientByID) {
+	if !pk.Connect.Clean && s.hooks.Provides(StoredClientByID) {
 		oldRemote, subs, msgs, err := s.hooks.StoredClientByID(cl.ID, cl.Properties.Username)
 		if err == nil && oldRemote != "" {
 			// Instantiate in-flight messages to deliver:
@@ -1806,6 +1801,8 @@ func (s *Server) clearExpiredClients(dt int64) {
 
 		if disconnected+int64(expire) < dt {
 			s.hooks.OnClientExpired(client)
+			client.ClearInflights()
+			s.UnsubscribeClient(client)
 			s.Clients.Delete(id) // [MQTT-4.1.0-2]
 		}
 	}
