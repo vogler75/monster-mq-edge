@@ -867,6 +867,22 @@ func docToSession(doc bson.M) *stores.SessionInfo {
 	if b, ok := doc["last_will_message"].(bson.Binary); ok {
 		info.LastWillPayload = b.Data
 	}
+	if info.Information != "" {
+		var meta struct {
+			SessionExpiryInterval int64  `json:"sessionExpiryInterval"`
+			ClientAddress         string `json:"clientAddress"`
+			ProtocolVersion       int    `json:"ProtocolVersion"`
+		}
+		if json.Unmarshal([]byte(info.Information), &meta) == nil {
+			info.SessionExpiryInterval = meta.SessionExpiryInterval
+			if meta.ClientAddress != "" {
+				info.ClientAddress = meta.ClientAddress
+			}
+			if meta.ProtocolVersion != 0 {
+				info.ProtocolVersion = meta.ProtocolVersion
+			}
+		}
+	}
 	return info
 }
 

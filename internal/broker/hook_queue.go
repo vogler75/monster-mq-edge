@@ -215,6 +215,11 @@ func (h *QueueHook) OnSessionEstablished(cl *mqtt.Client, _ packets.Packet) {
 	h.mu.Unlock()
 
 	if cl.Properties.Clean {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if _, err := h.store.Queue.PurgeForClient(ctx, cl.ID); err != nil {
+			h.logger.Warn("queue hook: purge for clean client failed", "client", cl.ID, "err", err)
+		}
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
