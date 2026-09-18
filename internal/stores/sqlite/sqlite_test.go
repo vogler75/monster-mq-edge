@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -342,5 +343,97 @@ func TestMessageArchiveGetAggregatedHistory(t *testing.T) {
 	}
 	if resJSON.RowCount == 0 {
 		t.Fatalf("expected aggregated JSON rows, got 0")
+	}
+}
+
+func TestMessageArchivePayloadFormats(t *testing.T) {
+	db := tempDB(t)
+	ctx := context.Background()
+
+	// 1. JSON-format archive
+	jsonArc := NewMessageArchive("messages_json", db, stores.PayloadJSON)
+	if err := jsonArc.EnsureTable(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	t0 := time.Now().Truncate(time.Millisecond)
+	msgs := []stores.BrokerMessage{
+		{MessageUUID: "m1", TopicName: "json/valid", Payload: []byte(`{"value":42}`), QoS: 1, ClientID: "c1", Time: t0.Add(-3 * time.Second)},
+		{MessageUUID: "m2", TopicName: "json/fallback", Payload: []byte(`plain text data`), QoS: 0, ClientID: "c2", Time: t0.Add(-2 * time.Second)},
+		{MessageUUID: "m3", TopicName: "json/empty", Payload: []byte{}, QoS: 0, ClientID: "c3", Time: t0.Add(-1 * time.Second)},
+		{MessageUUID: "m4", TopicName: "json/nil", Payload: nil, QoS: 0, ClientID: "c4", Time: t0},
+	}
+	if err := jsonArc.AddHistory(ctx, msgs); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify database columns directly
+	var pBlob []byte
+	var pJSON sql.NullString
+	row := db.Conn().QueryRowContext(ctx, "SELECT payload_blob, payload_json FROM messages_json WHERE topic = 'json/valid'")
+	if err := row.Scan(&pBlob, &pJSON); err != nil {
+		t.Fatal(err)
+	}
+	if len(pBlob) != 0 || !pJSON.Valid || pJSON.String != `{"value":42}` {
+		t.Fatalf("expected payload_blob null/empty and payload_json set, got blob=%q json=%+v", pBlob, pJSON)
+	}
+
+	row = db.Conn().QueryRowContext(ctx, "SELECT payload_blob, payload_json FROM messages_json WHERE topic = 'json/fallback'")
+	if err := row.Scan(&pBlob, &pJSON); err != nil {
+		t.Fatal(err)
+	}
+	if string(pBlob) != "plain text data" || pJSON.Valid {
+		t.Fatalf("expected payload_blob='plain text data' and payload_json null, got blob=%q json=%+v", pBlob, pJSON)
+	}
+
+	// Verify GetHistory returns proper payload bytes
+	hist, err := jsonArc.GetHistory(ctx, "json/#", nil, nil, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hist) != 4 {
+		t.Fatalf("expected 4 archived messages, got %d", len(hist))
+	}
+
+	histMap := make(map[string]stores.ArchivedMessage)
+	for _, m := range hist {
+		histMap[m.Topic] = m
+	}
+
+	if got := string(histMap["json/valid"].Payload); got != `{"value":42}` {
+		t.Fatalf("json/valid payload = %q, want %q", got, `{"value":42}`)
+	}
+	if got := string(histMap["json/fallback"].Payload); got != "plain text data" {
+		t.Fatalf("json/fallback payload = %q, want %q", got, "plain text data")
+	}
+	if len(histMap["json/empty"].Payload) != 0 {
+		t.Fatalf("json/empty payload = %q, want empty", histMap["json/empty"].Payload)
+	}
+	if len(histMap["json/nil"].Payload) != 0 {
+		t.Fatalf("json/nil payload = %q, want empty", histMap["json/nil"].Payload)
+	}
+
+	// 2. Default/Binary archive
+	defArc := NewMessageArchive("messages_default", db, stores.PayloadDefault)
+	if err := defArc.EnsureTable(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := defArc.AddHistory(ctx, msgs); err != nil {
+		t.Fatal(err)
+	}
+
+	defHist, err := defArc.GetHistory(ctx, "json/#", nil, nil, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(defHist) != 4 {
+		t.Fatalf("expected 4 archived messages in default archive, got %d", len(defHist))
+	}
+	defHistMap := make(map[string]stores.ArchivedMessage)
+	for _, m := range defHist {
+		defHistMap[m.Topic] = m
+	}
+	if got := string(defHistMap["json/valid"].Payload); got != `{"value":42}` {
+		t.Fatalf("default json/valid payload = %q, want %q", got, `{"value":42}`)
 	}
 }

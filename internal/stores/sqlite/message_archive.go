@@ -108,7 +108,7 @@ func (a *MessageArchive) GetHistory(ctx context.Context, topic string, from, to 
 	}
 	pattern := strings.ReplaceAll(topic, "#", "%")
 	pattern = strings.ReplaceAll(pattern, "+", "%")
-	q := fmt.Sprintf("SELECT topic, time, payload_blob, qos, client_id FROM %s WHERE topic LIKE ?", a.tableName)
+	q := fmt.Sprintf("SELECT topic, time, payload_blob, payload_json, qos, client_id FROM %s WHERE topic LIKE ?", a.tableName)
 	args := []any{pattern}
 	if from != nil {
 		q += " AND time >= ?"
@@ -130,14 +130,19 @@ func (a *MessageArchive) GetHistory(ctx context.Context, topic string, from, to 
 	out := make([]stores.ArchivedMessage, 0, limit)
 	for rows.Next() {
 		var (
-			t       string
-			topic   string
-			payload []byte
-			qos     int
-			cid     sql.NullString
+			t           string
+			topic       string
+			payloadBlob []byte
+			payloadJSON sql.NullString
+			qos         int
+			cid         sql.NullString
 		)
-		if err := rows.Scan(&topic, &t, &payload, &qos, &cid); err != nil {
+		if err := rows.Scan(&topic, &t, &payloadBlob, &payloadJSON, &qos, &cid); err != nil {
 			return nil, err
+		}
+		payload := payloadBlob
+		if len(payload) == 0 && payloadJSON.Valid && len(payloadJSON.String) > 0 {
+			payload = []byte(payloadJSON.String)
 		}
 		ts, _ := time.Parse(time.RFC3339Nano, t)
 		out = append(out, stores.ArchivedMessage{

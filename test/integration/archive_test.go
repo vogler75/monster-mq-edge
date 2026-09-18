@@ -187,3 +187,112 @@ func TestAggregatedMessagesGraphQLQuery(t *testing.T) {
 	}
 }
 
+func TestArchivedMessagesGraphQL_SQLiteJSONPayload(t *testing.T) {
+	mqttPort := 22006
+	gqlPort := 24006
+	srv, gqlURL := startWithGraphQL(t, mqttPort, gqlPort)
+	defer srv.Close()
+
+	ctx := context.Background()
+	err := srv.Storage().ArchiveConfig.Save(ctx, stores.ArchiveGroupConfig{
+		Name:          "JsonArchive",
+		Enabled:       true,
+		TopicFilters:  []string{"devices/#"},
+		LastValType:   stores.MessageStoreSQLite,
+		ArchiveType:   stores.ArchiveSQLite,
+		PayloadFormat: stores.PayloadJSON,
+	})
+	if err != nil {
+		t.Fatalf("Save ArchiveGroupConfig failed: %v", err)
+	}
+	if err := srv.Archives().Reload(ctx); err != nil {
+		t.Fatalf("Reload Archives failed: %v", err)
+	}
+
+	client := mqtt.NewClient(mqttOpts(mqttPort, "json-pub"))
+	if tok := client.Connect(); tok.WaitTimeout(2 * time.Second) && tok.Error() != nil {
+		t.Fatal(tok.Error())
+	}
+
+	// Publish JSON message
+	jsonPayload := `{"temperature": 23.5, "status": "ok"}`
+	if tok := client.Publish("devices/sensor1", 0, false, jsonPayload); tok.WaitTimeout(2 * time.Second) && tok.Error() != nil {
+		t.Fatal(tok.Error())
+	}
+	// Publish non-JSON text message (should fall back to blob)
+	textPayload := `plain-text-reading`
+	if tok := client.Publish("devices/sensor2", 0, false, textPayload); tok.WaitTimeout(2 * time.Second) && tok.Error() != nil {
+		t.Fatal(tok.Error())
+	}
+	client.Disconnect(100)
+
+	// Wait for queue/buffer flush
+	time.Sleep(600 * time.Millisecond)
+
+	// Query 1: Default (JSON) format
+	queryJSON := `{
+		archivedMessages(topicFilter: "devices/#", archiveGroup: "JsonArchive") {
+			topic
+			payload
+			format
+		}
+	}`
+	resp := gqlQuery(t, gqlURL, queryJSON, nil)
+	msgs, ok := resp["archivedMessages"].([]any)
+	if !ok || len(msgs) != 2 {
+		t.Fatalf("expected 2 archived messages, got: %#v", resp)
+	}
+
+	results := make(map[string]map[string]any)
+	for _, m := range msgs {
+		row := m.(map[string]any)
+		results[row["topic"].(string)] = row
+	}
+
+	sensor1 := results["devices/sensor1"]
+	if sensor1 == nil {
+		t.Fatalf("missing devices/sensor1 in results: %#v", results)
+	}
+	if sensor1["payload"] != jsonPayload {
+		t.Fatalf("expected payload %q, got %q", jsonPayload, sensor1["payload"])
+	}
+	if sensor1["format"] != "JSON" {
+		t.Fatalf("expected format JSON, got %v", sensor1["format"])
+	}
+
+	sensor2 := results["devices/sensor2"]
+	if sensor2 == nil {
+		t.Fatalf("missing devices/sensor2 in results: %#v", results)
+	}
+	// Non-JSON in default mode gets encoded as BINARY (base64) by encodePayload
+	if sensor2["format"] != "BINARY" {
+		t.Fatalf("expected format BINARY for non-JSON default query, got %v", sensor2["format"])
+	}
+
+	// Query 2: TEXT format explicitly requested
+	queryText := `{
+		archivedMessages(topicFilter: "devices/#", format: TEXT, archiveGroup: "JsonArchive") {
+			topic
+			payload
+			format
+		}
+	}`
+	respText := gqlQuery(t, gqlURL, queryText, nil)
+	msgsText, ok := respText["archivedMessages"].([]any)
+	if !ok || len(msgsText) != 2 {
+		t.Fatalf("expected 2 archived messages in text query, got: %#v", respText)
+	}
+	resultsText := make(map[string]map[string]any)
+	for _, m := range msgsText {
+		row := m.(map[string]any)
+		resultsText[row["topic"].(string)] = row
+	}
+	if resultsText["devices/sensor1"]["payload"] != jsonPayload {
+		t.Fatalf("sensor1 text payload mismatch: %v", resultsText["devices/sensor1"]["payload"])
+	}
+	if resultsText["devices/sensor2"]["payload"] != textPayload {
+		t.Fatalf("sensor2 text payload mismatch: %v", resultsText["devices/sensor2"]["payload"])
+	}
+}
+
+
