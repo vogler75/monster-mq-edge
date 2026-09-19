@@ -2,6 +2,17 @@ TCP:  { Enabled: true,  Port: 1883, Address: "0.0.0.0" }  # use "::" for IPv6
 TCPS: { Enabled: false, Port: 8883, Address: "0.0.0.0", KeyStorePath: "data/keystore", KeyStorePassword: "" }
 WS:   { Enabled: true,  Port: 1884, Address: "0.0.0.0" }
 WSS:  { Enabled: false, Port: 8884, Address: "0.0.0.0", KeyStorePath: "data/keystore", KeyStorePassword: "" }
+
+# SSL:
+#   KeyStoreType: PEM
+#   KeyStorePath: data/server.crt
+#   KeyPath: data/server.key
+#   ClientAuth: REQUEST               # NONE, REQUEST, or REQUIRED
+#   TrustStoreType: PEM
+#   TrustStorePath: data/ca.crt
+#   UseIdentityAsUsername: true       # Use client certificate Common Name as username
+#   AutoCreateUser: false             # Auto-create user account on first connect
+
 MaxMessageSize: 1048576
 
 DefaultStoreType: SQLITE
@@ -30,6 +41,7 @@ UserManagement:
   AnonymousEnabled: true
   AclCacheEnabled: true
   AllowAnonymousLocalhost: true
+  # AclCheckOnSubscription: false
 
 Metrics:
   Enabled: true
@@ -45,10 +57,13 @@ Logging:
 
 GraphQL:
   Enabled: true
-  Port: 4000
+  Port: 4000                      # HTTP port (plain). When defined (> 0), HTTP is enabled
+  TLSPort: 4443                   # HTTPS port (TLS). When defined (> 0), HTTPS is enabled (creates self-signed cert if missing)
+  RequireHTTPSFromOutside: false  # When true, outside requests on HTTP are redirected to HTTPS (localhost stays HTTP)
 
 Dashboard:
-  Enabled: true
+  Enabled: true                   # Embedded web dashboard UI hosted at /
+  # Path: ""                      # Filesystem path to override dashboard files for live UI development
 
 RestApi:
   Enabled: true
@@ -58,13 +73,18 @@ HMI:
   Path: "/var/lib/monstermq/hmi"
   MountPath: "/hmi"
 
+MCP:
+  Enabled: false                  # Model Context Protocol (MCP) server mounted at /mcp
+
 Features:
   MqttClient: true
   WinCCUa: false
   WinCCOa: false
   DeviceImportExport: true
+  Mcp: false
   Hmi: true
   Redfish: false
+  RtspCamera: false
 
 Redfish:
   Enabled: false
@@ -74,6 +94,12 @@ Redfish:
   DefaultSystemId: "edge-node"
   DefaultManagerId: "monstermq-edge"
   AnonymousEnabled: true
+
+HostMonitoring:
+  Enabled: false
+  BaseTopic: "nodes/{NodeId}/host"
+  IntervalSeconds: 10
+  QoS: 0
 
 # QueuedMessagesEnabled: true  -> use QueueStoreType for offline persistent
 # (clean=false) sessions. With QueueStoreType: MEMORY, queued messages are

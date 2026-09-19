@@ -154,3 +154,23 @@ func TestGraphQLLoadYAML(t *testing.T) {
 		}
 	})
 }
+
+func TestDebAndExampleConfigsValidate(t *testing.T) {
+	files := []string{
+		"../../config.yaml.example",
+		"../../scripts/deb/config.yaml",
+	}
+	for _, rel := range files {
+		path, err := filepath.Abs(rel)
+		if err != nil {
+			t.Fatalf("abs path %s: %v", rel, err)
+		}
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load %s: %v", rel, err)
+		}
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("Validate %s: %v", rel, err)
+		}
+	}
+}
