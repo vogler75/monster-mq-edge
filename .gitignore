@@ -7,5 +7,7 @@ data/
 .vscode/
 /config.yaml
 .DS_Store
-dashboard
-dist/
+/dashboard
+internal/dashboard/dist/*
+!internal/dashboard/dist/placeholder.html
+/dist/

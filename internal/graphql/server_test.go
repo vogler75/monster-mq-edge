@@ -33,7 +33,7 @@ func TestServer_StartStopConcurrentRace(t *testing.T) {
 		cfg.GraphQL.Port = port
 		cfg.UserManagement.Enabled = false
 
-		srv := NewServer(cfg, nil, nil, nil, nil, slog.New(slog.DiscardHandler))
+		srv := NewServer(cfg, nil, nil, nil, nil, nil, nil, slog.New(slog.DiscardHandler))
 
 		var wg sync.WaitGroup
 		wg.Add(2)
@@ -61,7 +61,7 @@ func TestServer_StopBeforeStart(t *testing.T) {
 	cfg.GraphQL.Port = port
 	cfg.UserManagement.Enabled = false
 
-	srv := NewServer(cfg, nil, nil, nil, nil, slog.New(slog.DiscardHandler))
+	srv := NewServer(cfg, nil, nil, nil, nil, nil, nil, slog.New(slog.DiscardHandler))
 
 	// Stop is called before Start
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -90,7 +90,7 @@ func TestServer_StopIdempotent(t *testing.T) {
 	cfg.GraphQL.Port = port
 	cfg.UserManagement.Enabled = false
 
-	srv := NewServer(cfg, nil, nil, nil, nil, slog.New(slog.DiscardHandler))
+	srv := NewServer(cfg, nil, nil, nil, nil, nil, nil, slog.New(slog.DiscardHandler))
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -110,7 +110,7 @@ func TestServer_StartTwiceFails(t *testing.T) {
 	cfg.GraphQL.Port = port
 	cfg.UserManagement.Enabled = false
 
-	srv := NewServer(cfg, nil, nil, nil, nil, slog.New(slog.DiscardHandler))
+	srv := NewServer(cfg, nil, nil, nil, nil, nil, nil, slog.New(slog.DiscardHandler))
 
 	go func() {
 		_ = srv.Start()

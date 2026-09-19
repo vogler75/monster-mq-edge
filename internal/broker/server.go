@@ -2,8 +2,10 @@ package broker
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"time"
 
 	mqtt "monstermq.io/edge/internal/mqtt"
@@ -307,21 +309,41 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 		rtspCameras = rtspcamera.NewManager(storage.DeviceConfig, publishFn, &rtspcamera.BusAdapter{Bus: bus}, cfg.NodeID, logger)
 	}
 
-	// 8. GraphQL server (HTTP + WebSocket)
+	// 8. MCP server (Streamable HTTP / SSE mounted at /mcp)
+	var mcpSrv *mcp.Server
+	var mcpHandler http.Handler
+	if cfg.MCP.Enabled || cfg.Features.Mcp {
+		mcpSrv = mcp.NewServer(cfg, storage, archives, authCache, publishFn, logger)
+		mcpHandler = mcpSrv.Handler()
+		logger.Info("mcp server enabled", "path", "/mcp")
+	}
+
+	// 9. GraphQL server (HTTP + WebSocket)
 	var gqlSrv *gql.Server
-	if cfg.GraphQL.Enabled {
+	if cfg.GraphQL.Enabled && (cfg.GraphQL.HTTPEnabled() || cfg.GraphQL.TLSEnabled()) {
 		resolver := resolvers.New(cfg, storage, bus, archives, bridges, winCCUa, winCCOa, authCache, collector, logBus, logger, server, publishFn, hmiMgr, redfishMgr, rtspCameras)
 		var rest *restapi.Handler
 		if cfg.RestApi.Enabled {
 			rest = restapi.New(cfg, authCache, storage.Retained, archives, bus, publishFn)
 		}
-		gqlSrv = gql.NewServer(cfg, resolver, hmiMgr, redfishMgr, rest, logger)
-	}
-
-	// 9. MCP server (Streamable HTTP / SSE)
-	var mcpSrv *mcp.Server
-	if cfg.MCP.Enabled {
-		mcpSrv = mcp.NewServer(cfg, storage, archives, authCache, publishFn, logger)
+		var tlsConfig *tls.Config
+		if cfg.GraphQL.TLSEnabled() {
+			certPath := cfg.EffectiveGraphQLCertPath()
+			keyPath := cfg.EffectiveGraphQLKeyPath()
+			if err := EnsureCertificate(certPath, keyPath, logger); err != nil {
+				logger.Error("ensure certificate failed", "err", err)
+			}
+			var err error
+			tlsConfig, err = loadTLS(TLSParams{
+				CertPath: certPath,
+				KeyPath:  keyPath,
+				Password: cfg.EffectiveGraphQLKeyPassword(),
+			})
+			if err != nil {
+				logger.Error("load graphql tls config failed", "err", err)
+			}
+		}
+		gqlSrv = gql.NewServer(cfg, resolver, hmiMgr, redfishMgr, rest, mcpHandler, tlsConfig, logger)
 	}
 
 	return &Server{
@@ -478,13 +500,6 @@ func (s *Server) Serve() error {
 			}
 		}()
 	}
-	if s.mcpSrv != nil {
-		go func() {
-			if err := s.mcpSrv.Start(); err != nil {
-				s.logger.Error("mcp server error", "err", err)
-			}
-		}()
-	}
 	return s.mochi.Serve()
 }
 
@@ -519,11 +534,6 @@ func (s *Server) Close() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = s.gqlSrv.Stop(ctx)
-	}
-	if s.mcpSrv != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = s.mcpSrv.Stop(ctx)
 	}
 	if s.archives != nil {
 		s.archives.Stop()

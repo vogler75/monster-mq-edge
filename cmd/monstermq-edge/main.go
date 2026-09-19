@@ -16,6 +16,7 @@ import (
 func main() {
 	configPath := flag.String("config", "", "Path to config.yaml (defaults to built-in defaults if empty)")
 	logLevel := flag.String("log-level", "", "Override log level (DEBUG|INFO|WARN|ERROR)")
+	dashboardPath := flag.String("dashboardPath", "", "Serve dashboard from a filesystem directory (overrides config)")
 	showVersion := flag.Bool("version", false, "Print version and exit")
 	flag.Parse()
 
@@ -31,6 +32,9 @@ func main() {
 	}
 	if *logLevel != "" {
 		cfg.Logging.Level = *logLevel
+	}
+	if *dashboardPath != "" {
+		cfg.Dashboard.Path = *dashboardPath
 	}
 
 	logBus := mlog.NewBus(cfg.Logging.RingBufferSize)

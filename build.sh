@@ -104,11 +104,41 @@ if [ "$CLEAN" = true ]; then
     echo -e "${GREEN}✓ Clean complete${NC}"
 fi
 
-if [ "$BUILD_BINARY" = false ] && [ "$BUILD_DEB" = false ] && [ "$BUILD_DOCKER" = false ]; then
-    echo -e "${GREEN}No build targets specified. Clean operation finished.${NC}"
-    exit 0
-fi
+resolve_dashboard() {
+    if [ -e "dashboard" ] || [ -L "dashboard" ]; then
+        if [ ! -d "dashboard" ]; then
+            echo -e "${YELLOW}Warning: 'dashboard' symlink is broken.${NC}"
+            rm -f dashboard
+        fi
+    fi
 
+    if [ ! -e "dashboard" ] && [ ! -L "dashboard" ]; then
+        if [ -d "../dashboard" ]; then
+            echo -e "${YELLOW}Symlink 'dashboard' not found. Using '../dashboard' and creating symlink...${NC}"
+            ln -sfn ../dashboard dashboard
+        else
+            echo -e "${RED}Error: Dashboard not found!${NC}"
+            echo -e "${RED}Neither './dashboard' nor '../dashboard' exists.${NC}"
+            echo -e "${YELLOW}Please create a symbolic link to the dashboard repository:${NC}"
+            echo -e "${YELLOW}  ln -s ../dashboard dashboard${NC}"
+            exit 1
+        fi
+    fi
+
+    if [ ! -d "dashboard/dist" ]; then
+        echo -e "${YELLOW}Dashboard dist not found in dashboard/. Building dashboard...${NC}"
+        if command -v npm >/dev/null 2>&1; then
+            (cd dashboard && npm run build)
+        else
+            echo -e "${RED}Error: dashboard/dist not found and npm is not installed.${NC}"
+            exit 1
+        fi
+    fi
+}
+
+if [ "$BUILD_BINARY" = true ] || [ "$BUILD_DEB" = true ] || [ "$BUILD_DOCKER" = true ]; then
+    resolve_dashboard
+fi
 
 if [ "$BUILD_BINARY" = true ]; then
     echo -e "${GREEN}[1/3] Building native Go binary...${NC}"

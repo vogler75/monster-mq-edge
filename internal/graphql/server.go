@@ -2,8 +2,10 @@ package graphql
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -24,6 +26,7 @@ import (
 
 	"monstermq.io/edge/internal/auth"
 	"monstermq.io/edge/internal/config"
+	"monstermq.io/edge/internal/dashboard"
 	"monstermq.io/edge/internal/graphql/generated"
 	"monstermq.io/edge/internal/graphql/resolvers"
 	"monstermq.io/edge/internal/hmi"
@@ -33,10 +36,12 @@ import (
 
 // Server hosts the GraphQL HTTP and WebSocket endpoints, HMI dashboards, and Redfish API.
 type Server struct {
-	cfg     *config.Config
-	logger  *slog.Logger
-	router  *chi.Mux
-	httpSrv *http.Server
+	cfg       *config.Config
+	logger    *slog.Logger
+	router    *chi.Mux
+	tlsConfig *tls.Config
+	httpSrv   *http.Server
+	httpsSrv  *http.Server
 
 	mu      sync.Mutex
 	started bool
@@ -44,12 +49,11 @@ type Server struct {
 	done    chan struct{}
 }
 
-func NewServer(cfg *config.Config, resolver *resolvers.Resolver, hmiMgr *hmi.Manager, redfishMgr *redfish.Manager, rest *restapi.Handler, logger *slog.Logger) *Server {
+func NewServer(cfg *config.Config, resolver *resolvers.Resolver, hmiMgr *hmi.Manager, redfishMgr *redfish.Manager, rest *restapi.Handler, mcpHandler http.Handler, tlsConfig *tls.Config, logger *slog.Logger) *Server {
 	var authCache *auth.Cache
 	if resolver != nil {
 		authCache = resolver.AuthCache
 	}
-
 	es := generated.NewExecutableSchema(generated.Config{Resolvers: resolver})
 	gql := handler.New(es)
 	gql.AddTransport(transport.Options{})
@@ -111,6 +115,9 @@ func NewServer(cfg *config.Config, resolver *resolvers.Resolver, hmiMgr *hmi.Man
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
 	r.Use(corsMiddleware)
+	if cfg.GraphQL.TLSEnabled() && cfg.GraphQL.RequireHTTPSFromOutside {
+		r.Use(requireHTTPSMiddleware(cfg))
+	}
 	authenticatedGQL := httpAuthMiddleware(cfg, authCache, gql)
 	r.Handle("/graphql", authenticatedGQL)
 	r.Handle("/graphql/", authenticatedGQL)
@@ -119,6 +126,10 @@ func NewServer(cfg *config.Config, resolver *resolvers.Resolver, hmiMgr *hmi.Man
 	r.Get("/playground", playground.Handler("MonsterMQ Edge", "/graphql"))
 	if cfg.RestApi.Enabled && rest != nil {
 		r.Mount("/api/v1", rest.Router())
+	}
+	if (cfg.MCP.Enabled || cfg.Features.Mcp) && mcpHandler != nil {
+		r.Handle("/mcp", mcpHandler)
+		r.Handle("/mcp/*", mcpHandler)
 	}
 
 	if (cfg.HMI.Enabled || cfg.Features.Hmi) && hmiMgr != nil {
@@ -217,16 +228,46 @@ func NewServer(cfg *config.Config, resolver *resolvers.Resolver, hmiMgr *hmi.Man
 		_, _ = w.Write([]byte("ok"))
 	})
 
-	return &Server{
-		cfg:    cfg,
-		logger: logger,
-		router: r,
-		httpSrv: &http.Server{
-			Addr:              fmt.Sprintf(":%d", cfg.GraphQL.Port),
+	if cfg.Dashboard.Enabled {
+		dashHandler := dashboard.Handler(cfg.Dashboard.Path, logger)
+		r.Handle("/*", dashHandler)
+	}
+
+	var httpSrv *http.Server
+	if cfg.GraphQL.HTTPEnabled() {
+		httpAddr := cfg.GraphQL.Address
+		if httpAddr == "" {
+			httpAddr = "0.0.0.0"
+		}
+		httpSrv = &http.Server{
+			Addr:              fmt.Sprintf("%s:%d", httpAddr, cfg.GraphQL.Port),
 			Handler:           r,
 			ReadHeaderTimeout: 10 * time.Second,
-		},
-		done: make(chan struct{}),
+		}
+	}
+
+	var httpsSrv *http.Server
+	if cfg.GraphQL.TLSEnabled() && tlsConfig != nil {
+		tlsAddr := cfg.GraphQL.TLSAddress
+		if tlsAddr == "" {
+			tlsAddr = "0.0.0.0"
+		}
+		httpsSrv = &http.Server{
+			Addr:              fmt.Sprintf("%s:%d", tlsAddr, cfg.GraphQL.TLSPort),
+			Handler:           r,
+			TLSConfig:         tlsConfig,
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+	}
+
+	return &Server{
+		cfg:       cfg,
+		logger:    logger,
+		router:    r,
+		tlsConfig: tlsConfig,
+		httpSrv:   httpSrv,
+		httpsSrv:  httpsSrv,
+		done:      make(chan struct{}),
 	}
 }
 
@@ -300,11 +341,50 @@ func (s *Server) Start() error {
 
 	defer close(s.done)
 
-	s.logger.Info("graphql listening", "port", s.cfg.GraphQL.Port)
-	if err := s.httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		return err
+	errCh := make(chan error, 2)
+	servers := 0
+
+	if s.httpSrv != nil {
+		servers++
+		s.logger.Info("graphql http listening", "addr", s.httpSrv.Addr)
+
+		go func() {
+			err := s.httpSrv.ListenAndServe()
+			if err != nil && err != http.ErrServerClosed {
+				s.logger.Error("http server error", "err", err)
+				errCh <- err
+				return
+			}
+			errCh <- nil
+		}()
 	}
-	return nil
+
+	if s.httpsSrv != nil {
+		servers++
+		s.logger.Info("graphql https listening", "addr", s.httpsSrv.Addr)
+
+		go func() {
+			err := s.httpsSrv.ListenAndServeTLS("", "")
+			if err != nil && err != http.ErrServerClosed {
+				s.logger.Error("https server error", "err", err)
+				errCh <- err
+				return
+			}
+			errCh <- nil
+		}()
+	}
+
+	if servers == 0 {
+		return nil
+	}
+
+	var firstErr error
+	for i := 0; i < servers; i++ {
+		if err := <-errCh; err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 func (s *Server) Stop(ctx context.Context) error {
@@ -317,15 +397,59 @@ func (s *Server) Stop(ctx context.Context) error {
 	started := s.started
 	s.mu.Unlock()
 
-	err := s.httpSrv.Shutdown(ctx)
+	var firstErr error
+	if s.httpSrv != nil {
+		if err := s.httpSrv.Shutdown(ctx); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	if s.httpsSrv != nil {
+		if err := s.httpsSrv.Shutdown(ctx); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+
 	if started {
 		select {
 		case <-s.done:
 		case <-ctx.Done():
-			return ctx.Err()
+			if firstErr == nil {
+				firstErr = ctx.Err()
+			}
 		}
 	}
-	return err
+	return firstErr
+}
+
+func requireHTTPSMiddleware(cfg *config.Config) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.TLS != nil || auth.IsLocalhostRequest(r) {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			host, _, err := net.SplitHostPort(r.Host)
+			if err != nil {
+				host = r.Host
+			}
+			tlsPort := cfg.GraphQL.TLSPort
+			uri := r.URL.RequestURI()
+			if uri == "" {
+				uri = r.URL.Path
+			}
+			if uri == "" {
+				uri = "/"
+			}
+			var target string
+			if tlsPort == 443 {
+				target = fmt.Sprintf("https://%s%s", host, uri)
+			} else {
+				target = fmt.Sprintf("https://%s:%d%s", host, tlsPort, uri)
+			}
+			http.Redirect(w, r, target, http.StatusTemporaryRedirect)
+		})
+	}
 }
 
 func corsMiddleware(next http.Handler) http.Handler {

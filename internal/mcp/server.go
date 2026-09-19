@@ -2,12 +2,9 @@ package mcp
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
-	"sync"
-	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"monstermq.io/edge/internal/archive"
@@ -17,19 +14,13 @@ import (
 )
 
 type Server struct {
-	cfg        *config.Config
-	storage    *stores.Storage
-	archives   *archive.Manager
-	authCache  *auth.Cache
-	publishFn  func(topic string, payload []byte, retain bool, qos byte) error
-	logger     *slog.Logger
-	mcpServer  *mcp.Server
-	httpServer *http.Server
-
-	mu      sync.Mutex
-	started bool
-	stopped bool
-	done    chan struct{}
+	cfg       *config.Config
+	storage   *stores.Storage
+	archives  *archive.Manager
+	authCache *auth.Cache
+	publishFn func(topic string, payload []byte, retain bool, qos byte) error
+	logger    *slog.Logger
+	mcpServer *mcp.Server
 }
 
 func NewServer(cfg *config.Config, storage *stores.Storage, archives *archive.Manager, authCache *auth.Cache, publishFn func(topic string, payload []byte, retain bool, qos byte) error, logger *slog.Logger) *Server {
@@ -48,72 +39,30 @@ func NewServer(cfg *config.Config, storage *stores.Storage, archives *archive.Ma
 		publishFn: publishFn,
 		logger:    logger,
 		mcpServer: mcpSrv,
-		done:      make(chan struct{}),
-	}
-
-	opts := &mcp.StreamableHTTPOptions{
-		Stateless:    true,
-		JSONResponse: true,
-	}
-	handler := mcp.NewStreamableHTTPHandler(func(req *http.Request) *mcp.Server {
-		return mcpSrv
-	}, opts)
-
-	mux := http.NewServeMux()
-	mux.Handle("/mcp", s.authMiddleware(handler))
-	mux.Handle("/mcp/", s.authMiddleware(handler))
-
-	s.httpServer = &http.Server{
-		Addr:              fmt.Sprintf(":%d", cfg.MCP.Port),
-		Handler:           mux,
-		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	s.registerTools()
 	return s
 }
 
+// Handler returns an http.Handler that serves MCP Streamable HTTP / SSE with authentication.
+func (s *Server) Handler() http.Handler {
+	opts := &mcp.StreamableHTTPOptions{
+		Stateless:    true,
+		JSONResponse: true,
+	}
+	handler := mcp.NewStreamableHTTPHandler(func(req *http.Request) *mcp.Server {
+		return s.mcpServer
+	}, opts)
+	return s.authMiddleware(handler)
+}
+
 func (s *Server) Start() error {
-	s.mu.Lock()
-	if s.stopped {
-		s.mu.Unlock()
-		return nil
-	}
-	if s.started {
-		s.mu.Unlock()
-		return fmt.Errorf("mcp server already started")
-	}
-	s.started = true
-	s.mu.Unlock()
-
-	defer close(s.done)
-
-	s.logger.Info("mcp server listening", "port", s.cfg.MCP.Port)
-	if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		return err
-	}
 	return nil
 }
 
 func (s *Server) Stop(ctx context.Context) error {
-	s.mu.Lock()
-	if s.stopped {
-		s.mu.Unlock()
-		return nil
-	}
-	s.stopped = true
-	started := s.started
-	s.mu.Unlock()
-
-	err := s.httpServer.Shutdown(ctx)
-	if started {
-		select {
-		case <-s.done:
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-	return err
+	return nil
 }
 
 func (s *Server) authMiddleware(next http.Handler) http.Handler {

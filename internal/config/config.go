@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"os"
+
+	"gopkg.in/yaml.v3"
 )
 
 type StoreType string
@@ -130,8 +132,44 @@ type LoggingConfig struct {
 }
 
 type GraphQLConfig struct {
-	Enabled bool `yaml:"Enabled"`
-	Port    int  `yaml:"Port"`
+	Enabled                 bool   `yaml:"Enabled"`
+	Address                 string `yaml:"Address,omitempty"`
+	Port                    int    `yaml:"Port,omitempty"`
+	TLSPort                 int    `yaml:"TLSPort,omitempty"`
+	TLSAddress              string `yaml:"TLSAddress,omitempty"`
+	RequireHTTPSFromOutside bool   `yaml:"RequireHTTPSFromOutside"`
+	KeyStorePath            string `yaml:"KeyStorePath,omitempty"`
+	KeyPath                 string `yaml:"KeyPath,omitempty"`
+	KeyStorePassword        string `yaml:"KeyStorePassword,omitempty"`
+}
+
+// HTTPEnabled reports whether the HTTP listener is enabled (Port > 0).
+func (g *GraphQLConfig) HTTPEnabled() bool {
+	return g.Enabled && g.Port > 0
+}
+
+// TLSEnabled reports whether the HTTPS listener is enabled (TLSPort > 0).
+func (g *GraphQLConfig) TLSEnabled() bool {
+	return g.Enabled && g.TLSPort > 0
+}
+
+// UnmarshalYAML implements yaml.Unmarshaler so that when a GraphQL block
+// is defined in YAML, Port and TLSPort are enabled only if explicitly defined (> 0).
+func (g *GraphQLConfig) UnmarshalYAML(value *yaml.Node) error {
+	type rawGraphQLConfig GraphQLConfig
+	aux := rawGraphQLConfig{
+		Enabled: true,
+	}
+	if err := value.Decode(&aux); err != nil {
+		return err
+	}
+	*g = GraphQLConfig(aux)
+	return nil
+}
+
+type DashboardConfig struct {
+	Enabled bool   `yaml:"Enabled"`
+	Path    string `yaml:"Path"`
 }
 
 type RestApiConfig struct {
@@ -140,7 +178,6 @@ type RestApiConfig struct {
 
 type MCPConfig struct {
 	Enabled bool `yaml:"Enabled"`
-	Port    int  `yaml:"Port"`
 }
 
 type HostMonitoringConfig struct {
@@ -224,6 +261,7 @@ type Config struct {
 	Metrics        MetricsConfig        `yaml:"Metrics"`
 	Logging        LoggingConfig        `yaml:"Logging"`
 	GraphQL        GraphQLConfig        `yaml:"GraphQL"`
+	Dashboard      DashboardConfig      `yaml:"Dashboard"`
 	RestApi        RestApiConfig        `yaml:"RestApi"`
 	MCP            MCPConfig            `yaml:"MCP"`
 	Features       FeaturesConfig       `yaml:"Features"`
@@ -261,9 +299,15 @@ func Default() *Config {
 		UserManagement:    UserManagementConfig{Enabled: false, PasswordAlgorithm: "BCRYPT", AnonymousEnabled: true, AclCacheEnabled: true, AllowAnonymousLocalhost: false},
 		Metrics:           MetricsConfig{Enabled: true, CollectionIntervalSeconds: 1, RetentionHours: 168, MaxHistoryRows: 3600},
 		Logging:           LoggingConfig{Level: "INFO", MqttSyslogEnabled: false, RingBufferSize: 1000},
-		GraphQL:           GraphQLConfig{Enabled: true, Port: 4000},
+		GraphQL: GraphQLConfig{
+			Enabled:                 true,
+			Port:                    4000,
+			TLSPort:                 4443,
+			RequireHTTPSFromOutside: false,
+		},
+		Dashboard:         DashboardConfig{Enabled: true, Path: ""},
 		RestApi:           RestApiConfig{Enabled: true},
-		MCP:               MCPConfig{Enabled: false, Port: 3000},
+		MCP:               MCPConfig{Enabled: false},
 		Features:          FeaturesConfig{MqttClient: false, WinCCUa: false, WinCCOa: false, DeviceImportExport: false, Mcp: false, Hmi: false, Redfish: false, RtspCamera: false},
 		HostMonitoring: HostMonitoringConfig{
 			Enabled:         false,
@@ -517,4 +561,35 @@ func (c *Config) GetQueueFlushIntervalMs() int {
 		return *c.QueueFlushIntervalMs
 	}
 	return 50
+}
+
+func (c *Config) EffectiveGraphQLCertPath() string {
+	if c.GraphQL.KeyStorePath != "" {
+		return c.GraphQL.KeyStorePath
+	}
+	if c.SSL.KeyStorePath != "" {
+		return c.SSL.KeyStorePath
+	}
+	return "data/server.crt"
+}
+
+func (c *Config) EffectiveGraphQLKeyPath() string {
+	if c.GraphQL.KeyPath != "" {
+		return c.GraphQL.KeyPath
+	}
+	if c.SSL.KeyPath != "" {
+		return c.SSL.KeyPath
+	}
+	return "data/server.key"
+}
+
+func (c *Config) EffectiveGraphQLKeyPassword() string {
+	if c.GraphQL.KeyStorePassword != "" {
+		return c.GraphQL.KeyStorePassword
+	}
+	return c.SSL.KeyStorePassword
+}
+
+func (c *Config) EffectiveGraphQLTLSPort() int {
+	return c.GraphQL.TLSPort
 }
