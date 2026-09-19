@@ -144,4 +144,13 @@ models:
     fields:
       metrics:        { resolver: true }
       metricsHistory: { resolver: true }
+  ScriptMutations:
+    fields:
+      create: { resolver: true }
+      update: { resolver: true }
+      delete: { resolver: true }
+      toggle: { resolver: true }
+      start:  { resolver: true }
+      stop:   { resolver: true }
+      test:   { resolver: true }
 

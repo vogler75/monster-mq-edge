@@ -262,7 +262,17 @@
         "Mcp":                { "type": "boolean", "description": "Enable the MCP server feature toggle." },
         "Hmi":                { "type": "boolean", "description": "Enable HTML/JS HMI hosting feature toggle." },
         "Redfish":            { "type": "boolean", "description": "Enable DMTF Redfish REST API feature toggle." },
-        "RtspCamera":         { "type": "boolean", "description": "Enable RTSP camera stream snapshot capture and round-robin publishing." }
+        "RtspCamera":         { "type": "boolean", "description": "Enable RTSP camera stream snapshot capture and round-robin publishing." },
+        "PythonScripts":      { "type": "boolean", "description": "Enable standalone Python/Starlark scripting engine." }
+      }
+    },
+    "PythonScripts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "WorkerPoolSize":   { "type": "integer", "minimum": 1, "default": 4, "description": "Number of concurrent worker threads for script execution." },
+        "QueueBufferSize":  { "type": "integer", "minimum": 16, "default": 1024, "description": "Buffer capacity for pending script execution tasks." },
+        "DefaultTimeoutMs": { "type": "integer", "minimum": 10, "default": 200, "description": "Default timeout in milliseconds per script execution." }
       }
     },
     "Redfish": {

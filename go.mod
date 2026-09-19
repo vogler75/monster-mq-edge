@@ -17,6 +17,7 @@ require (
 	github.com/rs/xid v1.4.0
 	github.com/vektah/gqlparser/v2 v2.5.33
 	go.mongodb.org/mongo-driver/v2 v2.5.1
+	go.starlark.net v0.0.0-20260908191801-89a6a09411d5
 	golang.org/x/crypto v0.55.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.49.1

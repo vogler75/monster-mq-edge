@@ -217,6 +217,13 @@ type FeaturesConfig struct {
 	Hmi                bool `yaml:"Hmi"`
 	Redfish            bool `yaml:"Redfish"`
 	RtspCamera         bool `yaml:"RtspCamera"`
+	PythonScripts      bool `yaml:"PythonScripts"`
+}
+
+type PythonScriptsConfig struct {
+	WorkerPoolSize   int   `yaml:"WorkerPoolSize"`
+	QueueBufferSize  int   `yaml:"QueueBufferSize"`
+	DefaultTimeoutMs int64 `yaml:"DefaultTimeoutMs"`
 }
 
 type WSSOverrideConfig struct {
@@ -270,6 +277,7 @@ type Config struct {
 	HostMonitoring HostMonitoringConfig `yaml:"HostMonitoring"`
 	HMI            HMIConfig            `yaml:"HMI"`
 	Redfish        RedfishConfig        `yaml:"Redfish"`
+	PythonScripts  PythonScriptsConfig  `yaml:"PythonScripts"`
 
 	// QueuedMessagesEnabled selects how messages for offline persistent (clean=false)
 	// sessions are held until the client reconnects.
@@ -310,7 +318,7 @@ func Default() *Config {
 		Dashboard:         DashboardConfig{Enabled: true, Path: ""},
 		RestApi:           RestApiConfig{Enabled: true},
 		MCP:               MCPConfig{Enabled: false},
-		Features:          FeaturesConfig{MqttClient: false, WinCCUa: false, WinCCOa: false, DeviceImportExport: false, Mcp: false, Hmi: false, Redfish: false, RtspCamera: false},
+		Features:          FeaturesConfig{MqttClient: false, WinCCUa: false, WinCCOa: false, DeviceImportExport: false, Mcp: false, Hmi: false, Redfish: false, RtspCamera: false, PythonScripts: false},
 		HostMonitoring: HostMonitoringConfig{
 			Enabled:         false,
 			BaseTopic:       "nodes/{NodeId}/host",
@@ -332,6 +340,11 @@ func Default() *Config {
 			DefaultSystemId:  "edge-node",
 			DefaultManagerId: "monstermq-edge",
 			AnonymousEnabled: true,
+		},
+		PythonScripts: PythonScriptsConfig{
+			WorkerPoolSize:   4,
+			QueueBufferSize:  1024,
+			DefaultTimeoutMs: 200,
 		},
 		QueuedMessagesEnabled: true,
 		MaxQueueMessages:      nil,

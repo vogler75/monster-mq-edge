@@ -43,6 +43,7 @@ func Open(ctx context.Context, dsn string) (*DB, error) {
 }
 
 func (d *DB) Close() error { d.pool.Close(); return nil }
+func (d *DB) Pool() *pgxpool.Pool { return d.pool }
 
 // Build constructs a Storage backed by Postgres.
 func Build(ctx context.Context, cfg *config.Config) (*stores.Storage, *DB, error) {

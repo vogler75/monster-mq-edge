@@ -29,6 +29,7 @@ import (
 	"monstermq.io/edge/internal/metrics"
 	"monstermq.io/edge/internal/pubsub"
 	"monstermq.io/edge/internal/redfish"
+	"monstermq.io/edge/internal/scripting"
 	"monstermq.io/edge/internal/stores"
 	"monstermq.io/edge/internal/version"
 )
@@ -53,6 +54,7 @@ type Resolver struct {
 	HmiMgr      *hmi.Manager
 	Redfish     *redfish.Manager
 	RtspCameras *rtspcamera.Manager
+	Scripts     *scripting.Manager
 
 	// Publish injects a message into the local broker (used by the publish mutation).
 	Publish func(topic string, payload []byte, retain bool, qos byte) error
@@ -66,7 +68,8 @@ func New(cfg *config.Config, storage *stores.Storage, bus *pubsub.Bus, archives 
 	publish func(string, []byte, bool, byte) error,
 	hmiMgr *hmi.Manager,
 	redfishMgr *redfish.Manager,
-	rtspCameras *rtspcamera.Manager) *Resolver {
+	rtspCameras *rtspcamera.Manager,
+	scripts *scripting.Manager) *Resolver {
 	return &Resolver{
 		Cfg:         cfg,
 		Storage:     storage,
@@ -86,6 +89,7 @@ func New(cfg *config.Config, storage *stores.Storage, bus *pubsub.Bus, archives 
 		HmiMgr:      hmiMgr,
 		Redfish:     redfishMgr,
 		RtspCameras: rtspCameras,
+		Scripts:     scripts,
 	}
 }
 
@@ -117,6 +121,9 @@ func (r *Resolver) enabledFeatures() []string {
 	}
 	if r.Cfg.Features.RtspCamera {
 		out = append(out, "RtspCamera")
+	}
+	if r.Cfg.Features.PythonScripts {
+		out = append(out, "PythonScripts")
 	}
 	return out
 }
@@ -151,6 +158,9 @@ func (r *Resolver) HmiMutations() generated.HmiMutationsResolver {
 func (r *Resolver) RtspCamera() generated.RtspCameraResolver { return &rtspCameraResolver{r} }
 func (r *Resolver) RtspCameraDeviceMutations() generated.RtspCameraDeviceMutationsResolver {
 	return &rtspCameraDeviceMutationsResolver{r}
+}
+func (r *Resolver) ScriptMutations() generated.ScriptMutationsResolver {
+	return &scriptMutationsResolver{r}
 }
 func (r *Resolver) WinCCUaClient() generated.WinCCUaClientResolver {
 	return &winCCUaClientResolver{r}

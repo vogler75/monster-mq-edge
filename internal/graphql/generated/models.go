@@ -647,6 +647,86 @@ type RtspCameraResult struct {
 	Errors  []string    `json:"errors"`
 }
 
+type Script struct {
+	Name                string        `json:"name"`
+	Namespace           string        `json:"namespace"`
+	NodeID              string        `json:"nodeId"`
+	Enabled             bool          `json:"enabled"`
+	Config              *ScriptConfig `json:"config"`
+	CreatedAt           string        `json:"createdAt"`
+	UpdatedAt           string        `json:"updatedAt"`
+	IsOnCurrentNode     bool          `json:"isOnCurrentNode"`
+	ExecutionCount      *int64        `json:"executionCount,omitempty"`
+	ErrorCount          *int64        `json:"errorCount,omitempty"`
+	LastExecutionTime   *string       `json:"lastExecutionTime,omitempty"`
+	LastExecutionStatus *string       `json:"lastExecutionStatus,omitempty"`
+	RecentLogs          []string      `json:"recentLogs"`
+}
+
+type ScriptConfig struct {
+	Language            string             `json:"language"`
+	Script              string             `json:"script"`
+	TriggerType         ScriptTriggerType  `json:"triggerType"`
+	TopicFilters        []string           `json:"topicFilters"`
+	TriggerOnChangeOnly *bool              `json:"triggerOnChangeOnly,omitempty"`
+	TimerIntervalMs     *int               `json:"timerIntervalMs,omitempty"`
+	InstanceMode        ScriptInstanceMode `json:"instanceMode"`
+	TimeoutMs           *int               `json:"timeoutMs,omitempty"`
+	Description         *string            `json:"description,omitempty"`
+}
+
+type ScriptConfigInput struct {
+	Language            string             `json:"language"`
+	Script              string             `json:"script"`
+	TriggerType         ScriptTriggerType  `json:"triggerType"`
+	TopicFilters        []string           `json:"topicFilters"`
+	TriggerOnChangeOnly *bool              `json:"triggerOnChangeOnly,omitempty"`
+	TimerIntervalMs     *int               `json:"timerIntervalMs,omitempty"`
+	InstanceMode        ScriptInstanceMode `json:"instanceMode"`
+	TimeoutMs           *int               `json:"timeoutMs,omitempty"`
+	Description         *string            `json:"description,omitempty"`
+}
+
+type ScriptInput struct {
+	Name      string             `json:"name"`
+	Namespace string             `json:"namespace"`
+	NodeID    string             `json:"nodeId"`
+	Enabled   *bool              `json:"enabled,omitempty"`
+	Config    *ScriptConfigInput `json:"config"`
+}
+
+type ScriptMutations struct {
+	Create *ScriptResult     `json:"create"`
+	Update *ScriptResult     `json:"update"`
+	Delete bool              `json:"delete"`
+	Toggle *ScriptResult     `json:"toggle"`
+	Start  *ScriptResult     `json:"start"`
+	Stop   *ScriptResult     `json:"stop"`
+	Test   *ScriptTestResult `json:"test"`
+}
+
+type ScriptPublishedMessage struct {
+	Topic   string `json:"topic"`
+	Payload string `json:"payload"`
+	Qos     int    `json:"qos"`
+	Retain  bool   `json:"retain"`
+}
+
+type ScriptResult struct {
+	Script  *Script  `json:"script,omitempty"`
+	Success bool     `json:"success"`
+	Errors  []string `json:"errors"`
+}
+
+type ScriptTestResult struct {
+	Success         bool                      `json:"success"`
+	ReturnValue     *string                   `json:"returnValue,omitempty"`
+	OutputMessages  []*ScriptPublishedMessage `json:"outputMessages"`
+	Logs            []string                  `json:"logs"`
+	Errors          []string                  `json:"errors"`
+	ExecutionTimeMs float64                   `json:"executionTimeMs"`
+}
+
 type Session struct {
 	ClientID              string              `json:"clientId"`
 	NodeID                string              `json:"nodeId"`
@@ -1686,6 +1766,120 @@ func (e *RtspTransport) UnmarshalJSON(b []byte) error {
 }
 
 func (e RtspTransport) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type ScriptInstanceMode string
+
+const (
+	ScriptInstanceModeSingleton     ScriptInstanceMode = "SINGLETON"
+	ScriptInstanceModeMultiInstance ScriptInstanceMode = "MULTI_INSTANCE"
+)
+
+var AllScriptInstanceMode = []ScriptInstanceMode{
+	ScriptInstanceModeSingleton,
+	ScriptInstanceModeMultiInstance,
+}
+
+func (e ScriptInstanceMode) IsValid() bool {
+	switch e {
+	case ScriptInstanceModeSingleton, ScriptInstanceModeMultiInstance:
+		return true
+	}
+	return false
+}
+
+func (e ScriptInstanceMode) String() string {
+	return string(e)
+}
+
+func (e *ScriptInstanceMode) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = ScriptInstanceMode(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid ScriptInstanceMode", str)
+	}
+	return nil
+}
+
+func (e ScriptInstanceMode) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *ScriptInstanceMode) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e ScriptInstanceMode) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type ScriptTriggerType string
+
+const (
+	ScriptTriggerTypeTopic    ScriptTriggerType = "TOPIC"
+	ScriptTriggerTypeTimer    ScriptTriggerType = "TIMER"
+	ScriptTriggerTypeBoth     ScriptTriggerType = "BOTH"
+	ScriptTriggerTypeCallable ScriptTriggerType = "CALLABLE"
+)
+
+var AllScriptTriggerType = []ScriptTriggerType{
+	ScriptTriggerTypeTopic,
+	ScriptTriggerTypeTimer,
+	ScriptTriggerTypeBoth,
+	ScriptTriggerTypeCallable,
+}
+
+func (e ScriptTriggerType) IsValid() bool {
+	switch e {
+	case ScriptTriggerTypeTopic, ScriptTriggerTypeTimer, ScriptTriggerTypeBoth, ScriptTriggerTypeCallable:
+		return true
+	}
+	return false
+}
+
+func (e ScriptTriggerType) String() string {
+	return string(e)
+}
+
+func (e *ScriptTriggerType) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = ScriptTriggerType(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid ScriptTriggerType", str)
+	}
+	return nil
+}
+
+func (e ScriptTriggerType) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *ScriptTriggerType) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e ScriptTriggerType) MarshalJSON() ([]byte, error) {
 	var buf bytes.Buffer
 	e.MarshalGQL(&buf)
 	return buf.Bytes(), nil

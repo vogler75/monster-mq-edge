@@ -29,6 +29,7 @@ import (
 	"monstermq.io/edge/internal/pubsub"
 	"monstermq.io/edge/internal/redfish"
 	"monstermq.io/edge/internal/restapi"
+	"monstermq.io/edge/internal/scripting"
 	"monstermq.io/edge/internal/stores"
 	storememory "monstermq.io/edge/internal/stores/memory"
 	storemongo "monstermq.io/edge/internal/stores/mongodb"
@@ -52,6 +53,7 @@ type Server struct {
 	winCCUa     *winccua.Manager
 	winCCOa     *winccoa.Manager
 	rtspCameras *rtspcamera.Manager
+	scripts     *scripting.Manager
 	gqlSrv      *gql.Server
 	mcpSrv      *mcp.Server
 	redfishMgr  *redfish.Manager
@@ -314,6 +316,12 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 		rtspCameras = rtspcamera.NewManager(storage.DeviceConfig, publishFn, &rtspcamera.BusAdapter{Bus: bus}, cfg.NodeID, logger)
 	}
 
+	// 7g. Scripting manager (Starlark/Python scripts)
+	var scripts *scripting.Manager
+	if cfg.Features.PythonScripts {
+		scripts = scripting.NewManager(storage.DeviceConfig, storage, archives, sqliteDB, pgDB, publishFn, bus, cfg.NodeID, logger)
+	}
+
 	// 8. MCP server (Streamable HTTP / SSE mounted at /mcp)
 	var mcpSrv *mcp.Server
 	var mcpHandler http.Handler
@@ -326,7 +334,7 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 	// 9. GraphQL server (HTTP + WebSocket)
 	var gqlSrv *gql.Server
 	if cfg.GraphQL.Enabled && (cfg.GraphQL.HTTPEnabled() || cfg.GraphQL.TLSEnabled()) {
-		resolver := resolvers.New(cfg, storage, bus, archives, bridges, winCCUa, winCCOa, authCache, collector, logBus, logger, server, publishFn, hmiMgr, redfishMgr, rtspCameras)
+		resolver := resolvers.New(cfg, storage, bus, archives, bridges, winCCUa, winCCOa, authCache, collector, logBus, logger, server, publishFn, hmiMgr, redfishMgr, rtspCameras, scripts)
 		var rest *restapi.Handler
 		if cfg.RestApi.Enabled {
 			rest = restapi.New(cfg, authCache, storage.Retained, archives, bus, publishFn)
@@ -354,7 +362,7 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 	return &Server{
 		cfg: cfg, logger: logger, mochi: server,
 		storage: storage, bus: bus, subs: subs, archives: archives, authCache: authCache,
-		collector: collector, bridges: bridges, winCCUa: winCCUa, winCCOa: winCCOa, rtspCameras: rtspCameras, gqlSrv: gqlSrv,
+		collector: collector, bridges: bridges, winCCUa: winCCUa, winCCOa: winCCOa, rtspCameras: rtspCameras, scripts: scripts, gqlSrv: gqlSrv,
 		mcpSrv: mcpSrv, redfishMgr: redfishMgr, hostMonitor: hostMonitor, hmiSync: hmiSync,
 		storageHook: storageHook,
 	}, nil
@@ -490,6 +498,11 @@ func (s *Server) Serve() error {
 			s.logger.Warn("rtsp cameras start error", "err", err)
 		}
 	}
+	if s.scripts != nil {
+		if err := s.scripts.Start(context.Background()); err != nil {
+			s.logger.Warn("scripts start error", "err", err)
+		}
+	}
 	if s.hostMonitor != nil {
 		s.hostMonitor.Start(context.Background())
 	}
@@ -525,6 +538,9 @@ func (s *Server) Close() error {
 	}
 	if s.rtspCameras != nil {
 		s.rtspCameras.Stop()
+	}
+	if s.scripts != nil {
+		s.scripts.Stop()
 	}
 	if s.hostMonitor != nil {
 		s.hostMonitor.Stop()

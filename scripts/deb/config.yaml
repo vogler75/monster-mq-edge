@@ -87,6 +87,7 @@ Features:
   Hmi: true
   Redfish: false
   RtspCamera: false
+  PythonScripts: false
 
 Redfish:
   Enabled: false

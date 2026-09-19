@@ -36,6 +36,7 @@ type ResolverRoot interface {
 	Query() QueryResolver
 	RtspCamera() RtspCameraResolver
 	RtspCameraDeviceMutations() RtspCameraDeviceMutationsResolver
+	ScriptMutations() ScriptMutationsResolver
 	Session() SessionResolver
 	SessionMutations() SessionMutationsResolver
 	Subscription() SubscriptionResolver
@@ -115,6 +116,7 @@ type MutationResolver interface {
 	DeleteRedfishMapping(ctx context.Context, name string) (bool, error)
 	ToggleRedfishMapping(ctx context.Context, name string, enabled bool) (*RedfishResult, error)
 	RtspCamera(ctx context.Context) (*RtspCameraDeviceMutations, error)
+	Script(ctx context.Context) (*ScriptMutations, error)
 	WinCCOaDevice(ctx context.Context) (*WinCCOaDeviceMutations, error)
 	WinCCUaDevice(ctx context.Context) (*WinCCUaDeviceMutations, error)
 }
@@ -152,6 +154,8 @@ type QueryResolver interface {
 	RedfishLiveSensors(ctx context.Context, chassisID *string) ([]*RedfishSensorStatus, error)
 	RtspCameras(ctx context.Context, name *string, node *string) ([]*RtspCamera, error)
 	RtspCamera(ctx context.Context, name string) (*RtspCamera, error)
+	Scripts(ctx context.Context, name *string, nodeID *string) ([]*Script, error)
+	Script(ctx context.Context, name string) (*Script, error)
 	WinCCOaClients(ctx context.Context, name *string, node *string) ([]*WinCCOaClient, error)
 	WinCCUaClients(ctx context.Context, name *string, node *string) ([]*WinCCUaClient, error)
 }
@@ -167,6 +171,15 @@ type RtspCameraDeviceMutationsResolver interface {
 	Stop(ctx context.Context, obj *RtspCameraDeviceMutations, name string) (*RtspCameraResult, error)
 	Toggle(ctx context.Context, obj *RtspCameraDeviceMutations, name string, enabled bool) (*RtspCameraResult, error)
 	TriggerSnapshot(ctx context.Context, obj *RtspCameraDeviceMutations, name string) (*RtspCameraResult, error)
+}
+type ScriptMutationsResolver interface {
+	Create(ctx context.Context, obj *ScriptMutations, input ScriptInput) (*ScriptResult, error)
+	Update(ctx context.Context, obj *ScriptMutations, name string, input ScriptInput) (*ScriptResult, error)
+	Delete(ctx context.Context, obj *ScriptMutations, name string) (bool, error)
+	Toggle(ctx context.Context, obj *ScriptMutations, name string, enabled bool) (*ScriptResult, error)
+	Start(ctx context.Context, obj *ScriptMutations, name string) (*ScriptResult, error)
+	Stop(ctx context.Context, obj *ScriptMutations, name string) (*ScriptResult, error)
+	Test(ctx context.Context, obj *ScriptMutations, input ScriptInput, testTopic *string, testPayload *string, testArgs *string) (*ScriptTestResult, error)
 }
 type SessionResolver interface {
 	Metrics(ctx context.Context, obj *Session) ([]*SessionMetrics, error)
@@ -266,6 +279,8 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 		ec.unmarshalInputRedfishThresholdsInput,
 		ec.unmarshalInputRtspCameraConfigInput,
 		ec.unmarshalInputRtspCameraInput,
+		ec.unmarshalInputScriptConfigInput,
+		ec.unmarshalInputScriptInput,
 		ec.unmarshalInputSetPasswordInput,
 		ec.unmarshalInputUpdateAclRuleInput,
 		ec.unmarshalInputUpdateArchiveGroupInput,
@@ -1398,6 +1413,109 @@ type ArchiveStats {
 type DailyCount {
     date: String!
     count: Long!
+}
+`, BuiltIn: false},
+	{Name: "../schema/scripts.graphqls", Input: `# Python / Starlark Scripting Subsystem Schema
+
+enum ScriptTriggerType {
+    TOPIC
+    TIMER
+    BOTH
+    CALLABLE
+}
+
+enum ScriptInstanceMode {
+    SINGLETON
+    MULTI_INSTANCE
+}
+
+type ScriptConfig {
+    language: String!
+    script: String!
+    triggerType: ScriptTriggerType!
+    topicFilters: [String!]!
+    triggerOnChangeOnly: Boolean
+    timerIntervalMs: Int
+    instanceMode: ScriptInstanceMode!
+    timeoutMs: Int
+    description: String
+}
+
+input ScriptConfigInput {
+    language: String! = "starlark"
+    script: String!
+    triggerType: ScriptTriggerType! = TOPIC
+    topicFilters: [String!]! = []
+    triggerOnChangeOnly: Boolean = false
+    timerIntervalMs: Int = 0
+    instanceMode: ScriptInstanceMode! = SINGLETON
+    timeoutMs: Int = 200
+    description: String
+}
+
+input ScriptInput {
+    name: String!
+    namespace: String! = "script"
+    nodeId: String! = "local"
+    enabled: Boolean = true
+    config: ScriptConfigInput!
+}
+
+type Script {
+    name: String!
+    namespace: String!
+    nodeId: String!
+    enabled: Boolean!
+    config: ScriptConfig!
+    createdAt: String!
+    updatedAt: String!
+    isOnCurrentNode: Boolean!
+    executionCount: Long
+    errorCount: Long
+    lastExecutionTime: String
+    lastExecutionStatus: String
+    recentLogs: [String!]!
+}
+
+type ScriptResult {
+    script: Script
+    success: Boolean!
+    errors: [String!]!
+}
+
+type ScriptPublishedMessage {
+    topic: String!
+    payload: String!
+    qos: Int!
+    retain: Boolean!
+}
+
+type ScriptTestResult {
+    success: Boolean!
+    returnValue: String
+    outputMessages: [ScriptPublishedMessage!]!
+    logs: [String!]!
+    errors: [String!]!
+    executionTimeMs: Float!
+}
+
+type ScriptMutations {
+    create(input: ScriptInput!): ScriptResult!
+    update(name: String!, input: ScriptInput!): ScriptResult!
+    delete(name: String!): Boolean!
+    toggle(name: String!, enabled: Boolean!): ScriptResult!
+    start(name: String!): ScriptResult!
+    stop(name: String!): ScriptResult!
+    test(input: ScriptInput!, testTopic: String, testPayload: String, testArgs: String): ScriptTestResult!
+}
+
+extend type Query {
+    scripts(name: String, nodeId: String): [Script!]!
+    script(name: String!): Script
+}
+
+extend type Mutation {
+    script: ScriptMutations!
 }
 `, BuiltIn: false},
 	{Name: "../schema/winccoa.graphqls", Input: `# WinCC Open Architecture bridge. Names and casing follow the Java broker
@@ -2621,6 +2739,33 @@ func (ec *executionContext) field_Query_rtspCameras_args(ctx context.Context, ra
 	return args, nil
 }
 
+func (ec *executionContext) field_Query_script_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["name"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_scripts_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name", ec.unmarshalOString2ᚖstring)
+	if err != nil {
+		return nil, err
+	}
+	args["name"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "nodeId", ec.unmarshalOString2ᚖstring)
+	if err != nil {
+		return nil, err
+	}
+	args["nodeId"] = arg1
+	return args, nil
+}
+
 func (ec *executionContext) field_Query_searchTopics_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
@@ -2893,6 +3038,108 @@ func (ec *executionContext) field_RtspCamera_metricsHistory_args(ctx context.Con
 		return nil, err
 	}
 	args["lastMinutes"] = arg2
+	return args, nil
+}
+
+func (ec *executionContext) field_ScriptMutations_create_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input", ec.unmarshalNScriptInput2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScriptInput)
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_ScriptMutations_delete_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["name"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_ScriptMutations_start_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["name"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_ScriptMutations_stop_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["name"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_ScriptMutations_test_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input", ec.unmarshalNScriptInput2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScriptInput)
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "testTopic", ec.unmarshalOString2ᚖstring)
+	if err != nil {
+		return nil, err
+	}
+	args["testTopic"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "testPayload", ec.unmarshalOString2ᚖstring)
+	if err != nil {
+		return nil, err
+	}
+	args["testPayload"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "testArgs", ec.unmarshalOString2ᚖstring)
+	if err != nil {
+		return nil, err
+	}
+	args["testArgs"] = arg3
+	return args, nil
+}
+
+func (ec *executionContext) field_ScriptMutations_toggle_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["name"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "enabled", ec.unmarshalNBoolean2bool)
+	if err != nil {
+		return nil, err
+	}
+	args["enabled"] = arg1
+	return args, nil
+}
+
+func (ec *executionContext) field_ScriptMutations_update_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["name"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "input", ec.unmarshalNScriptInput2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScriptInput)
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg1
 	return args, nil
 }
 
@@ -12347,6 +12594,51 @@ func (ec *executionContext) fieldContext_Mutation_rtspCamera(_ context.Context, 
 	return fc, nil
 }
 
+func (ec *executionContext) _Mutation_script(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Mutation_script,
+		func(ctx context.Context) (any, error) {
+			return ec.Resolvers.Mutation().Script(ctx)
+		},
+		nil,
+		ec.marshalNScriptMutations2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScriptMutations,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Mutation_script(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "create":
+				return ec.fieldContext_ScriptMutations_create(ctx, field)
+			case "update":
+				return ec.fieldContext_ScriptMutations_update(ctx, field)
+			case "delete":
+				return ec.fieldContext_ScriptMutations_delete(ctx, field)
+			case "toggle":
+				return ec.fieldContext_ScriptMutations_toggle(ctx, field)
+			case "start":
+				return ec.fieldContext_ScriptMutations_start(ctx, field)
+			case "stop":
+				return ec.fieldContext_ScriptMutations_stop(ctx, field)
+			case "test":
+				return ec.fieldContext_ScriptMutations_test(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type ScriptMutations", field.Name)
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Mutation_winCCOaDevice(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -14793,6 +15085,144 @@ func (ec *executionContext) fieldContext_Query_rtspCamera(ctx context.Context, f
 	}()
 	ctx = graphql.WithFieldContext(ctx, fc)
 	if fc.Args, err = ec.field_Query_rtspCamera_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_scripts(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Query_scripts,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().Scripts(ctx, fc.Args["name"].(*string), fc.Args["nodeId"].(*string))
+		},
+		nil,
+		ec.marshalNScript2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScriptᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Query_scripts(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "name":
+				return ec.fieldContext_Script_name(ctx, field)
+			case "namespace":
+				return ec.fieldContext_Script_namespace(ctx, field)
+			case "nodeId":
+				return ec.fieldContext_Script_nodeId(ctx, field)
+			case "enabled":
+				return ec.fieldContext_Script_enabled(ctx, field)
+			case "config":
+				return ec.fieldContext_Script_config(ctx, field)
+			case "createdAt":
+				return ec.fieldContext_Script_createdAt(ctx, field)
+			case "updatedAt":
+				return ec.fieldContext_Script_updatedAt(ctx, field)
+			case "isOnCurrentNode":
+				return ec.fieldContext_Script_isOnCurrentNode(ctx, field)
+			case "executionCount":
+				return ec.fieldContext_Script_executionCount(ctx, field)
+			case "errorCount":
+				return ec.fieldContext_Script_errorCount(ctx, field)
+			case "lastExecutionTime":
+				return ec.fieldContext_Script_lastExecutionTime(ctx, field)
+			case "lastExecutionStatus":
+				return ec.fieldContext_Script_lastExecutionStatus(ctx, field)
+			case "recentLogs":
+				return ec.fieldContext_Script_recentLogs(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type Script", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_scripts_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_script(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Query_script,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().Script(ctx, fc.Args["name"].(string))
+		},
+		nil,
+		ec.marshalOScript2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScript,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Query_script(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "name":
+				return ec.fieldContext_Script_name(ctx, field)
+			case "namespace":
+				return ec.fieldContext_Script_namespace(ctx, field)
+			case "nodeId":
+				return ec.fieldContext_Script_nodeId(ctx, field)
+			case "enabled":
+				return ec.fieldContext_Script_enabled(ctx, field)
+			case "config":
+				return ec.fieldContext_Script_config(ctx, field)
+			case "createdAt":
+				return ec.fieldContext_Script_createdAt(ctx, field)
+			case "updatedAt":
+				return ec.fieldContext_Script_updatedAt(ctx, field)
+			case "isOnCurrentNode":
+				return ec.fieldContext_Script_isOnCurrentNode(ctx, field)
+			case "executionCount":
+				return ec.fieldContext_Script_executionCount(ctx, field)
+			case "errorCount":
+				return ec.fieldContext_Script_errorCount(ctx, field)
+			case "lastExecutionTime":
+				return ec.fieldContext_Script_lastExecutionTime(ctx, field)
+			case "lastExecutionStatus":
+				return ec.fieldContext_Script_lastExecutionStatus(ctx, field)
+			case "recentLogs":
+				return ec.fieldContext_Script_recentLogs(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type Script", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_script_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
 	}
@@ -17558,6 +17988,1420 @@ func (ec *executionContext) fieldContext_RtspCameraResult_errors(_ context.Conte
 		IsResolver: false,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Script_name(ctx context.Context, field graphql.CollectedField, obj *Script) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Script_name,
+		func(ctx context.Context) (any, error) {
+			return obj.Name, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Script_name(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Script",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Script_namespace(ctx context.Context, field graphql.CollectedField, obj *Script) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Script_namespace,
+		func(ctx context.Context) (any, error) {
+			return obj.Namespace, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Script_namespace(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Script",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Script_nodeId(ctx context.Context, field graphql.CollectedField, obj *Script) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Script_nodeId,
+		func(ctx context.Context) (any, error) {
+			return obj.NodeID, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Script_nodeId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Script",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Script_enabled(ctx context.Context, field graphql.CollectedField, obj *Script) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Script_enabled,
+		func(ctx context.Context) (any, error) {
+			return obj.Enabled, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Script_enabled(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Script",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Script_config(ctx context.Context, field graphql.CollectedField, obj *Script) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Script_config,
+		func(ctx context.Context) (any, error) {
+			return obj.Config, nil
+		},
+		nil,
+		ec.marshalNScriptConfig2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScriptConfig,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Script_config(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Script",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "language":
+				return ec.fieldContext_ScriptConfig_language(ctx, field)
+			case "script":
+				return ec.fieldContext_ScriptConfig_script(ctx, field)
+			case "triggerType":
+				return ec.fieldContext_ScriptConfig_triggerType(ctx, field)
+			case "topicFilters":
+				return ec.fieldContext_ScriptConfig_topicFilters(ctx, field)
+			case "triggerOnChangeOnly":
+				return ec.fieldContext_ScriptConfig_triggerOnChangeOnly(ctx, field)
+			case "timerIntervalMs":
+				return ec.fieldContext_ScriptConfig_timerIntervalMs(ctx, field)
+			case "instanceMode":
+				return ec.fieldContext_ScriptConfig_instanceMode(ctx, field)
+			case "timeoutMs":
+				return ec.fieldContext_ScriptConfig_timeoutMs(ctx, field)
+			case "description":
+				return ec.fieldContext_ScriptConfig_description(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type ScriptConfig", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Script_createdAt(ctx context.Context, field graphql.CollectedField, obj *Script) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Script_createdAt,
+		func(ctx context.Context) (any, error) {
+			return obj.CreatedAt, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Script_createdAt(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Script",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Script_updatedAt(ctx context.Context, field graphql.CollectedField, obj *Script) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Script_updatedAt,
+		func(ctx context.Context) (any, error) {
+			return obj.UpdatedAt, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Script_updatedAt(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Script",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Script_isOnCurrentNode(ctx context.Context, field graphql.CollectedField, obj *Script) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Script_isOnCurrentNode,
+		func(ctx context.Context) (any, error) {
+			return obj.IsOnCurrentNode, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Script_isOnCurrentNode(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Script",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Script_executionCount(ctx context.Context, field graphql.CollectedField, obj *Script) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Script_executionCount,
+		func(ctx context.Context) (any, error) {
+			return obj.ExecutionCount, nil
+		},
+		nil,
+		ec.marshalOLong2ᚖint64,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Script_executionCount(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Script",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Long does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Script_errorCount(ctx context.Context, field graphql.CollectedField, obj *Script) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Script_errorCount,
+		func(ctx context.Context) (any, error) {
+			return obj.ErrorCount, nil
+		},
+		nil,
+		ec.marshalOLong2ᚖint64,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Script_errorCount(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Script",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Long does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Script_lastExecutionTime(ctx context.Context, field graphql.CollectedField, obj *Script) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Script_lastExecutionTime,
+		func(ctx context.Context) (any, error) {
+			return obj.LastExecutionTime, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Script_lastExecutionTime(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Script",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Script_lastExecutionStatus(ctx context.Context, field graphql.CollectedField, obj *Script) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Script_lastExecutionStatus,
+		func(ctx context.Context) (any, error) {
+			return obj.LastExecutionStatus, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Script_lastExecutionStatus(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Script",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Script_recentLogs(ctx context.Context, field graphql.CollectedField, obj *Script) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Script_recentLogs,
+		func(ctx context.Context) (any, error) {
+			return obj.RecentLogs, nil
+		},
+		nil,
+		ec.marshalNString2ᚕstringᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Script_recentLogs(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Script",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ScriptConfig_language(ctx context.Context, field graphql.CollectedField, obj *ScriptConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ScriptConfig_language,
+		func(ctx context.Context) (any, error) {
+			return obj.Language, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_ScriptConfig_language(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ScriptConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ScriptConfig_script(ctx context.Context, field graphql.CollectedField, obj *ScriptConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ScriptConfig_script,
+		func(ctx context.Context) (any, error) {
+			return obj.Script, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_ScriptConfig_script(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ScriptConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ScriptConfig_triggerType(ctx context.Context, field graphql.CollectedField, obj *ScriptConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ScriptConfig_triggerType,
+		func(ctx context.Context) (any, error) {
+			return obj.TriggerType, nil
+		},
+		nil,
+		ec.marshalNScriptTriggerType2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScriptTriggerType,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_ScriptConfig_triggerType(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ScriptConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type ScriptTriggerType does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ScriptConfig_topicFilters(ctx context.Context, field graphql.CollectedField, obj *ScriptConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ScriptConfig_topicFilters,
+		func(ctx context.Context) (any, error) {
+			return obj.TopicFilters, nil
+		},
+		nil,
+		ec.marshalNString2ᚕstringᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_ScriptConfig_topicFilters(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ScriptConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ScriptConfig_triggerOnChangeOnly(ctx context.Context, field graphql.CollectedField, obj *ScriptConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ScriptConfig_triggerOnChangeOnly,
+		func(ctx context.Context) (any, error) {
+			return obj.TriggerOnChangeOnly, nil
+		},
+		nil,
+		ec.marshalOBoolean2ᚖbool,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_ScriptConfig_triggerOnChangeOnly(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ScriptConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ScriptConfig_timerIntervalMs(ctx context.Context, field graphql.CollectedField, obj *ScriptConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ScriptConfig_timerIntervalMs,
+		func(ctx context.Context) (any, error) {
+			return obj.TimerIntervalMs, nil
+		},
+		nil,
+		ec.marshalOInt2ᚖint,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_ScriptConfig_timerIntervalMs(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ScriptConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Int does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ScriptConfig_instanceMode(ctx context.Context, field graphql.CollectedField, obj *ScriptConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ScriptConfig_instanceMode,
+		func(ctx context.Context) (any, error) {
+			return obj.InstanceMode, nil
+		},
+		nil,
+		ec.marshalNScriptInstanceMode2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScriptInstanceMode,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_ScriptConfig_instanceMode(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ScriptConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type ScriptInstanceMode does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ScriptConfig_timeoutMs(ctx context.Context, field graphql.CollectedField, obj *ScriptConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ScriptConfig_timeoutMs,
+		func(ctx context.Context) (any, error) {
+			return obj.TimeoutMs, nil
+		},
+		nil,
+		ec.marshalOInt2ᚖint,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_ScriptConfig_timeoutMs(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ScriptConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Int does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ScriptConfig_description(ctx context.Context, field graphql.CollectedField, obj *ScriptConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ScriptConfig_description,
+		func(ctx context.Context) (any, error) {
+			return obj.Description, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_ScriptConfig_description(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ScriptConfig",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ScriptMutations_create(ctx context.Context, field graphql.CollectedField, obj *ScriptMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ScriptMutations_create,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.ScriptMutations().Create(ctx, obj, fc.Args["input"].(ScriptInput))
+		},
+		nil,
+		ec.marshalNScriptResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScriptResult,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_ScriptMutations_create(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ScriptMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "script":
+				return ec.fieldContext_ScriptResult_script(ctx, field)
+			case "success":
+				return ec.fieldContext_ScriptResult_success(ctx, field)
+			case "errors":
+				return ec.fieldContext_ScriptResult_errors(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type ScriptResult", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_ScriptMutations_create_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ScriptMutations_update(ctx context.Context, field graphql.CollectedField, obj *ScriptMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ScriptMutations_update,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.ScriptMutations().Update(ctx, obj, fc.Args["name"].(string), fc.Args["input"].(ScriptInput))
+		},
+		nil,
+		ec.marshalNScriptResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScriptResult,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_ScriptMutations_update(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ScriptMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "script":
+				return ec.fieldContext_ScriptResult_script(ctx, field)
+			case "success":
+				return ec.fieldContext_ScriptResult_success(ctx, field)
+			case "errors":
+				return ec.fieldContext_ScriptResult_errors(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type ScriptResult", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_ScriptMutations_update_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ScriptMutations_delete(ctx context.Context, field graphql.CollectedField, obj *ScriptMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ScriptMutations_delete,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.ScriptMutations().Delete(ctx, obj, fc.Args["name"].(string))
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_ScriptMutations_delete(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ScriptMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_ScriptMutations_delete_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ScriptMutations_toggle(ctx context.Context, field graphql.CollectedField, obj *ScriptMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ScriptMutations_toggle,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.ScriptMutations().Toggle(ctx, obj, fc.Args["name"].(string), fc.Args["enabled"].(bool))
+		},
+		nil,
+		ec.marshalNScriptResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScriptResult,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_ScriptMutations_toggle(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ScriptMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "script":
+				return ec.fieldContext_ScriptResult_script(ctx, field)
+			case "success":
+				return ec.fieldContext_ScriptResult_success(ctx, field)
+			case "errors":
+				return ec.fieldContext_ScriptResult_errors(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type ScriptResult", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_ScriptMutations_toggle_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ScriptMutations_start(ctx context.Context, field graphql.CollectedField, obj *ScriptMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ScriptMutations_start,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.ScriptMutations().Start(ctx, obj, fc.Args["name"].(string))
+		},
+		nil,
+		ec.marshalNScriptResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScriptResult,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_ScriptMutations_start(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ScriptMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "script":
+				return ec.fieldContext_ScriptResult_script(ctx, field)
+			case "success":
+				return ec.fieldContext_ScriptResult_success(ctx, field)
+			case "errors":
+				return ec.fieldContext_ScriptResult_errors(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type ScriptResult", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_ScriptMutations_start_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ScriptMutations_stop(ctx context.Context, field graphql.CollectedField, obj *ScriptMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ScriptMutations_stop,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.ScriptMutations().Stop(ctx, obj, fc.Args["name"].(string))
+		},
+		nil,
+		ec.marshalNScriptResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScriptResult,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_ScriptMutations_stop(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ScriptMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "script":
+				return ec.fieldContext_ScriptResult_script(ctx, field)
+			case "success":
+				return ec.fieldContext_ScriptResult_success(ctx, field)
+			case "errors":
+				return ec.fieldContext_ScriptResult_errors(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type ScriptResult", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_ScriptMutations_stop_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ScriptMutations_test(ctx context.Context, field graphql.CollectedField, obj *ScriptMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ScriptMutations_test,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.ScriptMutations().Test(ctx, obj, fc.Args["input"].(ScriptInput), fc.Args["testTopic"].(*string), fc.Args["testPayload"].(*string), fc.Args["testArgs"].(*string))
+		},
+		nil,
+		ec.marshalNScriptTestResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScriptTestResult,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_ScriptMutations_test(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ScriptMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "success":
+				return ec.fieldContext_ScriptTestResult_success(ctx, field)
+			case "returnValue":
+				return ec.fieldContext_ScriptTestResult_returnValue(ctx, field)
+			case "outputMessages":
+				return ec.fieldContext_ScriptTestResult_outputMessages(ctx, field)
+			case "logs":
+				return ec.fieldContext_ScriptTestResult_logs(ctx, field)
+			case "errors":
+				return ec.fieldContext_ScriptTestResult_errors(ctx, field)
+			case "executionTimeMs":
+				return ec.fieldContext_ScriptTestResult_executionTimeMs(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type ScriptTestResult", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_ScriptMutations_test_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ScriptPublishedMessage_topic(ctx context.Context, field graphql.CollectedField, obj *ScriptPublishedMessage) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ScriptPublishedMessage_topic,
+		func(ctx context.Context) (any, error) {
+			return obj.Topic, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_ScriptPublishedMessage_topic(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ScriptPublishedMessage",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ScriptPublishedMessage_payload(ctx context.Context, field graphql.CollectedField, obj *ScriptPublishedMessage) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ScriptPublishedMessage_payload,
+		func(ctx context.Context) (any, error) {
+			return obj.Payload, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_ScriptPublishedMessage_payload(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ScriptPublishedMessage",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ScriptPublishedMessage_qos(ctx context.Context, field graphql.CollectedField, obj *ScriptPublishedMessage) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ScriptPublishedMessage_qos,
+		func(ctx context.Context) (any, error) {
+			return obj.Qos, nil
+		},
+		nil,
+		ec.marshalNInt2int,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_ScriptPublishedMessage_qos(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ScriptPublishedMessage",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Int does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ScriptPublishedMessage_retain(ctx context.Context, field graphql.CollectedField, obj *ScriptPublishedMessage) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ScriptPublishedMessage_retain,
+		func(ctx context.Context) (any, error) {
+			return obj.Retain, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_ScriptPublishedMessage_retain(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ScriptPublishedMessage",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ScriptResult_script(ctx context.Context, field graphql.CollectedField, obj *ScriptResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ScriptResult_script,
+		func(ctx context.Context) (any, error) {
+			return obj.Script, nil
+		},
+		nil,
+		ec.marshalOScript2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScript,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_ScriptResult_script(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ScriptResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "name":
+				return ec.fieldContext_Script_name(ctx, field)
+			case "namespace":
+				return ec.fieldContext_Script_namespace(ctx, field)
+			case "nodeId":
+				return ec.fieldContext_Script_nodeId(ctx, field)
+			case "enabled":
+				return ec.fieldContext_Script_enabled(ctx, field)
+			case "config":
+				return ec.fieldContext_Script_config(ctx, field)
+			case "createdAt":
+				return ec.fieldContext_Script_createdAt(ctx, field)
+			case "updatedAt":
+				return ec.fieldContext_Script_updatedAt(ctx, field)
+			case "isOnCurrentNode":
+				return ec.fieldContext_Script_isOnCurrentNode(ctx, field)
+			case "executionCount":
+				return ec.fieldContext_Script_executionCount(ctx, field)
+			case "errorCount":
+				return ec.fieldContext_Script_errorCount(ctx, field)
+			case "lastExecutionTime":
+				return ec.fieldContext_Script_lastExecutionTime(ctx, field)
+			case "lastExecutionStatus":
+				return ec.fieldContext_Script_lastExecutionStatus(ctx, field)
+			case "recentLogs":
+				return ec.fieldContext_Script_recentLogs(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type Script", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ScriptResult_success(ctx context.Context, field graphql.CollectedField, obj *ScriptResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ScriptResult_success,
+		func(ctx context.Context) (any, error) {
+			return obj.Success, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_ScriptResult_success(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ScriptResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ScriptResult_errors(ctx context.Context, field graphql.CollectedField, obj *ScriptResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ScriptResult_errors,
+		func(ctx context.Context) (any, error) {
+			return obj.Errors, nil
+		},
+		nil,
+		ec.marshalNString2ᚕstringᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_ScriptResult_errors(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ScriptResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ScriptTestResult_success(ctx context.Context, field graphql.CollectedField, obj *ScriptTestResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ScriptTestResult_success,
+		func(ctx context.Context) (any, error) {
+			return obj.Success, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_ScriptTestResult_success(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ScriptTestResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ScriptTestResult_returnValue(ctx context.Context, field graphql.CollectedField, obj *ScriptTestResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ScriptTestResult_returnValue,
+		func(ctx context.Context) (any, error) {
+			return obj.ReturnValue, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_ScriptTestResult_returnValue(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ScriptTestResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ScriptTestResult_outputMessages(ctx context.Context, field graphql.CollectedField, obj *ScriptTestResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ScriptTestResult_outputMessages,
+		func(ctx context.Context) (any, error) {
+			return obj.OutputMessages, nil
+		},
+		nil,
+		ec.marshalNScriptPublishedMessage2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScriptPublishedMessageᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_ScriptTestResult_outputMessages(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ScriptTestResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "topic":
+				return ec.fieldContext_ScriptPublishedMessage_topic(ctx, field)
+			case "payload":
+				return ec.fieldContext_ScriptPublishedMessage_payload(ctx, field)
+			case "qos":
+				return ec.fieldContext_ScriptPublishedMessage_qos(ctx, field)
+			case "retain":
+				return ec.fieldContext_ScriptPublishedMessage_retain(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type ScriptPublishedMessage", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ScriptTestResult_logs(ctx context.Context, field graphql.CollectedField, obj *ScriptTestResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ScriptTestResult_logs,
+		func(ctx context.Context) (any, error) {
+			return obj.Logs, nil
+		},
+		nil,
+		ec.marshalNString2ᚕstringᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_ScriptTestResult_logs(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ScriptTestResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ScriptTestResult_errors(ctx context.Context, field graphql.CollectedField, obj *ScriptTestResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ScriptTestResult_errors,
+		func(ctx context.Context) (any, error) {
+			return obj.Errors, nil
+		},
+		nil,
+		ec.marshalNString2ᚕstringᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_ScriptTestResult_errors(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ScriptTestResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ScriptTestResult_executionTimeMs(ctx context.Context, field graphql.CollectedField, obj *ScriptTestResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ScriptTestResult_executionTimeMs,
+		func(ctx context.Context) (any, error) {
+			return obj.ExecutionTimeMs, nil
+		},
+		nil,
+		ec.marshalNFloat2float64,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_ScriptTestResult_executionTimeMs(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ScriptTestResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Float does not have child fields")
 		},
 	}
 	return fc, nil
@@ -26655,6 +28499,182 @@ func (ec *executionContext) unmarshalInputRtspCameraInput(ctx context.Context, o
 	return it, nil
 }
 
+func (ec *executionContext) unmarshalInputScriptConfigInput(ctx context.Context, obj any) (ScriptConfigInput, error) {
+	var it ScriptConfigInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	if _, present := asMap["language"]; !present {
+		asMap["language"] = "starlark"
+	}
+	if _, present := asMap["triggerType"]; !present {
+		asMap["triggerType"] = "TOPIC"
+	}
+	if _, present := asMap["topicFilters"]; !present {
+		asMap["topicFilters"] = []any{}
+	}
+	if _, present := asMap["triggerOnChangeOnly"]; !present {
+		asMap["triggerOnChangeOnly"] = false
+	}
+	if _, present := asMap["timerIntervalMs"]; !present {
+		asMap["timerIntervalMs"] = 0
+	}
+	if _, present := asMap["instanceMode"]; !present {
+		asMap["instanceMode"] = "SINGLETON"
+	}
+	if _, present := asMap["timeoutMs"]; !present {
+		asMap["timeoutMs"] = 200
+	}
+
+	fieldsInOrder := [...]string{"language", "script", "triggerType", "topicFilters", "triggerOnChangeOnly", "timerIntervalMs", "instanceMode", "timeoutMs", "description"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "language":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("language"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Language = data
+		case "script":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("script"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Script = data
+		case "triggerType":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("triggerType"))
+			data, err := ec.unmarshalNScriptTriggerType2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScriptTriggerType(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.TriggerType = data
+		case "topicFilters":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("topicFilters"))
+			data, err := ec.unmarshalNString2ᚕstringᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.TopicFilters = data
+		case "triggerOnChangeOnly":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("triggerOnChangeOnly"))
+			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.TriggerOnChangeOnly = data
+		case "timerIntervalMs":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("timerIntervalMs"))
+			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.TimerIntervalMs = data
+		case "instanceMode":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("instanceMode"))
+			data, err := ec.unmarshalNScriptInstanceMode2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScriptInstanceMode(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.InstanceMode = data
+		case "timeoutMs":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("timeoutMs"))
+			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.TimeoutMs = data
+		case "description":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("description"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Description = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputScriptInput(ctx context.Context, obj any) (ScriptInput, error) {
+	var it ScriptInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	if _, present := asMap["namespace"]; !present {
+		asMap["namespace"] = "script"
+	}
+	if _, present := asMap["nodeId"]; !present {
+		asMap["nodeId"] = "local"
+	}
+	if _, present := asMap["enabled"]; !present {
+		asMap["enabled"] = true
+	}
+
+	fieldsInOrder := [...]string{"name", "namespace", "nodeId", "enabled", "config"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "name":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("name"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Name = data
+		case "namespace":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("namespace"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Namespace = data
+		case "nodeId":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("nodeId"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.NodeID = data
+		case "enabled":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("enabled"))
+			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Enabled = data
+		case "config":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("config"))
+			data, err := ec.unmarshalNScriptConfigInput2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScriptConfigInput(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Config = data
+		}
+	}
+	return it, nil
+}
+
 func (ec *executionContext) unmarshalInputSetPasswordInput(ctx context.Context, obj any) (SetPasswordInput, error) {
 	var it SetPasswordInput
 	if obj == nil {
@@ -30980,6 +33000,13 @@ func (ec *executionContext) _Mutation(ctx context.Context, sel ast.SelectionSet)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
+		case "script":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_script(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
 		case "winCCOaDevice":
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Mutation_winCCOaDevice(ctx, field)
@@ -31872,6 +33899,47 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 					}
 				}()
 				res = ec._Query_rtspCamera(ctx, field)
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "scripts":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_scripts(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "script":
+			field := field
+
+			innerFunc := func(ctx context.Context, _ *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_script(ctx, field)
 				return res
 			}
 
@@ -32916,6 +34984,607 @@ func (ec *executionContext) _RtspCameraResult(ctx context.Context, sel ast.Selec
 			out.Values[i] = ec._RtspCameraResult_camera(ctx, field, obj)
 		case "errors":
 			out.Values[i] = ec._RtspCameraResult_errors(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var scriptImplementors = []string{"Script"}
+
+func (ec *executionContext) _Script(ctx context.Context, sel ast.SelectionSet, obj *Script) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, scriptImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("Script")
+		case "name":
+			out.Values[i] = ec._Script_name(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "namespace":
+			out.Values[i] = ec._Script_namespace(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "nodeId":
+			out.Values[i] = ec._Script_nodeId(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "enabled":
+			out.Values[i] = ec._Script_enabled(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "config":
+			out.Values[i] = ec._Script_config(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "createdAt":
+			out.Values[i] = ec._Script_createdAt(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "updatedAt":
+			out.Values[i] = ec._Script_updatedAt(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "isOnCurrentNode":
+			out.Values[i] = ec._Script_isOnCurrentNode(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "executionCount":
+			out.Values[i] = ec._Script_executionCount(ctx, field, obj)
+		case "errorCount":
+			out.Values[i] = ec._Script_errorCount(ctx, field, obj)
+		case "lastExecutionTime":
+			out.Values[i] = ec._Script_lastExecutionTime(ctx, field, obj)
+		case "lastExecutionStatus":
+			out.Values[i] = ec._Script_lastExecutionStatus(ctx, field, obj)
+		case "recentLogs":
+			out.Values[i] = ec._Script_recentLogs(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var scriptConfigImplementors = []string{"ScriptConfig"}
+
+func (ec *executionContext) _ScriptConfig(ctx context.Context, sel ast.SelectionSet, obj *ScriptConfig) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, scriptConfigImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("ScriptConfig")
+		case "language":
+			out.Values[i] = ec._ScriptConfig_language(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "script":
+			out.Values[i] = ec._ScriptConfig_script(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "triggerType":
+			out.Values[i] = ec._ScriptConfig_triggerType(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "topicFilters":
+			out.Values[i] = ec._ScriptConfig_topicFilters(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "triggerOnChangeOnly":
+			out.Values[i] = ec._ScriptConfig_triggerOnChangeOnly(ctx, field, obj)
+		case "timerIntervalMs":
+			out.Values[i] = ec._ScriptConfig_timerIntervalMs(ctx, field, obj)
+		case "instanceMode":
+			out.Values[i] = ec._ScriptConfig_instanceMode(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "timeoutMs":
+			out.Values[i] = ec._ScriptConfig_timeoutMs(ctx, field, obj)
+		case "description":
+			out.Values[i] = ec._ScriptConfig_description(ctx, field, obj)
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var scriptMutationsImplementors = []string{"ScriptMutations"}
+
+func (ec *executionContext) _ScriptMutations(ctx context.Context, sel ast.SelectionSet, obj *ScriptMutations) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, scriptMutationsImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("ScriptMutations")
+		case "create":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._ScriptMutations_create(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "update":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._ScriptMutations_update(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "delete":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._ScriptMutations_delete(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "toggle":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._ScriptMutations_toggle(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "start":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._ScriptMutations_start(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "stop":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._ScriptMutations_stop(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "test":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._ScriptMutations_test(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var scriptPublishedMessageImplementors = []string{"ScriptPublishedMessage"}
+
+func (ec *executionContext) _ScriptPublishedMessage(ctx context.Context, sel ast.SelectionSet, obj *ScriptPublishedMessage) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, scriptPublishedMessageImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("ScriptPublishedMessage")
+		case "topic":
+			out.Values[i] = ec._ScriptPublishedMessage_topic(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "payload":
+			out.Values[i] = ec._ScriptPublishedMessage_payload(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "qos":
+			out.Values[i] = ec._ScriptPublishedMessage_qos(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "retain":
+			out.Values[i] = ec._ScriptPublishedMessage_retain(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var scriptResultImplementors = []string{"ScriptResult"}
+
+func (ec *executionContext) _ScriptResult(ctx context.Context, sel ast.SelectionSet, obj *ScriptResult) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, scriptResultImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("ScriptResult")
+		case "script":
+			out.Values[i] = ec._ScriptResult_script(ctx, field, obj)
+		case "success":
+			out.Values[i] = ec._ScriptResult_success(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "errors":
+			out.Values[i] = ec._ScriptResult_errors(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var scriptTestResultImplementors = []string{"ScriptTestResult"}
+
+func (ec *executionContext) _ScriptTestResult(ctx context.Context, sel ast.SelectionSet, obj *ScriptTestResult) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, scriptTestResultImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("ScriptTestResult")
+		case "success":
+			out.Values[i] = ec._ScriptTestResult_success(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "returnValue":
+			out.Values[i] = ec._ScriptTestResult_returnValue(ctx, field, obj)
+		case "outputMessages":
+			out.Values[i] = ec._ScriptTestResult_outputMessages(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "logs":
+			out.Values[i] = ec._ScriptTestResult_logs(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "errors":
+			out.Values[i] = ec._ScriptTestResult_errors(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "executionTimeMs":
+			out.Values[i] = ec._ScriptTestResult_executionTimeMs(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
@@ -37346,6 +40015,140 @@ func (ec *executionContext) marshalNRtspTransport2monstermqᚗioᚋedgeᚋintern
 	return v
 }
 
+func (ec *executionContext) marshalNScript2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScriptᚄ(ctx context.Context, sel ast.SelectionSet, v []*Script) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNScript2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScript(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNScript2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScript(ctx context.Context, sel ast.SelectionSet, v *Script) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._Script(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNScriptConfig2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScriptConfig(ctx context.Context, sel ast.SelectionSet, v *ScriptConfig) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._ScriptConfig(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalNScriptConfigInput2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScriptConfigInput(ctx context.Context, v any) (*ScriptConfigInput, error) {
+	res, err := ec.unmarshalInputScriptConfigInput(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNScriptInput2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScriptInput(ctx context.Context, v any) (ScriptInput, error) {
+	res, err := ec.unmarshalInputScriptInput(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNScriptInstanceMode2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScriptInstanceMode(ctx context.Context, v any) (ScriptInstanceMode, error) {
+	var res ScriptInstanceMode
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNScriptInstanceMode2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScriptInstanceMode(ctx context.Context, sel ast.SelectionSet, v ScriptInstanceMode) graphql.Marshaler {
+	return v
+}
+
+func (ec *executionContext) marshalNScriptMutations2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScriptMutations(ctx context.Context, sel ast.SelectionSet, v ScriptMutations) graphql.Marshaler {
+	return ec._ScriptMutations(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNScriptMutations2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScriptMutations(ctx context.Context, sel ast.SelectionSet, v *ScriptMutations) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._ScriptMutations(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNScriptPublishedMessage2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScriptPublishedMessageᚄ(ctx context.Context, sel ast.SelectionSet, v []*ScriptPublishedMessage) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNScriptPublishedMessage2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScriptPublishedMessage(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNScriptPublishedMessage2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScriptPublishedMessage(ctx context.Context, sel ast.SelectionSet, v *ScriptPublishedMessage) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._ScriptPublishedMessage(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNScriptResult2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScriptResult(ctx context.Context, sel ast.SelectionSet, v ScriptResult) graphql.Marshaler {
+	return ec._ScriptResult(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNScriptResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScriptResult(ctx context.Context, sel ast.SelectionSet, v *ScriptResult) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._ScriptResult(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNScriptTestResult2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScriptTestResult(ctx context.Context, sel ast.SelectionSet, v ScriptTestResult) graphql.Marshaler {
+	return ec._ScriptTestResult(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNScriptTestResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScriptTestResult(ctx context.Context, sel ast.SelectionSet, v *ScriptTestResult) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._ScriptTestResult(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalNScriptTriggerType2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScriptTriggerType(ctx context.Context, v any) (ScriptTriggerType, error) {
+	var res ScriptTriggerType
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNScriptTriggerType2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScriptTriggerType(ctx context.Context, sel ast.SelectionSet, v ScriptTriggerType) graphql.Marshaler {
+	return v
+}
+
 func (ec *executionContext) marshalNSession2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐSessionᚄ(ctx context.Context, sel ast.SelectionSet, v []*Session) graphql.Marshaler {
 	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
 		fc := graphql.GetFieldContext(ctx)
@@ -38608,6 +41411,13 @@ func (ec *executionContext) marshalORtspTransport2ᚖmonstermqᚗioᚋedgeᚋint
 		return graphql.Null
 	}
 	return v
+}
+
+func (ec *executionContext) marshalOScript2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScript(ctx context.Context, sel ast.SelectionSet, v *Script) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._Script(ctx, sel, v)
 }
 
 func (ec *executionContext) marshalOSession2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐSession(ctx context.Context, sel ast.SelectionSet, v *Session) graphql.Marshaler {
