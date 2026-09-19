@@ -696,10 +696,12 @@ type ScriptInput struct {
 }
 
 type ScriptLanguage struct {
-	Name        string  `json:"name"`
-	DisplayName string  `json:"displayName"`
-	Description *string `json:"description,omitempty"`
-	IsDefault   *bool   `json:"isDefault,omitempty"`
+	Name          string  `json:"name"`
+	DisplayName   string  `json:"displayName"`
+	Description   *string `json:"description,omitempty"`
+	IsDefault     *bool   `json:"isDefault,omitempty"`
+	Documentation string  `json:"documentation"`
+	Skill         string  `json:"skill"`
 }
 
 type ScriptMutations struct {

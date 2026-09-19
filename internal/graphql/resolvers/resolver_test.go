@@ -1,8 +1,10 @@
 package resolvers
 
 import (
+	"context"
 	"testing"
 
+	"monstermq.io/edge/internal/config"
 	"monstermq.io/edge/internal/graphql/generated"
 )
 
@@ -47,4 +49,51 @@ func TestDatabaseConnectionTypeSQLiteMapping(t *testing.T) {
 		t.Fatalf("fromDatabaseConnectionType(SQLITE) = %v, want SQLITE", st)
 	}
 }
+
+func TestScriptDocumentationAndSkill(t *testing.T) {
+	r := &Resolver{
+		Cfg: &config.Config{
+			Features: config.FeaturesConfig{
+				PythonScripts: true,
+			},
+		},
+	}
+	qr := &queryResolver{r}
+	ctx := context.Background()
+
+	langs, err := qr.ScriptLanguages(ctx)
+	if err != nil {
+		t.Fatalf("ScriptLanguages error: %v", err)
+	}
+	if len(langs) == 0 {
+		t.Fatalf("expected at least 1 script language")
+	}
+	star := langs[0]
+	if star.Name != "starlark" {
+		t.Errorf("expected language starlark, got %s", star.Name)
+	}
+	if len(star.Documentation) == 0 {
+		t.Errorf("expected non-empty documentation for starlark")
+	}
+	if len(star.Skill) == 0 {
+		t.Errorf("expected non-empty skill for starlark")
+	}
+
+	doc, err := qr.ScriptDocumentation(ctx, nil)
+	if err != nil {
+		t.Fatalf("ScriptDocumentation error: %v", err)
+	}
+	if len(doc) == 0 {
+		t.Errorf("expected non-empty default ScriptDocumentation")
+	}
+
+	skill, err := qr.ScriptSkill(ctx, nil)
+	if err != nil {
+		t.Fatalf("ScriptSkill error: %v", err)
+	}
+	if len(skill) == 0 {
+		t.Errorf("expected non-empty default ScriptSkill")
+	}
+}
+
 

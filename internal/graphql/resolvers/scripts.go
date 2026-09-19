@@ -61,12 +61,40 @@ func (r *queryResolver) ScriptLanguages(ctx context.Context) ([]*generated.Scrip
 	desc := "Python-compatible dialect supported across both Edge and Main brokers."
 	return []*generated.ScriptLanguage{
 		{
-			Name:        "starlark",
-			DisplayName: "Starlark (Go / Python dialect)",
-			Description: &desc,
-			IsDefault:   &isDefault,
+			Name:          "starlark",
+			DisplayName:   "Starlark (Go / Python dialect)",
+			Description:   &desc,
+			IsDefault:     &isDefault,
+			Documentation: scripting.GetDocumentation("starlark"),
+			Skill:         scripting.GetSkill("starlark"),
 		},
 	}, nil
+}
+
+// Query: scriptDocumentation(language) ---------------------------------------
+
+func (r *queryResolver) ScriptDocumentation(ctx context.Context, language *string) (string, error) {
+	if !r.Cfg.Features.PythonScripts {
+		return "", nil
+	}
+	lang := ""
+	if language != nil {
+		lang = *language
+	}
+	return scripting.GetDocumentation(lang), nil
+}
+
+// Query: scriptSkill(language) -----------------------------------------------
+
+func (r *queryResolver) ScriptSkill(ctx context.Context, language *string) (string, error) {
+	if !r.Cfg.Features.PythonScripts {
+		return "", nil
+	}
+	lang := ""
+	if language != nil {
+		lang = *language
+	}
+	return scripting.GetSkill(lang), nil
 }
 
 // Mutation: script -----------------------------------------------------------
