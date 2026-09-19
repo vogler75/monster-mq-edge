@@ -37,6 +37,21 @@ func TestScriptingSubsystemIntegration(t *testing.T) {
 		t.Fatalf("expected PythonScripts in enabledFeatures, got %v", features)
 	}
 
+	// 1b. Verify scriptLanguages query returns starlark
+	languagesQuery := `query { scriptLanguages { name displayName description isDefault } }`
+	langResp := gqlQuery(t, gqlURL, languagesQuery, nil)
+	langs := langResp["scriptLanguages"].([]any)
+	if len(langs) != 1 {
+		t.Fatalf("expected 1 language on edge, got %d", len(langs))
+	}
+	lang0 := langs[0].(map[string]any)
+	if lang0["name"] != "starlark" {
+		t.Fatalf("expected starlark language, got %v", lang0["name"])
+	}
+	if lang0["isDefault"] != true {
+		t.Fatalf("expected starlark to be default, got %v", lang0["isDefault"])
+	}
+
 	// 2. Test script.test mutation (dry-run)
 	testMutation := `
 mutation TestScript($input: ScriptInput!, $topic: String, $payload: String) {

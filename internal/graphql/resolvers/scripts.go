@@ -51,6 +51,24 @@ func (r *queryResolver) Script(ctx context.Context, name string) (*generated.Scr
 	return r.deviceToScript(*d), nil
 }
 
+// Query: scriptLanguages -----------------------------------------------------
+
+func (r *queryResolver) ScriptLanguages(ctx context.Context) ([]*generated.ScriptLanguage, error) {
+	if !r.Cfg.Features.PythonScripts {
+		return []*generated.ScriptLanguage{}, nil
+	}
+	isDefault := true
+	desc := "Python-compatible dialect supported across both Edge and Main brokers."
+	return []*generated.ScriptLanguage{
+		{
+			Name:        "starlark",
+			DisplayName: "Starlark (Go / Python dialect)",
+			Description: &desc,
+			IsDefault:   &isDefault,
+		},
+	}, nil
+}
+
 // Mutation: script -----------------------------------------------------------
 
 type scriptMutationsResolver struct{ *Resolver }

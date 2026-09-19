@@ -156,6 +156,7 @@ type QueryResolver interface {
 	RtspCamera(ctx context.Context, name string) (*RtspCamera, error)
 	Scripts(ctx context.Context, name *string, nodeID *string) ([]*Script, error)
 	Script(ctx context.Context, name string) (*Script, error)
+	ScriptLanguages(ctx context.Context) ([]*ScriptLanguage, error)
 	WinCCOaClients(ctx context.Context, name *string, node *string) ([]*WinCCOaClient, error)
 	WinCCUaClients(ctx context.Context, name *string, node *string) ([]*WinCCUaClient, error)
 }
@@ -1509,9 +1510,17 @@ type ScriptMutations {
     test(input: ScriptInput!, testTopic: String, testPayload: String, testArgs: String): ScriptTestResult!
 }
 
+type ScriptLanguage {
+    name: String!
+    displayName: String!
+    description: String
+    isDefault: Boolean
+}
+
 extend type Query {
     scripts(name: String, nodeId: String): [Script!]!
     script(name: String!): Script
+    scriptLanguages: [ScriptLanguage!]!
 }
 
 extend type Mutation {
@@ -15229,6 +15238,45 @@ func (ec *executionContext) fieldContext_Query_script(ctx context.Context, field
 	return fc, nil
 }
 
+func (ec *executionContext) _Query_scriptLanguages(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Query_scriptLanguages,
+		func(ctx context.Context) (any, error) {
+			return ec.Resolvers.Query().ScriptLanguages(ctx)
+		},
+		nil,
+		ec.marshalNScriptLanguage2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScriptLanguageᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Query_scriptLanguages(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "name":
+				return ec.fieldContext_ScriptLanguage_name(ctx, field)
+			case "displayName":
+				return ec.fieldContext_ScriptLanguage_displayName(ctx, field)
+			case "description":
+				return ec.fieldContext_ScriptLanguage_description(ctx, field)
+			case "isDefault":
+				return ec.fieldContext_ScriptLanguage_isDefault(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type ScriptLanguage", field.Name)
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Query_winCCOaClients(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -18646,6 +18694,122 @@ func (ec *executionContext) fieldContext_ScriptConfig_description(_ context.Cont
 		IsResolver: false,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ScriptLanguage_name(ctx context.Context, field graphql.CollectedField, obj *ScriptLanguage) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ScriptLanguage_name,
+		func(ctx context.Context) (any, error) {
+			return obj.Name, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_ScriptLanguage_name(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ScriptLanguage",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ScriptLanguage_displayName(ctx context.Context, field graphql.CollectedField, obj *ScriptLanguage) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ScriptLanguage_displayName,
+		func(ctx context.Context) (any, error) {
+			return obj.DisplayName, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_ScriptLanguage_displayName(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ScriptLanguage",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ScriptLanguage_description(ctx context.Context, field graphql.CollectedField, obj *ScriptLanguage) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ScriptLanguage_description,
+		func(ctx context.Context) (any, error) {
+			return obj.Description, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_ScriptLanguage_description(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ScriptLanguage",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ScriptLanguage_isDefault(ctx context.Context, field graphql.CollectedField, obj *ScriptLanguage) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ScriptLanguage_isDefault,
+		func(ctx context.Context) (any, error) {
+			return obj.IsDefault, nil
+		},
+		nil,
+		ec.marshalOBoolean2ᚖbool,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_ScriptLanguage_isDefault(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ScriptLanguage",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
 		},
 	}
 	return fc, nil
@@ -33949,6 +34113,28 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 			}
 
 			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "scriptLanguages":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_scriptLanguages(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
 		case "winCCOaClients":
 			field := field
 
@@ -35141,6 +35327,54 @@ func (ec *executionContext) _ScriptConfig(ctx context.Context, sel ast.Selection
 			out.Values[i] = ec._ScriptConfig_timeoutMs(ctx, field, obj)
 		case "description":
 			out.Values[i] = ec._ScriptConfig_description(ctx, field, obj)
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var scriptLanguageImplementors = []string{"ScriptLanguage"}
+
+func (ec *executionContext) _ScriptLanguage(ctx context.Context, sel ast.SelectionSet, obj *ScriptLanguage) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, scriptLanguageImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("ScriptLanguage")
+		case "name":
+			out.Values[i] = ec._ScriptLanguage_name(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "displayName":
+			out.Values[i] = ec._ScriptLanguage_displayName(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "description":
+			out.Values[i] = ec._ScriptLanguage_description(ctx, field, obj)
+		case "isDefault":
+			out.Values[i] = ec._ScriptLanguage_isDefault(ctx, field, obj)
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}
@@ -40069,6 +40303,32 @@ func (ec *executionContext) unmarshalNScriptInstanceMode2monstermqᚗioᚋedge�
 
 func (ec *executionContext) marshalNScriptInstanceMode2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScriptInstanceMode(ctx context.Context, sel ast.SelectionSet, v ScriptInstanceMode) graphql.Marshaler {
 	return v
+}
+
+func (ec *executionContext) marshalNScriptLanguage2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScriptLanguageᚄ(ctx context.Context, sel ast.SelectionSet, v []*ScriptLanguage) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNScriptLanguage2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScriptLanguage(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNScriptLanguage2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScriptLanguage(ctx context.Context, sel ast.SelectionSet, v *ScriptLanguage) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._ScriptLanguage(ctx, sel, v)
 }
 
 func (ec *executionContext) marshalNScriptMutations2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐScriptMutations(ctx context.Context, sel ast.SelectionSet, v ScriptMutations) graphql.Marshaler {

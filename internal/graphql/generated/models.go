@@ -695,6 +695,13 @@ type ScriptInput struct {
 	Config    *ScriptConfigInput `json:"config"`
 }
 
+type ScriptLanguage struct {
+	Name        string  `json:"name"`
+	DisplayName string  `json:"displayName"`
+	Description *string `json:"description,omitempty"`
+	IsDefault   *bool   `json:"isDefault,omitempty"`
+}
+
 type ScriptMutations struct {
 	Create *ScriptResult     `json:"create"`
 	Update *ScriptResult     `json:"update"`
