@@ -55,8 +55,9 @@ type Server struct {
 	gqlSrv      *gql.Server
 	mcpSrv      *mcp.Server
 	redfishMgr  *redfish.Manager
-	hostMonitor  *hostinfo.Collector
-	storageHook  *StorageHook
+	hostMonitor *hostinfo.Collector
+	hmiSync     *hmi.SyncService
+	storageHook *StorageHook
 	retainedStop context.CancelFunc
 	metricsCtx   context.Context
 	metricsStop  context.CancelFunc
@@ -280,13 +281,17 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 		hostMonitor = hostinfo.NewCollector(cfg.NodeID, cfg.HostMonitoring.IntervalSeconds, cfg.HostMonitoring.BaseTopic, cfg.HostMonitoring.QoS, publishFn, logger)
 	}
 
-	// 7d. HMI Manager
+	// 7d. HMI Manager & Sync Service
 	var hmiMgr *hmi.Manager
+	var hmiSync *hmi.SyncService
 	if cfg.HMI.Enabled || cfg.Features.Hmi {
 		if cfg.HMI.Path == "" {
 			logger.Warn("HMI is enabled, but HMI.Path is not specified in configuration. HMI server will not be started.")
 		} else {
 			hmiMgr = hmi.NewManager(cfg, storage.DeviceConfig)
+			if cfg.HMI.SyncEnabled {
+				hmiSync = hmi.NewSyncService(hmiMgr, server, publishFn, cfg.NodeID, cfg.HMI.SyncBaseTopic, logger)
+			}
 		}
 	}
 
@@ -350,7 +355,7 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 		cfg: cfg, logger: logger, mochi: server,
 		storage: storage, bus: bus, subs: subs, archives: archives, authCache: authCache,
 		collector: collector, bridges: bridges, winCCUa: winCCUa, winCCOa: winCCOa, rtspCameras: rtspCameras, gqlSrv: gqlSrv,
-		mcpSrv: mcpSrv, redfishMgr: redfishMgr, hostMonitor: hostMonitor,
+		mcpSrv: mcpSrv, redfishMgr: redfishMgr, hostMonitor: hostMonitor, hmiSync: hmiSync,
 		storageHook: storageHook,
 	}, nil
 }
@@ -493,6 +498,11 @@ func (s *Server) Serve() error {
 			s.logger.Warn("redfish start error", "err", err)
 		}
 	}
+	if s.hmiSync != nil {
+		if err := s.hmiSync.Start(); err != nil {
+			s.logger.Warn("hmi sync start error", "err", err)
+		}
+	}
 	if s.gqlSrv != nil {
 		go func() {
 			if err := s.gqlSrv.Start(); err != nil {
@@ -518,6 +528,9 @@ func (s *Server) Close() error {
 	}
 	if s.hostMonitor != nil {
 		s.hostMonitor.Stop()
+	}
+	if s.hmiSync != nil {
+		s.hmiSync.Stop()
 	}
 	if s.redfishMgr != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

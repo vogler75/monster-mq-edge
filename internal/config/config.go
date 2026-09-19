@@ -188,9 +188,11 @@ type HostMonitoringConfig struct {
 }
 
 type HMIConfig struct {
-	Enabled   bool   `yaml:"Enabled"`
-	Path      string `yaml:"Path"`
-	MountPath string `yaml:"MountPath"`
+	Enabled       bool   `yaml:"Enabled"`
+	Path          string `yaml:"Path"`
+	MountPath     string `yaml:"MountPath"`
+	SyncEnabled   bool   `yaml:"SyncEnabled"`
+	SyncBaseTopic string `yaml:"SyncBaseTopic"`
 }
 
 type RedfishConfig struct {
@@ -316,9 +318,11 @@ func Default() *Config {
 			QoS:             0,
 		},
 		HMI: HMIConfig{
-			Enabled:   false,
-			Path:      "./data/hmi",
-			MountPath: "/hmi",
+			Enabled:       false,
+			Path:          "./data/hmi",
+			MountPath:     "/hmi",
+			SyncEnabled:   true,
+			SyncBaseTopic: "monstermq/hmi/sync",
 		},
 		Redfish: RedfishConfig{
 			Enabled:          false,
@@ -437,6 +441,9 @@ func (c *Config) Validate() error {
 	case "", ClientAuthNone, ClientAuthRequest, ClientAuthRequired:
 	default:
 		return fmt.Errorf("invalid ClientAuth %q (must be one of NONE, REQUEST, REQUIRED)", c.EffectiveTCPSClientAuth())
+	}
+	if c.HMI.SyncBaseTopic == "" {
+		c.HMI.SyncBaseTopic = "monstermq/hmi/sync"
 	}
 	return nil
 }

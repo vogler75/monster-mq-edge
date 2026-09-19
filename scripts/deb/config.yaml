@@ -72,6 +72,8 @@ HMI:
   Enabled: true
   Path: "/var/lib/monstermq/hmi"
   MountPath: "/hmi"
+  SyncEnabled: true
+  SyncBaseTopic: "monstermq/hmi/sync"
 
 MCP:
   Enabled: false                  # Model Context Protocol (MCP) server mounted at /mcp

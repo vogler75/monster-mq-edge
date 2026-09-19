@@ -74,6 +74,8 @@ HMI:
   Enabled: false
   Path: "./data/hmi"
   MountPath: "/hmi"
+  SyncEnabled: true
+  SyncBaseTopic: "monstermq/hmi/sync"
 
 MCP:
   Enabled: false

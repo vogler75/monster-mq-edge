@@ -238,7 +238,9 @@
       "properties": {
         "Enabled": { "type": "boolean" },
         "Path": { "type": "string", "default": "./data/hmi" },
-        "MountPath": { "type": "string", "default": "/hmi" }
+        "MountPath": { "type": "string", "default": "/hmi" },
+        "SyncEnabled": { "type": "boolean", "default": true, "description": "Enable MQTT-based file synchronization for HMI assets." },
+        "SyncBaseTopic": { "type": "string", "default": "monstermq/hmi/sync", "description": "Base topic prefix for HMI synchronization channels." }
       }
     },
     "MCP": {

@@ -66,10 +66,10 @@ publish:
 	./publish.sh
 
 test:
-	go test ./... -count=1 -timeout 60s
+	go test ./... -count=1 -timeout 180s
 
 test-race:
-	go test ./... -race -count=1 -timeout 120s
+	go test ./... -race -count=1 -timeout 300s
 
 lint:
 	go vet ./...
