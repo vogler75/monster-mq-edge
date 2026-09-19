@@ -1,17 +1,32 @@
 Release v0.1.14
-Built from commit: 9ac38d8
-Date: 2026-09-18 20:24:09
+Built from commit: d22cc79
+Date: 2026-09-19 07:36:44
 
 Changes since v0.1.13:
 ---
+d22cc79 Update release.sh
+e46a8d9 Merge branch 'develop' into main
+e966922 feat(deb): add all feature options to deb config.yaml with dashboard enabled by default
+3a6ac47 Bump version to 0.1.14
+d39d740 Merge branch 'main' into develop
 9ac38d8 fix(graphql): synchronize server startup and shutdown to prevent races (#15)
+8a5e0b1 Merge branch 'main' into develop
 d7eafee fix(hmi): validate dashboard names and enforce path containment (#14)
+271b6ca Merge branch 'main' into develop
 38bf3cf fix(sqlite): query payload_json in GetHistory when payload_blob is null (#13)
+8e2503f Merge branch 'main' into develop
 23a7d06 fix: enforce MessageExpiryInterval and purge for retained messages (#12)
+57c951b Merge branch 'main' into develop
 da97cb9 fix: enforce MaxMessageSize on MQTT server and boundary packets (#11)
+ff3ecbc Merge branch 'main' into develop
 2acfa9c fix: persist QoS 1 and 2 queued messages until client acknowledgment (#10)
+081d069 Merge branch 'main' into develop
 292d032 fix: restore persistent subscriptions into live broker after restart (#9)
 1e836e4 fix: reject persistence and queued delivery for denied subscriptions (#8)
+fe7e1d1 fix: reject persistence and queued delivery for denied subscriptions (#8)
+9f94be5 feat(graphql,mcp): port-based listener enablement and unified MCP endpoint
+91b3db3 feat(graphql): add HTTPS dual-listener with automatic self-signed certificate generation
+bbd9c7a feat(dashboard): embed web dashboard and add build/run detection
 5138caf feat(auth): add AllowAnonymousLocalhost for unauthenticated 127.0.0.1 access
 5287695 docs(camera): document camera snapshot bridge in README
 6a9eedb feat(rest): add edge REST API with wildcard and raw reads
