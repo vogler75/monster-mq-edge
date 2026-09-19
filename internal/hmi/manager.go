@@ -147,28 +147,34 @@ func (m *Manager) EnsureInit() error {
 			}
 		}
 
-		// Ensure DB entry for 'main' device if deviceStore is available
-		if m.deviceStore != nil {
-			ctx := context.Background()
-			dc, _ := m.deviceStore.Get(ctx, "main")
-			if dc == nil {
-				cfgJSON, _ := json.Marshal(HmiConfig{
-					UrlPath:    "",
-					IsMain:     true,
-					Title:      "Main Dashboard",
-					EntryPoint: "index.html",
-				})
-				_ = m.deviceStore.Save(ctx, stores.DeviceConfig{
-					Name:      "main",
-					Namespace: "main",
-					NodeID:    "local",
-					Type:      "HMI",
-					Enabled:   true,
-					Config:    string(cfgJSON),
-					CreatedAt: time.Now(),
-					UpdatedAt: time.Now(),
-				})
-			}
+	}
+
+	// Ensure DB entry for mainDashboard if deviceStore is available
+	if m.deviceStore != nil {
+		ctx := context.Background()
+		meta := m.getMetadataLocked()
+		mainDash := meta.MainDashboard
+		if mainDash == "" {
+			mainDash = "main"
+		}
+		dc, _ := m.deviceStore.Get(ctx, mainDash)
+		if dc == nil {
+			cfgJSON, _ := json.Marshal(HmiConfig{
+				UrlPath:    "",
+				IsMain:     true,
+				Title:      mainDash,
+				EntryPoint: "index.html",
+			})
+			_ = m.deviceStore.Save(ctx, stores.DeviceConfig{
+				Name:      mainDash,
+				Namespace: mainDash,
+				NodeID:    "local",
+				Type:      "HMI",
+				Enabled:   true,
+				Config:    string(cfgJSON),
+				CreatedAt: time.Now(),
+				UpdatedAt: time.Now(),
+			})
 		}
 	}
 
@@ -298,13 +304,13 @@ func (m *Manager) GetHmi(name string) (*HmiDevice, error) {
 
 func (m *Manager) getHmiStatsLocked(name, mainDashName string, dc stores.DeviceConfig) (*HmiDevice, error) {
 	dashDir := filepath.Join(m.baseDir, name)
-	info, err := os.Stat(dashDir)
+	lstat, lerr := os.Lstat(dashDir)
 	var fileCount int
 	var totalSize int64
 	var latestMod time.Time
 
-	if err == nil && info.IsDir() {
-		latestMod = info.ModTime()
+	if lerr == nil && lstat.IsDir() {
+		latestMod = lstat.ModTime()
 		_ = filepath.Walk(dashDir, func(path string, f os.FileInfo, err error) error {
 			if err != nil {
 				return nil

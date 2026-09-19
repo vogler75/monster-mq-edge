@@ -3,12 +3,14 @@ package hmi
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/base64"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"monstermq.io/edge/internal/config"
+	"monstermq.io/edge/internal/stores"
 )
 
 func newTestManager(t *testing.T) (*Manager, string) {
@@ -248,5 +250,124 @@ func TestUploadDashboardZip_ZipSlip(t *testing.T) {
 	indexFile := filepath.Join(dashDir, "index.html")
 	if _, err := os.Stat(indexFile); err != nil {
 		t.Fatalf("expected index.html to exist in dashboard: %v", err)
+	}
+}
+
+type fakeDeviceConfigStore struct {
+	devices map[string]stores.DeviceConfig
+}
+
+func newFakeDeviceConfigStore() *fakeDeviceConfigStore {
+	return &fakeDeviceConfigStore{devices: make(map[string]stores.DeviceConfig)}
+}
+
+func (f *fakeDeviceConfigStore) GetAll(ctx context.Context) ([]stores.DeviceConfig, error) {
+	var res []stores.DeviceConfig
+	for _, d := range f.devices {
+		res = append(res, d)
+	}
+	return res, nil
+}
+func (f *fakeDeviceConfigStore) GetByType(ctx context.Context, dt string) ([]stores.DeviceConfig, error) {
+	var res []stores.DeviceConfig
+	for _, d := range f.devices {
+		if d.Type == dt {
+			res = append(res, d)
+		}
+	}
+	return res, nil
+}
+func (f *fakeDeviceConfigStore) GetByNode(ctx context.Context, nodeID string) ([]stores.DeviceConfig, error) {
+	return nil, nil
+}
+func (f *fakeDeviceConfigStore) GetEnabledByNode(ctx context.Context, nodeID string) ([]stores.DeviceConfig, error) {
+	return nil, nil
+}
+func (f *fakeDeviceConfigStore) Get(ctx context.Context, name string) (*stores.DeviceConfig, error) {
+	d, ok := f.devices[name]
+	if !ok {
+		return nil, nil
+	}
+	return &d, nil
+}
+func (f *fakeDeviceConfigStore) Save(ctx context.Context, d stores.DeviceConfig) error {
+	f.devices[d.Name] = d
+	return nil
+}
+func (f *fakeDeviceConfigStore) Delete(ctx context.Context, name string) error {
+	delete(f.devices, name)
+	return nil
+}
+func (f *fakeDeviceConfigStore) Toggle(ctx context.Context, name string, enabled bool) (*stores.DeviceConfig, error) {
+	d, ok := f.devices[name]
+	if !ok {
+		return nil, nil
+	}
+	d.Enabled = enabled
+	f.devices[name] = d
+	return &d, nil
+}
+func (f *fakeDeviceConfigStore) Reassign(ctx context.Context, name string, nodeID string) (*stores.DeviceConfig, error) {
+	return nil, nil
+}
+func (f *fakeDeviceConfigStore) Close() error { return nil }
+
+func TestEnsureInit_MainDashboardInDB(t *testing.T) {
+	tempDir := t.TempDir()
+	hmiDir := filepath.Join(tempDir, "hmi_root")
+	_ = os.MkdirAll(hmiDir, 0755)
+
+	// Pre-create metadata.json pointing to "smarthome"
+	metaContent := `{"mainDashboard": "smarthome"}`
+	_ = os.WriteFile(filepath.Join(hmiDir, "metadata.json"), []byte(metaContent), 0644)
+
+	// Create an external folder and symlink it to "smarthome" inside hmiDir
+	extDir := filepath.Join(tempDir, "external_smarthome")
+	_ = os.MkdirAll(extDir, 0755)
+	_ = os.WriteFile(filepath.Join(extDir, "index.html"), []byte("<h1>Smarthome</h1>"), 0644)
+	_ = os.Symlink(extDir, filepath.Join(hmiDir, "smarthome"))
+
+	cfg := config.Default()
+	cfg.NodeID = "test-node"
+	cfg.HMI.Enabled = true
+	cfg.HMI.Path = hmiDir
+
+	fakeStore := newFakeDeviceConfigStore()
+	mgr := NewManager(cfg, fakeStore)
+	if mgr == nil {
+		t.Fatal("expected non-nil manager")
+	}
+
+	// 1. EnsureInit should have registered "smarthome" in fakeStore
+	dc, err := fakeStore.Get(context.Background(), "smarthome")
+	if err != nil || dc == nil {
+		t.Fatalf("expected smarthome to be registered in deviceStore, got: %v, err: %v", dc, err)
+	}
+	if !dc.Enabled || dc.Type != "HMI" {
+		t.Errorf("expected enabled HMI device, got enabled=%v type=%s", dc.Enabled, dc.Type)
+	}
+
+	// 2. ListHmis should return smarthome from the database
+	hmis, err := mgr.ListHmis()
+	if err != nil {
+		t.Fatalf("ListHmis failed: %v", err)
+	}
+
+	var found *HmiDevice
+	for _, h := range hmis {
+		if h.Name == "smarthome" {
+			found = h
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("expected smarthome in ListHmis results: %#v", hmis)
+	}
+	if !found.Config.IsMain {
+		t.Errorf("expected smarthome to have isMain=true")
+	}
+	// Since smarthome is a symlink, local physical directory stats report 0 files & 0 bytes
+	if found.FileCount != 0 || found.SizeBytes != 0 {
+		t.Errorf("expected 0 files and 0 bytes for symlinked dashboard, got files=%d bytes=%d", found.FileCount, found.SizeBytes)
 	}
 }
