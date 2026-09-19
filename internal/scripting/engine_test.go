@@ -501,3 +501,51 @@ result = val
 		t.Fatalf("unexpected parsed value: %v", valObj)
 	}
 }
+
+func TestEngineIsInstance(t *testing.T) {
+	script := `
+d = {"a": 1}
+s = "hello"
+n = 123
+res1 = isinstance(d, dict)
+res2 = isinstance(d, "dict")
+res3 = isinstance(s, str)
+res4 = isinstance(s, "string")
+res5 = isinstance(n, (int, float))
+res6 = isinstance(n, dict)
+res7 = isinstance(None, dict)
+
+result = [res1, res2, res3, res4, res5, res6, res7]
+`
+	engine, err := NewEngine("isinstance_test", script)
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	ctx := context.Background()
+	execCtx := &ExecutionContext{
+		ScriptName: "isinstance_test",
+		Trigger:    "CALLABLE",
+		State:      starlark.NewDict(0),
+		Global:     NewGlobalStore(),
+		LogBuffer:  NewCircularLogBuffer(10),
+	}
+
+	res := engine.Execute(ctx, execCtx, 1000)
+	if !res.Success {
+		t.Fatalf("execution failed: %v", res.Error)
+	}
+
+	results, ok := res.ReturnValue.([]any)
+	if !ok {
+		t.Fatalf("expected []any, got %T: %v", res.ReturnValue, res.ReturnValue)
+	}
+
+	expected := []bool{true, true, true, true, true, false, false}
+	for i, exp := range expected {
+		if results[i] != exp {
+			t.Errorf("res%d: expected %v, got %v", i+1, exp, results[i])
+		}
+	}
+}
+

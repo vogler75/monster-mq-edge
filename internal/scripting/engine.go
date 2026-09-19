@@ -137,7 +137,7 @@ func (e *Engine) SetMaxExecutionSteps(steps uint64) {
 
 func isPredeclared(name string) bool {
 	switch name {
-	case "msg", "args", "mqtt", "archive", "db", "state", "global", "globals", "shared", "storage", "scripts", "log", "console", "json":
+	case "msg", "args", "mqtt", "archive", "db", "state", "global", "globals", "shared", "storage", "scripts", "log", "console", "json", "isinstance":
 		return true
 	default:
 		return false
@@ -663,6 +663,54 @@ func (e *Engine) buildPredeclared(ctx context.Context, execCtx *ExecutionContext
 		"error": starlark.NewBuiltin("console.error", logFn("ERROR")),
 	})
 	d["console"] = consoleModule
+
+	// 12. isinstance built-in for Python compatibility
+	d["isinstance"] = starlark.NewBuiltin("isinstance", func(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+		var val starlark.Value
+		var target starlark.Value
+		if err := starlark.UnpackPositionalArgs("isinstance", args, kwargs, 2, &val, &target); err != nil {
+			return nil, err
+		}
+		valType := val.Type()
+
+		matchOne := func(t starlark.Value) bool {
+			switch tv := t.(type) {
+			case starlark.String:
+				s := string(tv)
+				if s == "str" {
+					s = "string"
+				}
+				return s == valType
+			case *starlark.Builtin:
+				name := tv.Name()
+				if name == "str" {
+					name = "string"
+				}
+				return name == valType
+			default:
+				return tv.String() == valType
+			}
+		}
+
+		if tup, ok := target.(starlark.Tuple); ok {
+			for _, elem := range tup {
+				if matchOne(elem) {
+					return starlark.True, nil
+				}
+			}
+			return starlark.False, nil
+		}
+		if list, ok := target.(*starlark.List); ok {
+			for i := 0; i < list.Len(); i++ {
+				if matchOne(list.Index(i)) {
+					return starlark.True, nil
+				}
+			}
+			return starlark.False, nil
+		}
+
+		return starlark.Bool(matchOne(target)), nil
+	})
 
 	return d
 }
