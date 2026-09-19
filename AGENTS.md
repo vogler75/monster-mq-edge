@@ -40,6 +40,15 @@ must remain a **strict subset** of the Java broker's schema at
 `../monster-mq/broker/src/main/resources/schema-*.graphqls`. The same
 external dashboard binary is supposed to work against either backend.
 
+**CRITICAL: AVOID CHANGING THE GRAPHQL INTERFACE**:
+- **Avoid changes at all costs**: The GraphQL interface is the central shared contract connecting the Kotlin broker (`monster-mq`), Go edge broker (`monster-mq-edge`), web dashboard (`monster-mq-dashboard`), and external integrations. Modifying or extending the GraphQL interface (types, fields, queries, mutations, subscriptions, inputs, arguments, or enums) must be strictly avoided whenever possible.
+- **Human commitment required**: Any change to the GraphQL interface must ONLY be done with explicit commitment from the human. Never modify the GraphQL schema or resolvers unilaterally.
+- **Give a clear hint if the GraphQL interface must be changed**: If a task, feature, or bugfix appears to necessitate changing or extending the GraphQL interface:
+  1. **Flag it clearly and prominently**: Immediately give a clear hint to the human up front before making any changes.
+  2. **Explain the rationale**: Explain why the interface change is needed and what alternatives were evaluated to avoid altering the interface.
+  3. **Detail the impact**: Specify the exact proposed schema modifications and detail the cross-ecosystem impact (including compatibility between both brokers and the web dashboard).
+  4. **Wait for commitment**: Do not modify any SDL files (`internal/graphql/schema/*.graphqls`) or resolvers until the human has explicitly reviewed and committed to the change.
+
 Concretely:
 
 - **Never** rename a type or field that exists in the Java schema.
@@ -166,7 +175,7 @@ When porting a feature: read the Kotlin original first, mirror behavior,
 
 ## Things to never do without asking
 
-- Rename a GraphQL type/field/enum/argument that exists in the Java schema.
+- Change, extend, or rename a GraphQL type/field/enum/argument without explicit human commitment.
 - Change a column/table name in any backend store.
 - Introduce CGO.
 - Add a UI to this repo (an external dashboard is the consumer).
