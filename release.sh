@@ -164,10 +164,10 @@ echo -e "${YELLOW}Creating tag ${TAG_NAME}...${NC}"
 git tag -a "${TAG_NAME}" -m "Release version ${NEW_VERSION}"
 echo -e "${GREEN}✓ Created tag ${TAG_NAME}${NC}"
 
-echo -e "${YELLOW}Pushing commits and tag...${NC}"
+echo -e "${YELLOW}Pushing commits and tags...${NC}"
 git push origin HEAD
-git push origin "${TAG_NAME}"
-echo -e "${GREEN}✓ Pushed commits and tag ${TAG_NAME}${NC}"
+git push origin --tags
+echo -e "${GREEN}✓ Pushed commits and tags${NC}"
 
 echo ""
 echo -e "${GREEN}=== Release Tag Complete ===${NC}"
