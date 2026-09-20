@@ -1,0 +1,14 @@
+Release v0.1.15
+Built from commit: df3b8b8
+Date: 2026-09-20 08:49:01
+
+Changes since v0.1.14:
+---
+df3b8b8 feat(scripting): embed documentation and AI skill for Starlark and expose via GraphQL
+a83d6ea feat(graphql): add scriptLanguages query for supported script runtimes
+82a495b feat(scripting): add isinstance built-in to starlark engine
+2a1d57b Implement Python/Starlark scripting subsystem with GraphQL API
+9e0b310 Create plan-script-engine-starlark.md
+25ca30c docs: add policy to avoid GraphQL interface changes without human commitment
+8cae91b fix(hmi): register mainDashboard in device store and report 0 stats for symlinks
+c135ac1 feat(hmi): implement MQTT-based HMI file synchronization
