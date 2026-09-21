@@ -38,14 +38,22 @@ Logging:
 GraphQL:
   Enabled: true
   Port: 4000
+  TLSPort: 4443
+  TLSAddress: "0.0.0.0"
+  RequireHTTPSFromOutside: false  
+  KeyStorePath: "/cfg-data/server.crt" # Path to certificate PEM (defaults to SSL.KeyStorePath or data/server.crt)
+  KeyPath: "/cfg-data/server.key"      # Path to private key PEM (defaults to SSL.KeyPath or data/server.key)
 
 Features:
   DeviceImportExport: true
   MqttClient: true
   WinCCUa: true
   WinCCOa: true
+  MCP: false
   Hmi: true
   Redfish: false
+  RtspCamera: true
+  PythonScripts: true
 
 HMI:
   Enabled: true
@@ -53,3 +61,7 @@ HMI:
   MountPath: "/hmi"
   SyncEnabled: true
   SyncBaseTopic: "monstermq/hmi/sync"
+
+MCP:
+  Enabled: false
+    
