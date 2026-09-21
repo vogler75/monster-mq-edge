@@ -1,10 +1,13 @@
 # MonsterMQ-Edge - Siemens Industrial Edge Publisher Project
 
-This repository branch/directory contains the exported application project for **MonsterMQ-Edge** for use with the **Siemens Industrial Edge Publisher**.
+> [!NOTE]
+> This directory is a **template** for creating an Industrial Edge app. The **Siemens Industrial Edge Publisher** should be used to import this template, configure versioning and settings, and build/export the final edge app.
+
+This directory contains the exported application project template for **MonsterMQ-Edge** for use with the **Siemens Industrial Edge Publisher**.
 
 ## Overview
 
-MonsterMQ-Edge is a lightweight, single-binary MQTT broker tailored for edge devices such as Siemens SIMATIC WinCC Unified Comfort Panels. This directory provides the Industrial Edge Publisher structure needed to package and deploy MonsterMQ-Edge to Industrial Edge environments.
+MonsterMQ-Edge is a lightweight, single-binary MQTT broker tailored for edge devices such as Siemens SIMATIC WinCC Unified Comfort Panels. This directory provides the template structure required by the Siemens Industrial Edge Publisher to package and deploy MonsterMQ-Edge to Industrial Edge environments.
 
 ---
 
