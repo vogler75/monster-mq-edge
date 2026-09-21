@@ -549,3 +549,82 @@ result = [res1, res2, res3, res4, res5, res6, res7]
 	}
 }
 
+func TestEngineTriggerTime(t *testing.T) {
+	script := `
+iso_attr = trigger_time.iso
+time_ms_attr = trigger_time.time_ms
+iso_dict = trigger_time["Time"]
+time_ms_dict = trigger_time["TimeMS"]
+str_val = str(trigger_time)
+trig_type = trigger.type
+trig_time_iso = trigger.time.iso
+
+result = {
+    "iso_attr": iso_attr,
+    "time_ms_attr": time_ms_attr,
+    "iso_dict": iso_dict,
+    "time_ms_dict": time_ms_dict,
+    "str_val": str_val,
+    "trig_type": trig_type,
+    "trig_time_iso": trig_time_iso,
+    "year": trigger_time.year,
+    "minute": trigger_time.minute,
+}
+`
+	engine, err := NewEngine("trig_test", script)
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	fixedTime := time.Date(2026, 9, 21, 14, 30, 0, 0, time.UTC)
+	ctx := context.Background()
+	execCtx := &ExecutionContext{
+		ScriptName:  "trig_test",
+		Trigger:     "TIMER",
+		TriggerTime: fixedTime,
+		State:       starlark.NewDict(0),
+		Global:      NewGlobalStore(),
+		LogBuffer:   NewCircularLogBuffer(10),
+	}
+
+	res := engine.Execute(ctx, execCtx, 1000)
+	if !res.Success {
+		t.Fatalf("execution failed: %v", res.Error)
+	}
+
+	resMap, ok := res.ReturnValue.(map[string]any)
+	if !ok {
+		t.Fatalf("expected map[string]any, got %T: %v", res.ReturnValue, res.ReturnValue)
+	}
+
+	expectedISO := fixedTime.Format(time.RFC3339Nano)
+	if resMap["iso_attr"] != expectedISO {
+		t.Errorf("expected iso_attr %v, got %v", expectedISO, resMap["iso_attr"])
+	}
+	if resMap["iso_dict"] != expectedISO {
+		t.Errorf("expected iso_dict %v, got %v", expectedISO, resMap["iso_dict"])
+	}
+	if resMap["str_val"] != expectedISO {
+		t.Errorf("expected str_val %v, got %v", expectedISO, resMap["str_val"])
+	}
+	if resMap["time_ms_attr"] != fixedTime.UnixMilli() {
+		t.Errorf("expected time_ms_attr %v, got %v", fixedTime.UnixMilli(), resMap["time_ms_attr"])
+	}
+	if resMap["time_ms_dict"] != fixedTime.UnixMilli() {
+		t.Errorf("expected time_ms_dict %v, got %v", fixedTime.UnixMilli(), resMap["time_ms_dict"])
+	}
+	if resMap["trig_type"] != "TIMER" {
+		t.Errorf("expected trig_type TIMER, got %v", resMap["trig_type"])
+	}
+	if resMap["trig_time_iso"] != expectedISO {
+		t.Errorf("expected trig_time_iso %v, got %v", expectedISO, resMap["trig_time_iso"])
+	}
+	if resMap["year"] != int64(2026) && resMap["year"] != 2026 {
+		t.Errorf("expected year 2026, got %v", resMap["year"])
+	}
+	if resMap["minute"] != int64(30) && resMap["minute"] != 30 {
+		t.Errorf("expected minute 30, got %v", resMap["minute"])
+	}
+}
+
+

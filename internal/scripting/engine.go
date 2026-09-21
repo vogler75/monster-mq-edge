@@ -26,11 +26,12 @@ type PublishedMessage struct {
 
 // ExecutionContext bundles host capabilities and context for a script execution.
 type ExecutionContext struct {
-	ScriptName string
-	Trigger    string // "TOPIC", "TIMER", "CALLABLE", etc.
-	Msg        *stores.BrokerMessage
-	Args       map[string]any
-	DryRun     bool
+	ScriptName  string
+	Trigger     string // "TOPIC", "TIMER", "CALLABLE", etc.
+	TriggerTime time.Time
+	Msg         *stores.BrokerMessage
+	Args        map[string]any
+	DryRun      bool
 
 	State    *starlark.Dict
 	Storage  *ScriptKVStore
@@ -137,7 +138,7 @@ func (e *Engine) SetMaxExecutionSteps(steps uint64) {
 
 func isPredeclared(name string) bool {
 	switch name {
-	case "msg", "args", "mqtt", "archive", "db", "state", "global", "globals", "shared", "storage", "scripts", "log", "console", "json", "isinstance":
+	case "msg", "args", "mqtt", "archive", "db", "state", "global", "globals", "shared", "storage", "scripts", "log", "console", "json", "isinstance", "trigger", "trigger_time", "triggerTime":
 		return true
 	default:
 		return false
@@ -712,7 +713,142 @@ func (e *Engine) buildPredeclared(ctx context.Context, execCtx *ExecutionContext
 		return starlark.Bool(matchOne(target)), nil
 	})
 
+	// 13. trigger_time and trigger context
+	trigTime := execCtx.TriggerTime
+	if trigTime.IsZero() {
+		trigTime = time.Now()
+	}
+	trigType := execCtx.Trigger
+	if trigType == "" {
+		trigType = "UNKNOWN"
+	}
+
+	starlarkTime := NewStarlarkTriggerTime(trigTime)
+	d["trigger_time"] = starlarkTime
+	d["triggerTime"] = starlarkTime
+
+	starlarkTrigger := &StarlarkTriggerContext{
+		triggerType: trigType,
+		triggerTime: starlarkTime,
+	}
+	d["trigger"] = starlarkTrigger
+
 	return d
+}
+
+// StarlarkTriggerTime wraps a trigger timestamp providing attribute and mapping access.
+type StarlarkTriggerTime struct {
+	t time.Time
+}
+
+func NewStarlarkTriggerTime(t time.Time) *StarlarkTriggerTime {
+	if t.IsZero() {
+		t = time.Now()
+	}
+	return &StarlarkTriggerTime{t: t}
+}
+
+func (tt *StarlarkTriggerTime) String() string {
+	return tt.t.UTC().Format(time.RFC3339Nano)
+}
+
+func (tt *StarlarkTriggerTime) Type() string { return "trigger_time" }
+func (tt *StarlarkTriggerTime) Freeze() {}
+func (tt *StarlarkTriggerTime) Truth() starlark.Bool { return starlark.True }
+func (tt *StarlarkTriggerTime) Hash() (uint32, error) {
+	return uint32(tt.t.UnixNano()), nil
+}
+
+func (tt *StarlarkTriggerTime) Attr(name string) (starlark.Value, error) {
+	u := tt.t.UTC()
+	switch name {
+	case "iso", "time", "Time":
+		return starlark.String(u.Format(time.RFC3339Nano)), nil
+	case "time_ms", "timeMs", "TimeMS", "ms":
+		return starlark.MakeInt64(u.UnixMilli()), nil
+	case "timestamp":
+		return starlark.MakeInt64(u.Unix()), nil
+	case "year":
+		return starlark.MakeInt(u.Year()), nil
+	case "month":
+		return starlark.MakeInt(int(u.Month())), nil
+	case "day":
+		return starlark.MakeInt(u.Day()), nil
+	case "hour":
+		return starlark.MakeInt(u.Hour()), nil
+	case "minute":
+		return starlark.MakeInt(u.Minute()), nil
+	case "second":
+		return starlark.MakeInt(u.Second()), nil
+	default:
+		return nil, nil
+	}
+}
+
+func (tt *StarlarkTriggerTime) AttrNames() []string {
+	return []string{"day", "hour", "iso", "minute", "month", "ms", "second", "time", "Time", "time_ms", "timeMs", "TimeMS", "timestamp", "year"}
+}
+
+func (tt *StarlarkTriggerTime) Get(k starlark.Value) (v starlark.Value, found bool, err error) {
+	s, ok := k.(starlark.String)
+	if !ok {
+		return nil, false, nil
+	}
+	val, err := tt.Attr(s.GoString())
+	if err != nil {
+		return nil, false, err
+	}
+	if val == nil {
+		return nil, false, nil
+	}
+	return val, true, nil
+}
+
+// StarlarkTriggerContext encapsulates the trigger origin and timestamp.
+type StarlarkTriggerContext struct {
+	triggerType string
+	triggerTime *StarlarkTriggerTime
+}
+
+func (tc *StarlarkTriggerContext) String() string {
+	return fmt.Sprintf("trigger(type=%s, time=%s)", tc.triggerType, tc.triggerTime.String())
+}
+
+func (tc *StarlarkTriggerContext) Type() string { return "trigger_context" }
+func (tc *StarlarkTriggerContext) Freeze() {}
+func (tc *StarlarkTriggerContext) Truth() starlark.Bool { return starlark.True }
+func (tc *StarlarkTriggerContext) Hash() (uint32, error) {
+	return 0, fmt.Errorf("unhashable type: trigger_context")
+}
+
+func (tc *StarlarkTriggerContext) Attr(name string) (starlark.Value, error) {
+	switch name {
+	case "type", "Type":
+		return starlark.String(tc.triggerType), nil
+	case "time", "Time":
+		return tc.triggerTime, nil
+	default:
+		return nil, nil
+	}
+}
+
+func (tc *StarlarkTriggerContext) AttrNames() []string {
+	return []string{"time", "Time", "type", "Type"}
+}
+
+func (tc *StarlarkTriggerContext) Get(k starlark.Value) (v starlark.Value, found bool, err error) {
+	s, ok := k.(starlark.String)
+	if !ok {
+		return nil, false, nil
+	}
+	val, err := tc.Attr(s.GoString())
+	if err != nil {
+		return nil, false, err
+	}
+	if val == nil {
+		return nil, false, nil
+	}
+	return val, true, nil
 }
 
 func starlarkPayloadToBytes(v starlark.Value) ([]byte, error) {
@@ -855,6 +991,13 @@ func ToGoValue(v starlark.Value) (any, error) {
 			out[k] = gv
 		}
 		return out, nil
+	case *StarlarkTriggerTime:
+		return val.t.UTC().Format(time.RFC3339Nano), nil
+	case *StarlarkTriggerContext:
+		return map[string]any{
+			"type": val.triggerType,
+			"time": val.triggerTime.t.UTC().Format(time.RFC3339Nano),
+		}, nil
 	default:
 		return val.String(), nil
 	}

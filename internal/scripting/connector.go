@@ -177,22 +177,45 @@ func (c *Connector) topicWorker(ch <-chan stores.BrokerMessage) {
 				c.payloadMu.Unlock()
 			}
 
-			c.runExecution(&msg, nil, false)
+			c.runExecution(&msg, nil, false, "TOPIC", msg.Time)
 		}
 	}
 }
 
 func (c *Connector) timerWorker() {
 	defer c.wg.Done()
-	ticker := time.NewTicker(time.Duration(c.cfg.TimerIntervalMs) * time.Millisecond)
-	defer ticker.Stop()
+
+	intervalMs := c.cfg.TimerIntervalMs
+	if intervalMs <= 0 {
+		intervalMs = 1000
+	}
 
 	for {
+		now := time.Now()
+		var delay time.Duration
+		var scheduledTime time.Time
+
+		if intervalMs >= 1000 {
+			nowUnixMs := now.UnixMilli()
+			nextBoundaryMs := ((nowUnixMs / intervalMs) + 1) * intervalMs
+			delayMs := nextBoundaryMs - nowUnixMs
+			if delayMs <= 0 {
+				delayMs = 1
+			}
+			delay = time.Duration(delayMs) * time.Millisecond
+			scheduledTime = time.UnixMilli(nextBoundaryMs)
+		} else {
+			delay = time.Duration(intervalMs) * time.Millisecond
+			scheduledTime = now.Add(delay)
+		}
+
+		timer := time.NewTimer(delay)
 		select {
 		case <-c.stopCh:
+			timer.Stop()
 			return
-		case <-ticker.C:
-			c.runExecution(nil, nil, false)
+		case <-timer.C:
+			c.runExecution(nil, nil, false, "TIMER", scheduledTime)
 		}
 	}
 }
@@ -269,29 +292,41 @@ func (c *Connector) runDynamicCallback(fn starlark.Callable, msg *stores.BrokerM
 	}
 }
 
-func (c *Connector) runExecution(msg *stores.BrokerMessage, customArgs map[string]any, dryRun bool) *ScriptExecutionResult {
+func (c *Connector) runExecution(msg *stores.BrokerMessage, customArgs map[string]any, dryRun bool, triggerType string, triggerTime time.Time) *ScriptExecutionResult {
 	if c.cfg.InstanceMode == InstanceModeSingleton {
 		c.execMu.Lock()
 		defer c.execMu.Unlock()
 	}
 
+	if triggerType == "" {
+		triggerType = string(c.cfg.TriggerType)
+	}
+	if triggerTime.IsZero() {
+		if msg != nil && !msg.Time.IsZero() {
+			triggerTime = msg.Time
+		} else {
+			triggerTime = time.Now()
+		}
+	}
+
 	execCtx := &ExecutionContext{
-		ScriptName: c.name,
-		Trigger:    string(c.cfg.TriggerType),
-		Msg:        msg,
-		Args:       customArgs,
-		DryRun:     dryRun,
-		State:      c.state,
-		Storage:    c.storage,
-		Global:     c.global,
-		DB:         c.db,
-		Archives:   c.archives,
-		Messages:   c.messages,
-		PublishFn:  c.publishFn,
-		CallFn:     c.callScriptFn,
-		SubRegFn:   c.registerDynamicSubscription,
-		Logger:     c.logger,
-		LogBuffer:  c.logBuffer,
+		ScriptName:  c.name,
+		Trigger:     triggerType,
+		TriggerTime: triggerTime,
+		Msg:         msg,
+		Args:        customArgs,
+		DryRun:      dryRun,
+		State:       c.state,
+		Storage:     c.storage,
+		Global:      c.global,
+		DB:          c.db,
+		Archives:    c.archives,
+		Messages:    c.messages,
+		PublishFn:   c.publishFn,
+		CallFn:      c.callScriptFn,
+		SubRegFn:    c.registerDynamicSubscription,
+		Logger:      c.logger,
+		LogBuffer:   c.logBuffer,
 	}
 
 	ctx := context.Background()
@@ -315,7 +350,7 @@ func (c *Connector) runExecution(msg *stores.BrokerMessage, customArgs map[strin
 
 // Call executes the script synchronously with custom arguments (e.g. from scripts.call).
 func (c *Connector) Call(args map[string]any) (any, error) {
-	res := c.runExecution(nil, args, false)
+	res := c.runExecution(nil, args, false, "CALLABLE", time.Now())
 	if !res.Success {
 		return nil, res.Error
 	}
@@ -325,16 +360,20 @@ func (c *Connector) Call(args map[string]any) (any, error) {
 // Test executes the script in isolation without network side effects (dry-run).
 func (c *Connector) Test(testTopic, testPayload string, testArgs map[string]any) *ScriptExecutionResult {
 	var msg *stores.BrokerMessage
+	var triggerTime time.Time
 	if testTopic != "" || testPayload != "" {
+		triggerTime = time.Now()
 		msg = &stores.BrokerMessage{
 			TopicName: testTopic,
 			Payload:   []byte(testPayload),
-			Time:      time.Now(),
+			Time:      triggerTime,
 			QoS:       0,
 			IsRetain:  false,
 		}
+	} else {
+		triggerTime = time.Now()
 	}
-	return c.runExecution(msg, testArgs, true)
+	return c.runExecution(msg, testArgs, true, "TEST", triggerTime)
 }
 
 // Stats returns the live execution statistics and metadata.
