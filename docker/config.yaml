@@ -1,10 +1,11 @@
-NodeId: edge-docker-01
+NodeId: edge
 
 TCP:  { Enabled: true,  Port: 1883, Address: "0.0.0.0" }
 TCPS: { Enabled: false, Port: 8883, Address: "0.0.0.0", KeyStorePath: "", KeyStorePassword: "" }
 WS:   { Enabled: true,  Port: 1884, Address: "0.0.0.0" }
 WSS:  { Enabled: false, Port: 8884, Address: "0.0.0.0" }
 MaxMessageSize: 1048576
+QueuedMessagesEnabled: false
 
 DefaultStoreType: SQLITE
 
@@ -46,4 +47,9 @@ Features:
   Hmi: true
   Redfish: false
 
-QueuedMessagesEnabled: false
+HMI:
+  Enabled: true
+  Path: "/cfg-data/hmi"
+  MountPath: "/hmi"
+  SyncEnabled: true
+  SyncBaseTopic: "monstermq/hmi/sync"
