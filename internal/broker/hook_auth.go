@@ -16,7 +16,7 @@ import (
 	storesqlite "monstermq.io/edge/internal/stores/sqlite"
 )
 
-// AuthHook bridges mochi's Auth/ACL callbacks to our Cache, with support for
+// AuthHook bridges MQTT engine Auth/ACL callbacks to our Cache, with support for
 // mutual TLS client certificate Common Name authentication.
 type AuthHook struct {
 	mqtt.HookBase

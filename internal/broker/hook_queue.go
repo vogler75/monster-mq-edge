@@ -20,7 +20,7 @@ import (
 // QueueHook persists publishes for offline persistent (clean=false) subscribers
 // in the configured QueueStore and replays them when the client reconnects.
 //
-// Without this hook the broker still works — mochi-mqtt holds inflight messages
+// Without this hook the broker still works — the MQTT engine holds inflight messages
 // in memory per client — but those messages are lost when the broker restarts.
 // With it enabled, every publish that matches a disconnected persistent
 // session's subscription is enqueued to a row in the messagequeue table; on
@@ -198,16 +198,16 @@ func (h *QueueHook) collectOfflineSubscribers(ctx context.Context, topicName str
 // client and writes them out as PUBLISH packets. Only runs for persistent
 // (clean=false) sessions.
 //
-// Mochi-mqtt also maintains an in-memory inflight buffer per client that
+// The MQTT engine also maintains an in-memory inflight buffer per client that
 // survives a clean=false disconnect (within the same process). On reconnect,
-// mochi calls cl.ResendInflightMessages BEFORE this hook fires. So if mochi
+// the engine calls cl.ResendInflightMessages BEFORE this hook fires. So if the engine
 // already had something to resend, the client just received it via that path
 // and we must NOT also replay our DB queue, or every message arrives twice.
 //
 // Gating rule:
-//   - mochi inflight non-empty  → in-process reconnect; mochi handled it.
+//   - in-memory inflight non-empty → in-process reconnect; handled in memory.
 //     Purge our DB queue so it doesn't double-fire.
-//   - mochi inflight empty      → post-restart (or first attach); mochi has no
+//   - in-memory inflight empty     → post-restart (or first attach); no in-memory
 //     history. Drain our DB queue and replay.
 func (h *QueueHook) OnSessionEstablished(cl *mqtt.Client, _ packets.Packet) {
 	persistent := !((cl.Properties.ProtocolVersion == 5 && cl.Properties.Props.SessionExpiryInterval == 0) || (cl.Properties.ProtocolVersion < 5 && cl.Properties.Clean))
@@ -257,7 +257,7 @@ func (h *QueueHook) OnSessionEstablished(cl *mqtt.Client, _ packets.Packet) {
 				continue
 			}
 
-			// If message is already tracked as pending ack for this client (e.g. resent by mochi in-process),
+			// If message is already tracked as pending ack for this client (e.g. resent by engine in-process),
 			// do not duplicate write or allocate a new packet ID.
 			if h.isPendingAckUUID(cl.ID, m.MessageUUID) {
 				continue

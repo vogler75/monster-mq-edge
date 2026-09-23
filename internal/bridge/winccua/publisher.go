@@ -9,7 +9,7 @@ import (
 )
 
 // LocalPublisher is the function the bridge calls to inject an MQTT message
-// into the local broker. mochi-mqtt's *Server.Publish satisfies this shape.
+// into the local broker. *mqtt.Server.Publish satisfies this shape.
 type LocalPublisher func(topic string, payload []byte, retain bool, qos byte) error
 
 // publisher holds a topic-transformation cache shared between transports for

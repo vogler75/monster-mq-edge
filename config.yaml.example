@@ -109,7 +109,7 @@ HostMonitoring:
 # QueuedMessagesEnabled: true  -> use QueueStoreType for offline persistent
 # (clean=false) sessions. With QueueStoreType: MEMORY, queued messages are
 # retained only until broker restart.
-# false -> rely on mochi-mqtt's in-memory inflight buffer.
+# false -> rely on the in-memory inflight buffer.
 QueuedMessagesEnabled: true
 
 # MaxQueueMessages -> limit the max number of offline messages queued per client. 0 means unlimited.

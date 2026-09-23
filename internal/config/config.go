@@ -23,7 +23,7 @@ var validBackends = []StoreType{StoreSQLite, StorePostgres, StoreMongoDB}
 
 // validRetainedBackends extends validBackends with MEMORY: when set, retained
 // messages are not persisted to a database and not pre-loaded at startup —
-// mochi-mqtt keeps them in its own in-memory map only.
+// they are kept in the built-in in-memory map only.
 var validRetainedBackends = []StoreType{StoreSQLite, StorePostgres, StoreMongoDB, StoreMemory}
 
 func (s StoreType) isValidBackend() bool {
@@ -284,7 +284,7 @@ type Config struct {
 	//
 	//   true  → use QueueStoreType. Persistent queues survive broker restart;
 	//           MEMORY queues are process-local.
-	//   false → rely on mochi-mqtt's in-memory inflight buffer. Messages are lost
+	//   false → rely on the in-memory inflight buffer. Messages are lost
 	//           on broker restart but lower latency / no DB writes per publish.
 	QueuedMessagesEnabled bool `yaml:"QueuedMessagesEnabled"`
 	MaxQueueMessages      *int `yaml:"MaxQueueMessages"`

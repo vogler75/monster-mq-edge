@@ -42,7 +42,7 @@ import (
 type Server struct {
 	cfg         *config.Config
 	logger      *slog.Logger
-	mochi       *mqtt.Server
+	mqtt        *mqtt.Server
 	storage     *stores.Storage
 	bus         *pubsub.Bus
 	subs        *topic.SubscriptionIndex
@@ -133,7 +133,7 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 		logger.Warn("archive groups load failed", "err", err)
 	}
 
-	// 4. Mochi broker
+	// 4. Native MQTT server engine
 	caps := mqtt.NewDefaultServerCapabilities()
 	if cfg.MaxMessageSize > 0 {
 		caps.MaximumPacketSize = uint32(cfg.MaxMessageSize)
@@ -188,12 +188,12 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 			return nil, fmt.Errorf("add queue hook: %w", err)
 		}
 	} else {
-		logger.Info("queued messages: disabled (relying on mochi-mqtt in-memory inflight)")
+		logger.Info("queued messages: disabled (relying on in-memory inflight)")
 	}
 
-	// 5. Restore retained messages from storage into mochi's in-memory retained map.
+	// 5. Restore retained messages from storage into in-memory retained map.
 	// Skipped when RetainedStoreType is MEMORY: nothing is persisted, so there's
-	// nothing to restore — mochi's own in-memory map is the source of truth.
+	// nothing to restore — the in-memory map is the source of truth.
 	// Also skipped when RetainedStoreType is a DB store: they are loaded on-demand
 	// via OnSelectRetainedMessages hook.
 	if retainedInMemory {
@@ -360,7 +360,7 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 	}
 
 	return &Server{
-		cfg: cfg, logger: logger, mochi: server,
+		cfg: cfg, logger: logger, mqtt: server,
 		storage: storage, bus: bus, subs: subs, archives: archives, authCache: authCache,
 		collector: collector, bridges: bridges, winCCUa: winCCUa, winCCOa: winCCOa, rtspCameras: rtspCameras, scripts: scripts, gqlSrv: gqlSrv,
 		mcpSrv: mcpSrv, redfishMgr: redfishMgr, hostMonitor: hostMonitor, hmiSync: hmiSync,
@@ -523,7 +523,7 @@ func (s *Server) Serve() error {
 			}
 		}()
 	}
-	return s.mochi.Serve()
+	return s.mqtt.Serve()
 }
 
 func (s *Server) Close() error {
@@ -570,7 +570,7 @@ func (s *Server) Close() error {
 	if s.retainedStop != nil {
 		s.retainedStop()
 	}
-	if err := s.mochi.Close(); err != nil {
+	if err := s.mqtt.Close(); err != nil {
 		return err
 	}
 	if s.storage != nil {
@@ -585,4 +585,4 @@ func (s *Server) Bus() *pubsub.Bus                        { return s.bus }
 func (s *Server) Subscriptions() *topic.SubscriptionIndex { return s.subs }
 func (s *Server) Archives() *archive.Manager              { return s.archives }
 func (s *Server) AuthCache() *mauth.Cache                 { return s.authCache }
-func (s *Server) Mochi() *mqtt.Server                     { return s.mochi }
+func (s *Server) MQTT() *mqtt.Server                      { return s.mqtt }

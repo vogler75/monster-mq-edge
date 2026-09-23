@@ -48,7 +48,7 @@ type Config struct {
 	DeleteOldestMessages bool      `json:"deleteOldestMessages,omitempty"`
 }
 
-// LocalPublisher is implemented by mochi-mqtt's *Server (Publish).
+// LocalPublisher is implemented by the MQTT broker *Server (Publish).
 type LocalPublisher func(topic string, payload []byte, retain bool, qos byte) error
 
 // LocalSubscriber lets the bridge listen to the local broker for outbound
