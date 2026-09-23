@@ -118,7 +118,7 @@
     },
     "DefaultStoreType":  { "$ref": "#/$defs/StoreBackend", "description": "Backend used by every store unless overridden below." },
     "SessionStoreType":  { "$ref": "#/$defs/VolatileStoreBackend", "description": "Override for the session/subscription store; falls back to DefaultStoreType. MEMORY uses an in-memory SQLite database." },
-    "RetainedStoreType": { "$ref": "#/$defs/RetainedStoreBackend", "description": "Override for the retained-message store; falls back to DefaultStoreType. MEMORY = mochi-mqtt's in-memory map only, no DB persistence and no startup load." },
+    "RetainedStoreType": { "$ref": "#/$defs/RetainedStoreBackend", "description": "Override for the retained-message store; falls back to DefaultStoreType. MEMORY = built-in in-memory map only, no DB persistence and no startup load." },
     "ConfigStoreType":   { "$ref": "#/$defs/StoreBackend", "description": "Override for the device-config store; falls back to DefaultStoreType." },
     "QueueStoreType":    { "$ref": "#/$defs/VolatileStoreBackend", "description": "Override for the queued-message store; falls back to DefaultStoreType. MEMORY uses an in-memory SQLite database and does not survive restart." },
     "SQLite": {
@@ -315,7 +315,7 @@
     },
     "QueuedMessagesEnabled": {
       "type": "boolean",
-      "description": "true: store messages for offline persistent (clean=false) sessions in the QueueStore so they survive broker restart. false: rely on mochi-mqtt's in-memory inflight buffer (lost on restart).",
+      "description": "true: store messages for offline persistent (clean=false) sessions in the QueueStore so they survive broker restart. false: rely on the in-memory inflight buffer (lost on restart).",
       "default": true
     },
     "MaxQueueMessages": {

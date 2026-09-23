@@ -50,7 +50,7 @@ type Resolver struct {
 	Logger      *slog.Logger
 	NodeID      string
 	Version     string
-	Mochi       *mqtt.Server
+	MQTT        *mqtt.Server
 	HmiMgr      *hmi.Manager
 	Redfish     *redfish.Manager
 	RtspCameras *rtspcamera.Manager
@@ -64,7 +64,7 @@ func New(cfg *config.Config, storage *stores.Storage, bus *pubsub.Bus, archives 
 	bridges *mqttclient.Manager, winCCUa *winccua.Manager, winCCOa *winccoa.Manager,
 	authCache *auth.Cache, collector *metrics.Collector,
 	logBus *mlog.Bus, logger *slog.Logger,
-	mochi *mqtt.Server,
+	mqttServer *mqtt.Server,
 	publish func(string, []byte, bool, byte) error,
 	hmiMgr *hmi.Manager,
 	redfishMgr *redfish.Manager,
@@ -84,7 +84,7 @@ func New(cfg *config.Config, storage *stores.Storage, bus *pubsub.Bus, archives 
 		Logger:      logger,
 		NodeID:      cfg.NodeID,
 		Version:     formatEdgeVersion(version.Version),
-		Mochi:       mochi,
+		MQTT:        mqttServer,
 		Publish:     publish,
 		HmiMgr:      hmiMgr,
 		Redfish:     redfishMgr,
@@ -1839,8 +1839,8 @@ func (r *sessionResolver) Metrics(ctx context.Context, obj *generated.Session) (
 	sndCount := 0
 	rcvCount := 0
 
-	if r.Mochi != nil {
-		if cl, ok := r.Mochi.Clients.Get(obj.ClientID); ok && cl != nil {
+	if r.MQTT != nil {
+		if cl, ok := r.MQTT.Clients.Get(obj.ClientID); ok && cl != nil {
 			if cl.State.Inflight != nil {
 				pks := cl.State.Inflight.GetAll(false)
 				for _, pk := range pks {
@@ -2437,12 +2437,12 @@ func (r *sessionMutationsResolver) RemoveSessions(ctx context.Context, _ *genera
 		var detailErr *string
 		success := true
 
-		// 1. Disconnect and delete client from mochi-mqtt memory
-		if r.Mochi != nil {
-			if cl, ok := r.Mochi.Clients.Get(id); ok {
+		// 1. Disconnect and delete client from MQTT engine memory
+		if r.MQTT != nil {
+			if cl, ok := r.MQTT.Clients.Get(id); ok {
 				// DisconnectClient sends a disconnect packet and closes the network connection
-				_ = r.Mochi.DisconnectClient(cl, packets.CodeDisconnect)
-				r.Mochi.Clients.Delete(id)
+				_ = r.MQTT.DisconnectClient(cl, packets.CodeDisconnect)
+				r.MQTT.Clients.Delete(id)
 			}
 		}
 

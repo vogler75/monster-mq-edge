@@ -1,5 +1,5 @@
-This directory is a vendored fork of [mochi-mqtt-server](https://github.com/vogler75/mochi-mqtt-server)
-(MIT-licensed; see LICENSE.md). Imported from upstream HEAD eff013414ca36e72e3a75ee559b94bdb75ced04d.
+This directory contains the built-in MQTT server engine, derived from
+[mochi-mqtt-server](https://github.com/mochi-mqtt/server) (MIT-licensed; see LICENSE.md and THIRD_PARTY_NOTICES.txt).
+Original import at commit eff013414ca36e72e3a75ee559b94bdb75ced04d.
 
-We took a copy rather than depend on the published module so we can apply
-local patches (see git history of this directory).
+It is maintained directly in this repository as internal/mqtt.

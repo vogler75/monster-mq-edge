@@ -14,7 +14,7 @@ The original design rationale is archived in `dev/done/PLAN-broker-go.md`.
 Active plans live under `dev/plans/`; completed plans move to `dev/done/`.
 The short version:
 
-- Native MQTT broker via [`mochi-mqtt/server`](https://github.com/mochi-mqtt/server).
+- Native MQTT broker engine (inlined under `internal/mqtt/`).
 - GraphQL API via [`99designs/gqlgen`](https://github.com/99designs/gqlgen).
 - Storage backends: SQLite (`modernc.org/sqlite`, no CGO), PostgreSQL (`pgx/v5`),
   MongoDB (`mongo-driver/v2`).
@@ -89,7 +89,7 @@ or coordinate with the user before merging.
 ```
 cmd/monstermq-edge/        # main entrypoint
 internal/
-  broker/                  # mochi-mqtt server + hooks (storage, queue, auth)
+  broker/                  # MQTT server bootstrap + hooks (storage, queue, auth)
   config/                  # YAML config parsing
   stores/                  # MessageStore / SessionStore / RetainedStore /
                            # QueueStore / UserStore / ArchiveConfigStore /
@@ -119,7 +119,7 @@ dev/done/                  # completed or archived plans
   shipping requirement for cross-compile to ARM.
 - Storage interfaces in `internal/stores/interfaces.go` are the contract.
   Backends implement them; consumers depend only on the interface.
-- Hooks in `internal/broker/hook_*.go` are the bridge between mochi-mqtt
+- Hooks in `internal/broker/hook_*.go` are the bridge between the MQTT engine
   and our stores. Keep the hot path (`OnPublished`) cheap; per-publish
   database scans are not acceptable — use `topic.SubscriptionIndex`
   for resolution.

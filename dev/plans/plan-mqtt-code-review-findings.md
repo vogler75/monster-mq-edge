@@ -3,8 +3,8 @@
 Review date: 2026-08-12
 
 Scope: `internal/mqtt/` and the direct broker integration needed to validate
-the retained-message behaviour. The package is an in-repository copy of
-`mochi-mqtt/server/v2` 2.7.9 with edge-specific modifications.
+the retained-message behaviour. The package is the in-repository MQTT engine
+with edge-specific modifications.
 
 ## Findings
 

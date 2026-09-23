@@ -126,7 +126,7 @@ func TestQueuedMessagesPersistAcrossRestart(t *testing.T) {
 }
 
 // TestQueuedNoDuplicatesOnInProcessReconnect: when the client briefly disconnects
-// and reconnects within the same broker process, mochi's in-memory inflight buffer
+// and reconnects within the same broker process, the in-memory inflight buffer
 // already replays the offline messages. The hook must NOT also replay them from
 // the DB queue, or each message arrives twice.
 func TestQueuedNoDuplicatesOnInProcessReconnect(t *testing.T) {
@@ -159,7 +159,7 @@ func TestQueuedNoDuplicatesOnInProcessReconnect(t *testing.T) {
 	pub.Disconnect(100)
 	time.Sleep(200 * time.Millisecond)
 
-	// 3) reconnect persistent — broker did NOT restart, so mochi's in-memory
+	// 3) reconnect persistent — broker did NOT restart, so the in-memory
 	//    inflight buffer still has all three messages. Our hook must purge the
 	//    DB queue rather than re-replay.
 	count := atomic.Int32{}
@@ -195,9 +195,9 @@ done:
 	}
 }
 
-// TestQueueDisabledFallsBackToMochi verifies that when QueuedMessagesEnabled
-// is false, no rows are written to messagequeue (mochi keeps state in memory).
-func TestQueueDisabledFallsBackToMochi(t *testing.T) {
+// TestQueueDisabledFallsBackToMemory verifies that when QueuedMessagesEnabled
+// is false, no rows are written to messagequeue (state is kept in memory).
+func TestQueueDisabledFallsBackToMemory(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "noqueue.db")
 	port := 25002
 	srv := startWithDB(t, port, dbPath, func(c *config.Config) { c.QueuedMessagesEnabled = false })

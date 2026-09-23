@@ -14,8 +14,8 @@ type Subscriber struct {
 //
 // What this index intentionally does NOT track (in contrast to the Kotlin
 // version): noLocal and retainAsPublished. On the edge those are handled by
-// mochi-mqtt on the live MQTT publish path. This index exists for paths that
-// run alongside mochi — currently the offline-queue hook — where the cost of
+// the native MQTT engine on the live MQTT publish path. This index exists for paths that
+// run alongside the engine — currently the offline-queue hook — where the cost of
 // scanning the persisted subscription table per published message is the
 // dominating factor.
 //

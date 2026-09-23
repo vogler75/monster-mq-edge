@@ -160,7 +160,7 @@ func (c *Cache) lookup(username string) (stores.User, bool) {
 //
 // When aclCheckOnSubscribe is false, subscribe-time checks (write=false with a
 // wildcard topic) always pass. Delivery-time checks (write=false with a concrete
-// topic) are still evaluated against ACL rules — mochi calls OnACLCheck in
+// topic) are still evaluated against ACL rules — the MQTT engine calls OnACLCheck in
 // publishToClient with the actual topic before delivering each message.
 func (c *Cache) Allow(username, topic string, write bool) bool {
 	if username == "" {
