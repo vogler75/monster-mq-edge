@@ -1,5 +1,15 @@
 # Plan: Raspberry Pi GPIO Pin Bridge for Edge Broker
 
+> Superseded design direction (2026-09-23): see
+> [Local I/O for IOT2050 and Raspberry Pi](plan-iot2050-local-io.md).
+> Use an owned Linux GPIO v2 backend with reusable board/shield profiles,
+> without `warthog618/gpiod` or `go-gpiocdev`. The GraphQL extension and
+> mock-only test approach below are historical proposals, not approved work.
+> Raspberry Pi 4 and Pi 5 GPIO support is required in the shared plan's first
+> release, with board profiles, dedicated LocalIO GraphQL management and
+> physical hardware acceptance tests. The historical design below is not a
+> separate implementation path.
+
 ## Summary
 
 The `monster-mq-edge` broker is designed to run on resource-constrained devices, such as the Raspberry Pi, and interface directly with local equipment and sensors. While the main Java/Kotlin broker has extensive device bridging capabilities (like PLC4X, OPC UA, etc.), edge deployments often need direct hardware integration via the Raspberry Pi's GPIO pins.
