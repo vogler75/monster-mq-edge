@@ -106,6 +106,13 @@ internal/
   graphql/                 # gqlgen schema, generated, resolvers, server
   pubsub/                  # in-process bus for `topicUpdates` subscription
   metrics/, log/, version/
+  oahost/                  # WinCC OA embedding contract (TLV, request client);
+                           # oahost/simhost is an in-process OA stand-in for tests
+  winccoanative/           # native winccoa/local|remote namespace, interests, writes
+  stores/oastore/          # MMQConfigs / MMQSessions datapoint stores
+embed/cabi/                # cgo C ABI (c-archive) for the WinCC OA manager
+embed/harness/             # plain C host exercising the ABI (make embed-test)
+winccoa/manager/           # C++ WinCC OA API manager embedding the broker
 test/integration/          # black-box tests (Go; drive the full broker)
 config.yaml.example        # sample config — Features, no Bridges/Dashboard
 yaml-json-schema.json      # draft-07 schema for config.yaml (root of repo)
@@ -116,7 +123,10 @@ dev/done/                  # completed or archived plans
 ## Conventions and rules
 
 - **Go 1.25**. Generics are fine. Don't introduce CGO — pure Go is a
-  shipping requirement for cross-compile to ARM.
+  shipping requirement for cross-compile to ARM. The single approved
+  exception (2026-09-29) is the opt-in WinCC OA embedding library in
+  `embed/cabi/` (build tag `winccoa_embed`, `make embed-lib`); the standalone
+  binary must never import it. See `dev/plans/spec-winccoa-native.md`.
 - Storage interfaces in `internal/stores/interfaces.go` are the contract.
   Backends implement them; consumers depend only on the interface.
 - Hooks in `internal/broker/hook_*.go` are the bridge between the MQTT engine

@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"monstermq.io/edge/internal/oahost"
 	"monstermq.io/edge/internal/stores"
 )
 
@@ -19,6 +20,7 @@ type Manager struct {
 	nodeID    string
 
 	srvCtx context.Context
+	native *oahost.API
 
 	mu         sync.Mutex
 	connectors map[string]Connector
@@ -36,6 +38,11 @@ func NewManager(store stores.DeviceConfigStore, publisher LocalPublisher, nodeID
 		lastConfig: map[string]string{},
 	}
 }
+
+// SetNative switches every WinCCOA-Client device on this node to the
+// in-process native transport. It is set by the embedding host's bootstrap
+// configuration, never by device JSON, so the GraphQL contract is unchanged.
+func (m *Manager) SetNative(api oahost.API) { m.native = &api }
 
 func (m *Manager) Start(ctx context.Context) error {
 	m.srvCtx = ctx
@@ -141,12 +148,24 @@ func (m *Manager) startDevice(d stores.DeviceConfig) {
 		m.logger.Warn("winccoa config parse failed", "name", d.Name, "err", err)
 		return
 	}
-	if errs := cfg.Validate(); len(errs) > 0 {
+	var errs []string
+	if m.native != nil {
+		errs = cfg.ValidateNative()
+	} else {
+		errs = cfg.Validate()
+	}
+	if len(errs) > 0 {
 		m.logger.Warn("winccoa config invalid", "name", d.Name, "errors", errs)
 		return
 	}
-	m.logger.Info("winccoa starting connector", "name", d.Name, "namespace", d.Namespace, "addresses", len(cfg.Addresses))
-	c := New(d.Name, cfg, d.Namespace, m.publisher, m.logger)
+	m.logger.Info("winccoa starting connector", "name", d.Name, "namespace", d.Namespace, "addresses", len(cfg.Addresses), "native", m.native != nil)
+	var c Connector
+	if m.native != nil {
+		pub := newPublisher(d.Namespace, cfg.TransformConfig, cfg.MessageFormat)
+		c = newNativeConnector(d.Name, d.Namespace, cfg, pub, m.publisher, *m.native, m.logger)
+	} else {
+		c = New(d.Name, cfg, d.Namespace, m.publisher, m.logger)
+	}
 	if err := c.Start(m.srvCtx); err != nil {
 		m.logger.Warn("winccoa start failed", "name", d.Name, "err", err)
 		return

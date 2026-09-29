@@ -58,6 +58,7 @@ const (
 	OnSelectRetainedMessages
 	StoredClientByID
 	StoredQueuedMessages
+	OnSubscribeValidate
 )
 
 var (
@@ -96,6 +97,7 @@ type Hook interface {
 	OnPacketProcessed(cl *Client, pk packets.Packet, err error)         // triggers after a packet from the client been processed (handled)
 	OnSubscribe(cl *Client, pk packets.Packet) packets.Packet
 	OnSubscribed(cl *Client, pk packets.Packet, reasonCodes []byte)
+	OnSubscribeValidate(cl *Client, sub packets.Subscription) packets.Code
 	OnSelectSubscribers(subs *Subscribers, pk packets.Packet) *Subscribers
 	OnUnsubscribe(cl *Client, pk packets.Packet) packets.Packet
 	OnUnsubscribed(cl *Client, pk packets.Packet, reasonCodes []byte)
@@ -360,6 +362,20 @@ func (h *Hooks) OnSubscribed(cl *Client, pk packets.Packet, reasonCodes []byte) 
 	}
 }
 
+// OnSubscribeValidate decides one filter of a SUBSCRIBE after the ACL check
+// and before the subscription is committed. The first hook returning a
+// non-success code rejects the filter with that code.
+func (h *Hooks) OnSubscribeValidate(cl *Client, sub packets.Subscription) packets.Code {
+	for _, hook := range h.GetAll() {
+		if hook.Provides(OnSubscribeValidate) {
+			if code := hook.OnSubscribeValidate(cl, sub); code.Code != packets.CodeSuccess.Code {
+				return code
+			}
+		}
+	}
+	return packets.CodeSuccess
+}
+
 // OnSelectSubscribers is called when subscribers have been collected for a topic, but before
 // shared subscription subscribers have been selected. This hook can be used to programmatically
 // remove or add clients to a publish to subscribers process, or to select the subscriber for a shared
@@ -413,10 +429,17 @@ func (h *Hooks) OnPublish(cl *Client, pk packets.Packet) (pkx packets.Packet, er
 				} else if errors.Is(err, packets.CodeSuccessIgnore) {
 					return pk, err
 				}
-				h.Log.Error("publish packet error",
-					"error", err,
-					"hook", hook.ID(),
-					"packet", pkx)
+				// A reason-code rejection is a normal protocol outcome (the
+				// client gets it in the PUBACK); only unexpected errors are
+				// logged as errors.
+				if errors.As(err, new(packets.Code)) {
+					h.Log.Debug("publish packet rejected", "error", err, "hook", hook.ID(), "topic", pkx.TopicName)
+				} else {
+					h.Log.Error("publish packet error",
+						"error", err,
+						"hook", hook.ID(),
+						"packet", pkx)
+				}
 				return pk, err
 			}
 			pkx = npk
@@ -823,6 +846,11 @@ func (h *HookBase) OnSubscribe(cl *Client, pk packets.Packet) packets.Packet {
 
 // OnSubscribed is called when a client subscribes to one or more filters.
 func (h *HookBase) OnSubscribed(cl *Client, pk packets.Packet, reasonCodes []byte) {}
+
+// OnSubscribeValidate accepts every filter by default.
+func (h *HookBase) OnSubscribeValidate(cl *Client, sub packets.Subscription) packets.Code {
+	return packets.CodeSuccess
+}
 
 // OnSelectSubscribers is called when selecting subscribers to receive a message.
 func (h *HookBase) OnSelectSubscribers(subs *Subscribers, pk packets.Packet) *Subscribers {

@@ -1,0 +1,149 @@
+# MonsterMQ Edge embedded in a WinCC OA API manager
+
+`WCCOAmmq` is a WinCC OA C++ API manager that runs the MonsterMQ Edge
+broker in-process. The manager thread executes all WinCC OA calls; the Go
+broker (linked as a c-archive) owns MQTT, routing, storage and the native
+namespace. Design and contracts:
+
+- [Plan and acceptance criteria](../dev/plans/plan-winccoa-broker-embedded-manager.md)
+- [Frozen specification (ABI, topics, limits)](../dev/plans/spec-winccoa-native.md)
+- [Acceptance status](../dev/plans/acceptance-winccoa-native.md)
+
+## Supported combination
+
+Only this combination is claimed (spec section 2):
+
+| Item | Value |
+|---|---|
+| WinCC OA | 3.21 (`/opt/WinCC_OA/3.21/api`) |
+| OS / arch | Debian 12, aarch64 (Linux only; no Windows DLL) |
+| Library | `libmonstermq.a` (Go `-buildmode=c-archive`) |
+| Compiler | system gcc/g++, C++17 |
+
+## Build
+
+```bash
+export API_ROOT=/opt/WinCC_OA/3.21/api
+make embed-test                       # builds build/embed/libmonstermq.a and runs the C ABI harness
+cd winccoa/manager && mkdir -p build && cd build
+cmake .. && make                      # produces WCCOAmmq
+```
+
+The standalone broker is unaffected: `make build`, `build-arm64` and
+`build-armv7` stay `CGO_ENABLED=0` and never link the embedding library.
+
+## Project setup
+
+1. Copy `WCCOAmmq` to `<project>/bin`.
+2. Create the store datapoint types once (needed only when `WinCCOaNative.Stores` is used):
+   `WCCOActrl -proj <project> <repo>/winccoa/scripts/mmqCreateTypes.ctl`
+   (or copy the script to `<project>/scripts`). The broker checks the
+   layout at startup and refuses to start with a missing or different type.
+3. Copy `monstermq.yaml.example` to `<project>/config/monstermq.yaml` and
+   adjust ports, users and stores.
+4. Add to `<project>/config/config`:
+
+   ```ini
+   [monstermq]
+   brokerConfig = "config/monstermq.yaml"   # relative to the project directory
+   dispatchMs = 2                           # dispatch wait; latency floor for Go -> OA requests
+   tickBudget = 256                         # requests per dispatch tick
+   tickBudgetMs = 5
+   queueCapacity = 4096
+   stopTimeoutMs = 10000
+   statsSeconds = 60                        # statistics line interval
+   ```
+
+5. Add the manager to the console (PMON) as `WCCOAmmq -num <n>`.
+   Use a distinct manager number; `-dbg USR1` enables debug logging. Every
+   `statsSeconds` the manager logs a statistics line (`connects`, `queries`,
+   `liveCallbacks`, `queued`, `queueHighWater`, `overloads`, `offThreadCalls`,
+   `setMessages`, `setItems`, `hotlinkItems`); set `MMQ_STATS_SECONDS` in the
+   manager environment for the broker-side `host client stats` line.
+
+## Readiness and diagnostics
+
+- `winccoa/node/this/status` and `winccoa/node/<NodeId>/status` (retained):
+  `ready`, `oa` connection, local `system`, `role` (`STANDALONE`).
+- Broker log lines go to the WinCC OA log (`PVSS_II.log` / log viewer)
+  with the `MonsterMQ` catalog prefix. A start failure (bad config, occupied
+  port, missing DPT, unreachable store) is logged as `broker failed: ...` and
+  the manager exits with code 1.
+- Namespace: `winccoa/local/tags/<DP>/<element...>`,
+  `winccoa/local/types/<DPT>/<DP>/<element...>`, the same under
+  `winccoa/remote/<System>/`, optional read attribute suffix
+  (`_online.._value`, `_online.._stime`, `_online.._status`,
+  `_online.._invalid`), writes via `.../set` with `{"value": ..}`. See the
+  spec for encoding, reason codes and command results.
+
+## Connection loss and restarts
+
+- Remote systems: the manager follows `_DistManager.State.SystemNums`. A
+  lost system makes its native subscriptions go quiet (no stale values, no
+  fallback to the local system), new subscriptions and writes for it are
+  rejected with `0x83`, and its registrations are re-created once it
+  reconnects.
+- Local Event/Data connection: a WinCC OA API manager terminates when it
+  loses the Event manager. Run `WCCOAmmq` with PMON restart mode
+  `always`; on restart the broker restores persistent sessions and their
+  native subscriptions from the stores and revalidates them against the
+  current datapoints.
+
+## SDK probe (AC-02)
+
+Set `probeQuery` and/or `probeDpe` in `[monstermq]` and start the manager
+once from a shell; it logs `PROBE:` lines (stderr and WinCC OA log) and
+exits instead of starting the broker:
+
+```ini
+[monstermq]
+probeQuery = "SELECT '_online.._value', '_online.._stime' FROM 'ExampleDP_*.'"
+probeDpe = "ExampleDP_Arg1.:_online.._value"
+probeSet = "ExampleDP_Arg1.:_original.._value"   # changed once per second by the probe
+```
+
+Change matching values while it listens. Record the output in
+`dev/plans/acceptance-winccoa-native.md`: answer/hotlink table layout,
+whether `values=false` suppresses the initial rows, and whether each
+disconnect variant deletes the callback object.
+
+## Backup and restore
+
+The native stores keep configuration and session metadata in `MMQConfigs_*`
+and `MMQSessions_*` datapoints. Include them in the project's ASCII export
+(`WCCOAascii -out ... -filterDp "MMQ*"`) or database backup. They do not
+contain queued messages, retained messages or MQTT inflight state; those
+stay in the configured SQL store (`SQLite.Path` by default) and need their
+own backup. A restore of the datapoints alone restores configuration and
+session/subscription metadata only.
+
+## Load and soak
+
+- `go build -o build/mmqload ./cmd/mmqload`, create the load datapoints with
+  `winccoa/scripts/mmqCreateLoadDps.ctl`, then e.g.
+  `./build/mmqload -broker tcp://127.0.0.1:1883 -clients 50 -dpes 5000 -rate 2000 -duration 60s`
+  (write -> WinCC OA -> hotlink -> subscriber round trip).
+- `winccoa/scripts/mmq-soak.sh <broker-url> 24 soak.csv [pid-file]` runs the
+  24 h soak in 10-minute rounds. A demo licence stops the project every few
+  hours, so run it on a licensed installation.
+
+## Durability and limits
+
+- A store write is reported successful only after the OA event manager
+  answered the `dpSet` without error; a queued `dpSet` is never success.
+- Numeric limits (queue sizes, timeouts, batch size 100, payload and record
+  sizes, interest limit) are in spec section 7.
+- Commands: `confirmed` means OA accepted the value, not that the process
+  acted on it. Commands without an `id` are not retry-safe.
+- Single node only; the redundancy milestone (M6) is not implemented.
+
+## Rollback
+
+Stop and remove `WCCOAmmq` from the console and run the standalone
+broker again (or the previous embedded build). Stores that were not moved to
+OA datapoints are untouched and are used by the standalone broker as
+before. There is no automatic migration between the `MMQConfigs` /
+`MMQSessions` datapoints and the SQL stores: export device and archive
+configuration through the dashboard or GraphQL before switching, and import
+it into the target broker. Session metadata is rebuilt by clients
+reconnecting.

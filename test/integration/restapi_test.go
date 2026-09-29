@@ -551,6 +551,13 @@ func TestRestSSESlowReader(t *testing.T) {
 	if resp.StatusCode != 200 {
 		t.Fatalf("broker health after flood: %d", resp.StatusCode)
 	}
+	// The server has given up on the slow reader by now. Restore a normal
+	// receive window before draining: with the 1 KiB buffer the window stays
+	// below half the loopback MSS (64 KiB MTU), and sender-side silly window
+	// avoidance can stall delivery of the queued data and FIN indefinitely.
+	if tcp, ok := conn.(*net.TCPConn); ok {
+		_ = tcp.SetReadBuffer(4 << 20)
+	}
 	_ = conn.SetReadDeadline(time.Now().Add(15 * time.Second))
 	if n, err := io.Copy(io.Discard, reader); err != nil {
 		t.Fatalf("slow SSE stream did not terminate: %v", err)

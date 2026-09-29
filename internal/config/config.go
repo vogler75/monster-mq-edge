@@ -101,10 +101,10 @@ type MongoDBConfig struct {
 }
 
 type UserManagementConfig struct {
-	Enabled                bool   `yaml:"Enabled"`
-	PasswordAlgorithm      string `yaml:"PasswordAlgorithm"`
-	AnonymousEnabled       bool   `yaml:"AnonymousEnabled"`
-	AclCacheEnabled        bool   `yaml:"AclCacheEnabled"`
+	Enabled                 bool   `yaml:"Enabled"`
+	PasswordAlgorithm       string `yaml:"PasswordAlgorithm"`
+	AnonymousEnabled        bool   `yaml:"AnonymousEnabled"`
+	AclCacheEnabled         bool   `yaml:"AclCacheEnabled"`
 	AclCheckOnSubscription  *bool  `yaml:"AclCheckOnSubscription,omitempty"`
 	AllowAnonymousLocalhost bool   `yaml:"AllowAnonymousLocalhost"`
 }
@@ -220,6 +220,64 @@ type FeaturesConfig struct {
 	PythonScripts      bool `yaml:"PythonScripts"`
 }
 
+// WinCCOaNativeConfig is the bootstrap configuration for running the broker
+// embedded in a WinCC OA API manager. It is read before any OA access and is
+// ignored by the standalone binary, which has no embedding host.
+type WinCCOaNativeConfig struct {
+	Enabled    bool     `yaml:"Enabled"`
+	Transport  string   `yaml:"Transport"`  // NATIVE | GRAPHQL for WinCCOA-Client devices
+	Namespace  bool     `yaml:"Namespace"`  // winccoa/local|remote namespace and writes
+	Stores     []string `yaml:"Stores"`     // subset of DeviceConfig, ArchiveConfig, Sessions
+	EchoPolicy string   `yaml:"EchoPolicy"` // BROKER_TAG | NO_SOURCE
+}
+
+const (
+	WinCCOaTransportNative  = "NATIVE"
+	WinCCOaTransportGraphQL = "GRAPHQL"
+	WinCCOaEchoBrokerTag    = "BROKER_TAG"
+	WinCCOaEchoNoSource     = "NO_SOURCE"
+	WinCCOaStoreDevice      = "DeviceConfig"
+	WinCCOaStoreArchive     = "ArchiveConfig"
+	WinCCOaStoreSessions    = "Sessions"
+)
+
+func (w *WinCCOaNativeConfig) validate() error {
+	if w.Transport == "" {
+		w.Transport = WinCCOaTransportNative
+	}
+	if w.EchoPolicy == "" {
+		w.EchoPolicy = WinCCOaEchoBrokerTag
+	}
+	switch w.Transport {
+	case WinCCOaTransportNative, WinCCOaTransportGraphQL:
+	default:
+		return fmt.Errorf("WinCCOaNative.Transport %q must be NATIVE or GRAPHQL", w.Transport)
+	}
+	switch w.EchoPolicy {
+	case WinCCOaEchoBrokerTag, WinCCOaEchoNoSource:
+	default:
+		return fmt.Errorf("WinCCOaNative.EchoPolicy %q must be BROKER_TAG or NO_SOURCE", w.EchoPolicy)
+	}
+	for _, st := range w.Stores {
+		switch st {
+		case WinCCOaStoreDevice, WinCCOaStoreArchive, WinCCOaStoreSessions:
+		default:
+			return fmt.Errorf("WinCCOaNative.Stores entry %q must be one of DeviceConfig, ArchiveConfig, Sessions", st)
+		}
+	}
+	return nil
+}
+
+// HasStore reports whether name is in Stores.
+func (w WinCCOaNativeConfig) HasStore(name string) bool {
+	for _, s := range w.Stores {
+		if s == name {
+			return true
+		}
+	}
+	return false
+}
+
 type PythonScriptsConfig struct {
 	WorkerPoolSize   int   `yaml:"WorkerPoolSize"`
 	QueueBufferSize  int   `yaml:"QueueBufferSize"`
@@ -278,6 +336,7 @@ type Config struct {
 	HMI            HMIConfig            `yaml:"HMI"`
 	Redfish        RedfishConfig        `yaml:"Redfish"`
 	PythonScripts  PythonScriptsConfig  `yaml:"PythonScripts"`
+	WinCCOaNative  WinCCOaNativeConfig  `yaml:"WinCCOaNative"`
 
 	// QueuedMessagesEnabled selects how messages for offline persistent (clean=false)
 	// sessions are held until the client reconnects.
@@ -315,10 +374,10 @@ func Default() *Config {
 			TLSPort:                 4443,
 			RequireHTTPSFromOutside: false,
 		},
-		Dashboard:         DashboardConfig{Enabled: true, Path: ""},
-		RestApi:           RestApiConfig{Enabled: true},
-		MCP:               MCPConfig{Enabled: false},
-		Features:          FeaturesConfig{MqttClient: false, WinCCUa: false, WinCCOa: false, DeviceImportExport: false, Mcp: false, Hmi: false, Redfish: false, RtspCamera: false, PythonScripts: false},
+		Dashboard: DashboardConfig{Enabled: true, Path: ""},
+		RestApi:   RestApiConfig{Enabled: true},
+		MCP:       MCPConfig{Enabled: false},
+		Features:  FeaturesConfig{MqttClient: false, WinCCUa: false, WinCCOa: false, DeviceImportExport: false, Mcp: false, Hmi: false, Redfish: false, RtspCamera: false, PythonScripts: false},
 		HostMonitoring: HostMonitoringConfig{
 			Enabled:         false,
 			BaseTopic:       "nodes/{NodeId}/host",
@@ -402,6 +461,9 @@ func (c *Config) Validate() error {
 	}
 	if c.MaxMessageSize < 0 {
 		return fmt.Errorf("MaxMessageSize must be non-negative")
+	}
+	if err := c.WinCCOaNative.validate(); err != nil {
+		return err
 	}
 	if c.DefaultStoreType == "" {
 		return fmt.Errorf("DefaultStoreType is required")

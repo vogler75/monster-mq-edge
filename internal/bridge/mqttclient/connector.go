@@ -183,8 +183,11 @@ func (c *Connector) Start(ctx context.Context) error {
 
 	opts.SetOnConnectHandler(func(client paho.Client) {
 		c.logger.Info("bridge connected", "name", c.name, "url", c.cfg.BrokerURL)
-		if c.queue != nil {
-			c.logger.Debug("bridge queue ready to flush", "name", c.name, "queued", c.queue.Size(), "capacity", c.queue.Capacity())
+		c.mu.Lock()
+		q := c.queue
+		c.mu.Unlock()
+		if q != nil {
+			c.logger.Debug("bridge queue ready to flush", "name", c.name, "queued", q.Size(), "capacity", q.Capacity())
 		}
 		c.subscribeInbound(client)
 	})

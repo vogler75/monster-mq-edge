@@ -275,6 +275,18 @@
         "DefaultTimeoutMs": { "type": "integer", "minimum": 10, "default": 200, "description": "Default timeout in milliseconds per script execution." }
       }
     },
+    "WinCCOaNative": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Bootstrap settings used only when the broker runs embedded in a WinCC OA API manager. Ignored by the standalone binary.",
+      "properties": {
+        "Enabled":    { "type": "boolean", "default": false, "description": "Enable the native WinCC OA embedding features." },
+        "Transport":  { "type": "string", "enum": ["NATIVE", "GRAPHQL"], "default": "NATIVE", "description": "Transport for existing WinCCOA-Client devices on this node." },
+        "Namespace":  { "type": "boolean", "default": false, "description": "Expose winccoa/local and winccoa/remote tag/type topics, validated subscriptions and typed writes." },
+        "Stores":     { "type": "array", "items": { "type": "string", "enum": ["DeviceConfig", "ArchiveConfig", "Sessions"] }, "uniqueItems": true, "description": "Stores kept in WinCC OA datapoints (MMQConfigs/MMQSessions) instead of DefaultStoreType." },
+        "EchoPolicy": { "type": "string", "enum": ["BROKER_TAG", "NO_SOURCE"], "default": "BROKER_TAG", "description": "How values written through MQTT are echoed to native subscribers." }
+      }
+    },
     "Redfish": {
       "type": "object",
       "additionalProperties": false,
