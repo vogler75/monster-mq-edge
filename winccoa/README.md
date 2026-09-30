@@ -75,7 +75,7 @@ The standalone broker is unaffected: `make build`, `build-arm64` and
 
 ## Readiness and diagnostics
 
-- `winccoa/<System>` (retained JSON, `<System>` = the project's system
+- `winccoa/systems/<System>` (retained JSON, `<System>` = the project's system
   name): `nodeId`, `ready`, `oa` connection, `system`, `role`
   (`STANDALONE`), `timestamp`. A retained empty publish clears a stale
   status of another system name; the own status cannot be written.
@@ -83,8 +83,8 @@ The standalone broker is unaffected: `make build`, `build-arm64` and
   with the `MonsterMQ` catalog prefix. A start failure (bad config, occupied
   port, missing DPT, unreachable store) is logged as `broker failed: ...` and
   the manager exits with code 1.
-- Namespace: `winccoa/<System>/tags/<DP>/<element...>` and
-  `winccoa/<System>/types/<DPT>/<DP>/<element...>`, where `<System>` is the
+- Namespace: `winccoa/systems/<System>/tags/<DP>/<element...>` and
+  `winccoa/systems/<System>/types/<DPT>/<DP>/<element...>`, where `<System>` is the
   local system or a connected remote system (same form for both), optional
   read attribute suffix
   (`_online.._value`, `_online.._stime`, `_online.._status`,
@@ -128,7 +128,25 @@ go to the WinCC OA log with the `MonsterMQ` prefix.
 
 ## Topic names
 
-`winccoa`, `tags` and `types` are defaults and can be changed in
+Every system, the local one included, is addressed with its name below
+`systems`; the local system is also reachable through a shortcut without
+the system name, which is the easy form for a single (non-distributed)
+system:
+
+| | explicit form (always) | local shortcut (`LocalShortcut: true`, default) |
+|---|---|---|
+| local tag | `winccoa/systems/System1/tags/Pump1/speed` | `winccoa/tags/Pump1/speed` |
+| local type | `winccoa/systems/System1/types/Pump/Pump1/speed` | `winccoa/types/Pump/Pump1/speed` |
+| remote tag | `winccoa/systems/SubstationA/tags/Feeder1/voltage` | – |
+| broker status | `winccoa/systems/System1` | `winccoa` |
+
+Both forms of a local element are the same datapoint element: a change is
+published to every form someone subscribed to, and writes work through
+both. For ACLs the explicit form is the reference: a shortcut or type topic
+is only allowed when the explicit tags form is allowed too.
+`LocalShortcut: false` leaves only the explicit form.
+
+`winccoa`, `systems`, `tags` and `types` are defaults and can be changed in
 `monstermq.yaml`:
 
 ```yaml
@@ -136,25 +154,27 @@ WinCCOaNative:
   TopicRoot: plant/oa   # may have several levels
   TagsName: t
   TypesName: dpt
+  SystemsName: sys
 ```
 
-This gives `plant/oa/System1/t/Pump1/speed`,
-`plant/oa/System1/dpt/Pump/Pump1/speed` and the status topic
-`plant/oa/System1`. The whole `TopicRoot` branch is reserved for the
+This gives `plant/oa/sys/System1/t/Pump1/speed` (shortcut
+`plant/oa/t/Pump1/speed`), `plant/oa/sys/System1/dpt/Pump/Pump1/speed` and
+the status topics `plant/oa/sys/System1` and `plant/oa`. The whole
+`TopicRoot` branch is reserved for the
 broker; the default `winccoa` becomes an ordinary topic. Clients' ACLs and
 persisted subscriptions refer to topics, so they have to follow a rename.
 
 ## Wildcard subscriptions
 
-Wildcards inside `winccoa/<System>/tags/` and `winccoa/<System>/types/` are
+Wildcards inside `winccoa/systems/<System>/tags/` and `winccoa/systems/<System>/types/` are
 served by WinCC OA queries:
 
-- `winccoa/System1/tags/Pump1/#`: every value element of `Pump1`
-- `winccoa/System1/tags/Pump1/value/#`: `Pump1.value` and everything below
-- `winccoa/System1/tags/+/speed`: the `speed` element of every datapoint
-- `winccoa/System1/types/Pump/#`: every element of every datapoint of type `Pump`
-- `winccoa/System1/types/Pump/+/value/#`: the `value` subtree of all `Pump`s
-- `winccoa/System1/tags/#`: the whole system (internal and store datapoints excluded)
+- `winccoa/systems/System1/tags/Pump1/#`: every value element of `Pump1`
+- `winccoa/systems/System1/tags/Pump1/value/#`: `Pump1.value` and everything below
+- `winccoa/systems/System1/tags/+/speed`: the `speed` element of every datapoint
+- `winccoa/systems/System1/types/Pump/#`: every element of every datapoint of type `Pump`
+- `winccoa/systems/System1/types/Pump/+/value/#`: the `value` subtree of all `Pump`s
+- `winccoa/systems/System1/tags/#`: the whole system (internal and store datapoints excluded)
 
 Each element is published to its own topic, so a client can mix wildcard and
 exact subscriptions; a change is delivered once. Filters that cover every
@@ -205,7 +225,7 @@ type `MMQRetained` (created by the manager when missing):
 | `updated` | time | time of the publish |
 
 Retained messages below `TopicRoot` (the broker's own status topics such as
-`winccoa/System1`) get no datapoint: they are kept in memory only and
+`winccoa/systems/System1`) get no datapoint: they are kept in memory only and
 republished by the broker at startup.
 
 A retained publish with an empty payload deletes the datapoint, as do

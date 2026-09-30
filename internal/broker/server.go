@@ -155,7 +155,13 @@ func build(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus, opts Optio
 		return nil, err
 	}
 	nativeOn := opts.OA != nil && cfg.WinCCOaNative.Enabled
-	names := winccoanative.Names{Root: cfg.WinCCOaNative.TopicRoot, Tags: cfg.WinCCOaNative.TagsName, Types: cfg.WinCCOaNative.TypesName}.WithDefaults()
+	names := winccoanative.Names{
+		Root:       cfg.WinCCOaNative.TopicRoot,
+		Tags:       cfg.WinCCOaNative.TagsName,
+		Types:      cfg.WinCCOaNative.TypesName,
+		Systems:    cfg.WinCCOaNative.SystemsName,
+		NoShortcut: !cfg.WinCCOaNative.Shortcut(),
+	}.WithDefaults()
 	if err := names.Validate(); err != nil {
 		_ = storage.Close()
 		return nil, fmt.Errorf("WinCCOaNative topic names: %w", err)
@@ -229,8 +235,9 @@ func build(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus, opts Optio
 	})
 	*undo = append(*undo, func() { _ = server.Close() })
 
+	var authHook *AuthHook
 	if cfg.UserManagement.Enabled {
-		authHook := NewAuthHook(
+		authHook = NewAuthHook(
 			authCache,
 			storage.Users,
 			cfg.EffectiveUseIdentityAsUsername(),
@@ -238,7 +245,7 @@ func build(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus, opts Optio
 			cfg.UserManagement.AllowAnonymousLocalhost,
 			logger,
 		)
-		authHook.native = names
+		authHook.native = func() winccoanative.Names { return names }
 		if err := server.AddHook(authHook, nil); err != nil {
 			return nil, fmt.Errorf("add monstermq auth hook: %w", err)
 		}
@@ -273,6 +280,11 @@ func build(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus, opts Optio
 				return err != nil || present
 			},
 		}, logger)
+		if authHook != nil {
+			// The service adds the local system (known after its start,
+			// before any listener), which maps shortcut topics for ACLs.
+			authHook.native = native.Names
+		}
 		if err := server.AddHook(NewWinCCOaNativeHook(native, server, logger), nil); err != nil {
 			return nil, fmt.Errorf("add winccoa native hook: %w", err)
 		}

@@ -286,10 +286,12 @@
       "description": "Bootstrap settings used only when the broker runs embedded in a WinCC OA API manager. Ignored by the standalone binary.",
       "properties": {
         "Enabled":    { "type": "boolean", "default": false, "description": "Enable the native WinCC OA embedding features." },
-        "Namespace":  { "type": "boolean", "default": false, "description": "Expose <TopicRoot>/<system>/<TagsName>|<TypesName> topics, validated subscriptions and typed writes." },
-        "TopicRoot":  { "type": "string", "default": "winccoa", "pattern": "^[^$/+#][^+#]*$", "description": "First topic level(s) of the native namespace, e.g. winccoa or plant/oa. The status topic is <TopicRoot>/<system>." },
-        "TagsName":   { "type": "string", "default": "tags", "pattern": "^[^/+#%]+$", "description": "Topic level for tag access: <TopicRoot>/<system>/<TagsName>/<dp>/..." },
-        "TypesName":  { "type": "string", "default": "types", "pattern": "^[^/+#%]+$", "description": "Topic level for access through the datapoint type: <TopicRoot>/<system>/<TypesName>/<dpt>/<dp>/..." },
+        "Namespace":  { "type": "boolean", "default": false, "description": "Expose <TopicRoot>/<SystemsName>/<system>/<TagsName>|<TypesName> topics, validated subscriptions and typed writes." },
+        "TopicRoot":  { "type": "string", "default": "winccoa", "pattern": "^[^$/+#][^+#]*$", "description": "First topic level(s) of the native namespace, e.g. winccoa or plant/oa. The status topic is <TopicRoot>/<SystemsName>/<system>." },
+        "TagsName":   { "type": "string", "default": "tags", "pattern": "^[^/+#%]+$", "description": "Topic level for tag access: <TopicRoot>/<SystemsName>/<system>/<TagsName>/<dp>/..." },
+        "TypesName":  { "type": "string", "default": "types", "pattern": "^[^/+#%]+$", "description": "Topic level for access through the datapoint type: <TopicRoot>/<SystemsName>/<system>/<TypesName>/<dpt>/<dp>/..." },
+        "SystemsName": { "type": "string", "default": "systems", "pattern": "^[^/+#%]+$", "description": "Topic level before every system name: <TopicRoot>/<SystemsName>/<system>/..." },
+        "LocalShortcut": { "type": "boolean", "default": true, "description": "Also offer the local system without the system part: <TopicRoot>/<TagsName>/..., <TopicRoot>/<TypesName>/..., status on <TopicRoot>." },
         "EchoPolicy": { "type": "string", "enum": ["BROKER_TAG", "NO_SOURCE"], "default": "BROKER_TAG", "description": "How values written through MQTT are echoed to native subscribers." }
       }
     },

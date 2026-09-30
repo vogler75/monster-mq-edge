@@ -81,8 +81,8 @@ func TestNativeNoGrowth(t *testing.T) {
 
 	cycle := func(i int) {
 		c, _ := dialRaw(t, env.port, rawConnect{ClientID: fmt.Sprintf("g%d", i%5), Version: 5, Clean: true})
-		c.Subscribe(sub("winccoa/System1/tags/Pump1/speed", 1), sub("winccoa/System1/types/AnalogDrive/Pump101/count", 0))
-		c.Unsubscribe("winccoa/System1/tags/Pump1/speed")
+		c.Subscribe(sub("winccoa/systems/System1/tags/Pump1/speed", 1), sub("winccoa/systems/System1/types/AnalogDrive/Pump101/count", 0))
+		c.Unsubscribe("winccoa/systems/System1/tags/Pump1/speed")
 		c.Close() // clean session: remaining interest released on disconnect
 	}
 	for i := 0; i < 20; i++ {

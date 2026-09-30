@@ -26,11 +26,11 @@ func TestNativeAccessIsolation(t *testing.T) {
 	}{
 		{stores.User{Username: "admin", IsAdmin: true, Enabled: true, CanSubscribe: true, CanPublish: true}, nil},
 		{stores.User{Username: "reader", Enabled: true, CanSubscribe: true}, []stores.AclRule{
-			{ID: "r1", TopicPattern: "winccoa/System1/tags/Pump101/#", Priority: 100},
+			{ID: "r1", TopicPattern: "winccoa/systems/System1/tags/Pump101/#", Priority: 100},
 			{ID: "r2", TopicPattern: "#", CanSubscribe: true, Priority: 1},
 		}},
 		{stores.User{Username: "writer", Enabled: true, CanPublish: true}, []stores.AclRule{
-			{ID: "w1", TopicPattern: "winccoa/System1/tags/Pump1/speed/set", CanPublish: true, Priority: 100},
+			{ID: "w1", TopicPattern: "winccoa/systems/System1/tags/Pump1/speed/set", CanPublish: true, Priority: 100},
 			{ID: "w2", TopicPattern: "#", Priority: 1},
 		}},
 		{stores.User{Username: "denied", Enabled: true}, nil},
@@ -71,14 +71,14 @@ func TestNativeAccessIsolation(t *testing.T) {
 	defer denied.Close()
 
 	codes := reader.Subscribe(
-		sub("winccoa/System1/tags/Pump1/speed", 1),                   // allowed
-		sub("winccoa/System1/tags/Pump101/speed", 1),                 // ACL denied
-		sub("winccoa/System1/types/AnalogDrive/Pump101/speed", 1),    // alias of a denied element
-		sub("winccoa/System1/tags/Pump101/speed/_online.._stime", 1), // attribute of a denied element
-		sub("winccoa/System1/tags/Pump101/speed/_online.._value", 1), // explicit default attribute
-		sub("$share/g/winccoa/System1/tags/Pump101/speed", 1),        // shared form
-		sub("winccoa/System1/tags/+/speed", 1),                       // wildcard form
-		sub("winccoa/System1/tags/MMQConfigs_k1/config", 1),          // native storage datapoint
+		sub("winccoa/systems/System1/tags/Pump1/speed", 1),                   // allowed
+		sub("winccoa/systems/System1/tags/Pump101/speed", 1),                 // ACL denied
+		sub("winccoa/systems/System1/types/AnalogDrive/Pump101/speed", 1),    // alias of a denied element
+		sub("winccoa/systems/System1/tags/Pump101/speed/_online.._stime", 1), // attribute of a denied element
+		sub("winccoa/systems/System1/tags/Pump101/speed/_online.._value", 1), // explicit default attribute
+		sub("$share/g/winccoa/systems/System1/tags/Pump101/speed", 1),        // shared form
+		sub("winccoa/systems/System1/tags/+/speed", 1),                       // wildcard form
+		sub("winccoa/systems/System1/tags/MMQConfigs_k1/config", 1),          // native storage datapoint
 		sub("#", 0), // broad filter
 	)
 	// The wildcard is accepted; delivery-time ACL checks keep the denied
@@ -87,18 +87,18 @@ func TestNativeAccessIsolation(t *testing.T) {
 	if string(codes) != string(want) {
 		t.Fatalf("reader SUBACK\n got % x\nwant % x", codes, want)
 	}
-	if code := reader.Publish(rawPub{Topic: "winccoa/System1/tags/Pump1/speed/set", Payload: []byte(`1`), QoS: 1}); code != 0x87 {
+	if code := reader.Publish(rawPub{Topic: "winccoa/systems/System1/tags/Pump1/speed/set", Payload: []byte(`1`), QoS: 1}); code != 0x87 {
 		t.Errorf("read-only user write: PUBACK 0x%02x", code)
 	}
 
 	// Another client subscribes the denied element through an alias: the
 	// reader's broad filter must not receive it.
-	admin.Subscribe(sub("winccoa/System1/types/AnalogDrive/Pump101/speed", 1), sub("winccoa/System1/tags/Pump1/speed", 1))
+	admin.Subscribe(sub("winccoa/systems/System1/types/AnalogDrive/Pump101/speed", 1), sub("winccoa/systems/System1/tags/Pump1/speed", 1))
 	admin.Drain(300 * time.Millisecond)
 	reader.Drain(300 * time.Millisecond)
 	_ = sim.Set("System1:Pump101.speed", oahost.Value{Kind: oahost.KindFloat, Float: 66})
 	_ = sim.Set("System1:Pump1.speed", oahost.Value{Kind: oahost.KindFloat, Float: 11})
-	if _, ok := admin.NextOn("winccoa/System1/types/AnalogDrive/Pump101/speed", 2*time.Second); !ok {
+	if _, ok := admin.NextOn("winccoa/systems/System1/types/AnalogDrive/Pump101/speed", 2*time.Second); !ok {
 		t.Fatal("admin did not receive the alias publication")
 	}
 	got := map[string]bool{}
@@ -110,32 +110,32 @@ func TestNativeAccessIsolation(t *testing.T) {
 		}
 		got[pk.TopicName] = true
 	}
-	if got["winccoa/System1/types/AnalogDrive/Pump101/speed"] {
+	if got["winccoa/systems/System1/types/AnalogDrive/Pump101/speed"] {
 		t.Error("broad filter leaked a denied element through its type alias")
 	}
-	if got["winccoa/System1/tags/Pump101/speed"] {
+	if got["winccoa/systems/System1/tags/Pump101/speed"] {
 		t.Error("native wildcard leaked a denied element")
 	}
-	if !got["winccoa/System1/tags/Pump1/speed"] {
+	if !got["winccoa/systems/System1/tags/Pump1/speed"] {
 		t.Errorf("reader did not receive its allowed element: %v", got)
 	}
 
 	// Write-only user: only the exact allowed command, no alias widening.
-	if code := writer.Publish(rawPub{Topic: "winccoa/System1/tags/Pump1/speed/set", Payload: []byte(`42`), QoS: 1}); code != 0 {
+	if code := writer.Publish(rawPub{Topic: "winccoa/systems/System1/tags/Pump1/speed/set", Payload: []byte(`42`), QoS: 1}); code != 0 {
 		t.Errorf("allowed write: PUBACK 0x%02x", code)
 	}
 	for _, topic := range []string{
-		"winccoa/System1/types/AnalogDrive/Pump1/speed/set",
-		"winccoa/System1/tags/Pump1/count/set",
-		"winccoa/System1/tags/Pump101/speed/set",
-		"winccoa/System1",
-		"winccoa/System1/tags/MMQConfigs_k1/config/set",
+		"winccoa/systems/System1/types/AnalogDrive/Pump1/speed/set",
+		"winccoa/systems/System1/tags/Pump1/count/set",
+		"winccoa/systems/System1/tags/Pump101/speed/set",
+		"winccoa/systems/System1",
+		"winccoa/systems/System1/tags/MMQConfigs_k1/config/set",
 	} {
 		if code := writer.Publish(rawPub{Topic: topic, Payload: []byte(`1`), QoS: 1}); code != 0x87 {
 			t.Errorf("writer %s: PUBACK 0x%02x", topic, code)
 		}
 	}
-	if got := writer.Subscribe(sub("winccoa/System1/tags/Pump1/speed", 1)); got[0] != 0x87 {
+	if got := writer.Subscribe(sub("winccoa/systems/System1/tags/Pump1/speed", 1)); got[0] != 0x87 {
 		t.Errorf("write-only subscribe: 0x%02x", got[0])
 	}
 	time.Sleep(200 * time.Millisecond)
@@ -147,10 +147,10 @@ func TestNativeAccessIsolation(t *testing.T) {
 	}
 
 	// Denied user: nothing.
-	if got := denied.Subscribe(sub("winccoa/System1/tags/Pump1/speed", 1), sub("winccoa/System1", 1)); string(got) != "\x87\x87" {
+	if got := denied.Subscribe(sub("winccoa/systems/System1/tags/Pump1/speed", 1), sub("winccoa/systems/System1", 1)); string(got) != "\x87\x87" {
 		t.Errorf("denied SUBACK % x", got)
 	}
-	if code := denied.Publish(rawPub{Topic: "winccoa/System1/tags/Pump1/speed/set", Payload: []byte(`1`), QoS: 1}); code != 0x87 {
+	if code := denied.Publish(rawPub{Topic: "winccoa/systems/System1/tags/Pump1/speed/set", Payload: []byte(`1`), QoS: 1}); code != 0x87 {
 		t.Errorf("denied write: PUBACK 0x%02x", code)
 	}
 }
@@ -163,10 +163,10 @@ func TestNativeCommandQoS2(t *testing.T) {
 	defer env.srv.Close()
 	c, _ := dialRaw(t, env.port, rawConnect{ClientID: "q2", Version: 5, Clean: true})
 	defer c.Close()
-	if code := c.Publish(rawPub{Topic: "winccoa/System1/tags/Pump1/speed/set", Payload: []byte(`5`), QoS: 2}); code != 0 {
+	if code := c.Publish(rawPub{Topic: "winccoa/systems/System1/tags/Pump1/speed/set", Payload: []byte(`5`), QoS: 2}); code != 0 {
 		t.Fatalf("QoS 2 accepted command: PUBREC 0x%02x", code)
 	}
-	if code := c.Publish(rawPub{Topic: "winccoa/System1/tags/Pump1/running/set", Payload: []byte(`5`), QoS: 2}); code != 0x99 {
+	if code := c.Publish(rawPub{Topic: "winccoa/systems/System1/tags/Pump1/running/set", Payload: []byte(`5`), QoS: 2}); code != 0x99 {
 		t.Fatalf("QoS 2 invalid command: PUBREC 0x%02x", code)
 	}
 	time.Sleep(200 * time.Millisecond)

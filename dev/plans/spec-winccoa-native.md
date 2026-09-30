@@ -88,8 +88,9 @@ Element types reported by `RESOLVE`/`TYPE_CHECK` use the same numbers as value k
 
 ## 4. Topic namespace (frozen)
 
-- Native branches: `winccoa/<system>/tags/<dp>[/<elem>...][/<attr>]` and `winccoa/<system>/types/<dpt>/<dp>[/<elem>...][/<attr>]`. `winccoa`, `tags` and `types` are the defaults of `WinCCOaNative.TopicRoot`, `TagsName` and `TypesName` (section 6); everything in this section applies to the configured names. The root must not start with `$` or contain wildcards or empty levels; `TagsName`/`TypesName` are single levels, must differ and must not be `cns`. Invalid names stop the broker at startup. `<system>` is always the WinCC OA system name; the local system (the manager's own) and remote distributed systems use the same form. There is no `this` alias, so one element has one topic on every broker.
-- Broker-owned: `winccoa/<local system>` carries the broker status as retained JSON (`nodeId`, `system`, `oa`, `ready`, `role`, `timestamp`). Reserved: `winccoa/<system>/cns/...` (disabled).
+- Native branches: `winccoa/systems/<system>/tags/<dp>[/<elem>...][/<attr>]` and `winccoa/systems/<system>/types/<dpt>/<dp>[/<elem>...][/<attr>]` for every system, the local one included. `winccoa`, `systems`, `tags` and `types` are the defaults of `WinCCOaNative.TopicRoot`, `SystemsName`, `TagsName` and `TypesName` (section 6); everything in this section applies to the configured names. The root must not start with `$` or contain wildcards or empty levels; `SystemsName`/`TagsName`/`TypesName` are single levels, must differ and must not be `cns`. Invalid names stop the broker at startup.
+- Local shortcut (`LocalShortcut: true`, default): the local system is also reachable without the system part, `winccoa/tags/...`, `winccoa/types/...` (reserved `winccoa/cns/...`), broker status also on `winccoa`. A shortcut topic and its explicit form are aliases of one element like the tags and types forms: one registration, publication to every subscribed form, writes through both; ACLs must allow the explicit tags form as well. Wildcard filters in both forms share one query per form. `LocalShortcut: false` rejects the shortcut forms (`0x8F`). `winccoa/+/...` and `winccoa/systems/+/...` are ordinary MQTT filters.
+- Broker-owned: `winccoa/systems/<local system>` carries the broker status as retained JSON (`nodeId`, `system`, `oa`, `ready`, `role`, `timestamp`). Reserved: `winccoa/systems/<system>/cns/...` (disabled).
 - Segment encoding: percent-encoding with uppercase hex. Only `%`, `/`, `+`, `#`, NUL, and characters below 0x20 are encoded, except that a segment spelling a reserved token (`set`, an attribute token) is written with its first character encoded to address an element of that name. Any other percent-escape or lowercase hex is noncanonical and rejected. Decoded names may not contain `.`, `:`, or control characters, and may not be empty. Case is preserved.
 - Attribute allowlist (read): `_online.._value` (default), `_online.._stime`, `_online.._status`, `_online.._invalid`. A terminal segment starting with `_` that is not in the allowlist is rejected.
 - Command: terminal `set` after the element path; the write target is always `:_original.._value`. Reserved tokens are reserved only in the terminal position: `.../Pump1/set/_online.._value` reads an element named `set`, and a terminal element named `set` is written `%73et`.
@@ -118,14 +119,14 @@ A native filter with `+` or `#` after `tags/` or `types/` becomes one `dpQueryCo
 
 | Filter | Query pattern |
 |---|---|
-| `winccoa/<sys>/tags/#` | `'*.**'` |
-| `winccoa/<sys>/tags/Pump1/#` | `'Pump1.**'` |
-| `winccoa/<sys>/tags/Pump1/value/#` | `'{Pump1.value,Pump1.value.**}'` |
-| `winccoa/<sys>/tags/+/speed` | `'*.speed'` |
-| `winccoa/<sys>/tags/+` | `'*.'` (scalar roots) |
-| `winccoa/<sys>/types/Pump/#` | `'*.**' WHERE _DPT = "Pump"` |
-| `winccoa/<sys>/types/Pump/+/value/#` | `'{*.value,*.value.**}' WHERE _DPT = "Pump"` |
-| `winccoa/<sys>/types/#`, `types/+/...` | any type; rows are published under their DP's type |
+| `winccoa/systems/<sys>/tags/#` | `'*.**'` |
+| `winccoa/systems/<sys>/tags/Pump1/#` | `'Pump1.**'` |
+| `winccoa/systems/<sys>/tags/Pump1/value/#` | `'{Pump1.value,Pump1.value.**}'` |
+| `winccoa/systems/<sys>/tags/+/speed` | `'*.speed'` |
+| `winccoa/systems/<sys>/tags/+` | `'*.'` (scalar roots) |
+| `winccoa/systems/<sys>/types/Pump/#` | `'*.**' WHERE _DPT = "Pump"` |
+| `winccoa/systems/<sys>/types/Pump/+/value/#` | `'{*.value,*.value.**}' WHERE _DPT = "Pump"` |
+| `winccoa/systems/<sys>/types/#`, `types/+/...` | any type; rows are published under their DP's type |
 | `<sys>` is not the local system | `... REMOTE '<sys>'` |
 
 - `+` matches exactly one name level (`*`), a trailing `#` matches the level and everything below (`**`, which also includes the root of a scalar DP). Partial-level wildcards do not exist in MQTT; names containing OA pattern characters (`*?[]{},'"`), attribute segments and names starting with `_` are rejected (`0x8F`).
@@ -135,7 +136,7 @@ A native filter with `+` or `#` after `tags/` or `types/` becomes one `dpQueryCo
 - Datapoints created after the subscription are reported by the running query (verified on 3.21); deleted ones simply stop.
 - Root filters (no datapoint name and no type: `tags/#`, `tags/+/...`, `types/#`, `types/+/...`) are governed by `AllowRootWildcardSubscription` like `#`: when it is `false` they are rejected with `0x8F`. The broker-wide `#` is rejected with `0x8F` as in the Java broker.
 - Limits: at most 1000 distinct wildcard queries; above that `0x83`. The last unsubscribe disconnects the query; a lost remote system disconnects its queries and a returning one registers them again.
-- External publishes to any `winccoa/<system>[/...]` topic other than a `.../set` command are rejected, except a retained empty payload on `winccoa/<system>` for a system other than the local one (clears a stale status, e.g. after a system rename). Configured query output topics must not resolve into `winccoa/...` (validated at connector start).
+- External publishes to any `winccoa/systems/<system>[/...]` topic other than a `.../set` command are rejected, except a retained empty payload on `winccoa/systems/<system>` for a system other than the local one (clears a stale status, e.g. after a system rename). Configured query output topics must not resolve into `winccoa/...` (validated at connector start).
 
 ## 5. Store semantics
 
@@ -155,10 +156,12 @@ Bootstrap `config.yaml` key `WinCCOaNative` (read before any OA access):
 ```yaml
 WinCCOaNative:
   Enabled: true            # only effective inside the embedding manager
-  Namespace: true          # expose winccoa/<system> namespace and writes
+  Namespace: true          # expose winccoa/systems/<system> namespace and writes
   TopicRoot: winccoa       # first level(s), may contain / (e.g. plant/oa)
   TagsName: tags           # one level
   TypesName: types         # one level, different from TagsName
+  SystemsName: systems     # level before every system name
+  LocalShortcut: true      # local system also as winccoa/tags|types/...
   EchoPolicy: BROKER_TAG   # BROKER_TAG | NO_SOURCE
 ConfigStoreType: WINCCOA   # device + archive configs in MMQConfigs datapoints
 SessionStoreType: WINCCOA  # sessions + subscriptions in MMQSessions datapoints

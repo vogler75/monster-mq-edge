@@ -228,12 +228,17 @@ type FeaturesConfig struct {
 // embedded in a WinCC OA API manager. It is read before any OA access and is
 // ignored by the standalone binary, which has no embedding host.
 type WinCCOaNativeConfig struct {
-	Enabled    bool   `yaml:"Enabled"`
-	Namespace  bool   `yaml:"Namespace"`  // <TopicRoot>/<system> namespace and writes
-	TopicRoot  string `yaml:"TopicRoot"`  // first topic level(s), default "winccoa"
-	TagsName   string `yaml:"TagsName"`   // level for tag access, default "tags"
-	TypesName  string `yaml:"TypesName"`  // level for type access, default "types"
-	EchoPolicy string `yaml:"EchoPolicy"` // BROKER_TAG | NO_SOURCE
+	Enabled   bool   `yaml:"Enabled"`
+	Namespace bool   `yaml:"Namespace"` // <TopicRoot>/<SystemsName>/<system> namespace and writes
+	TopicRoot string `yaml:"TopicRoot"` // first topic level(s), default "winccoa"
+	TagsName  string `yaml:"TagsName"`  // level for tag access, default "tags"
+	TypesName string `yaml:"TypesName"` // level for type access, default "types"
+	// Every system is addressed as <TopicRoot>/<SystemsName>/<system>/....
+	// LocalShortcut (default true) also offers the local system without the
+	// system part: <TopicRoot>/<TagsName>/..., <TopicRoot>/<TypesName>/....
+	LocalShortcut *bool  `yaml:"LocalShortcut"`
+	SystemsName   string `yaml:"SystemsName"` // level before system names, default "systems"
+	EchoPolicy    string `yaml:"EchoPolicy"`  // BROKER_TAG | NO_SOURCE
 
 	// LegacyStores is the removed Stores list; set only to reject old configs.
 	LegacyStores []string `yaml:"Stores,omitempty"`
@@ -257,6 +262,9 @@ func (w *WinCCOaNativeConfig) validate() error {
 	if w.TypesName == "" {
 		w.TypesName = "types"
 	}
+	if w.SystemsName == "" {
+		w.SystemsName = "systems"
+	}
 	switch w.EchoPolicy {
 	case WinCCOaEchoBrokerTag, WinCCOaEchoNoSource:
 	default:
@@ -271,6 +279,12 @@ func (w *WinCCOaNativeConfig) validate() error {
 // AllowRootWildcard returns the effective AllowRootWildcardSubscription.
 func (c *Config) AllowRootWildcard() bool {
 	return c.AllowRootWildcardSubscription == nil || *c.AllowRootWildcardSubscription
+}
+
+// Shortcut reports whether the local system is also reachable without the
+// system part (LocalShortcut, default true).
+func (w WinCCOaNativeConfig) Shortcut() bool {
+	return w.LocalShortcut == nil || *w.LocalShortcut
 }
 
 // UsesWinCCOaStores reports whether configs, sessions or retained messages

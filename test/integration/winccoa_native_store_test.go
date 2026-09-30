@@ -270,7 +270,7 @@ func TestNativeStoreSessions(t *testing.T) {
 	if ack.SessionPresent {
 		t.Fatal("unexpected session present")
 	}
-	c.Subscribe(sub("winccoa/System1/tags/Pump1/count", 1), sub("plain/topic", 1))
+	c.Subscribe(sub("winccoa/systems/System1/tags/Pump1/count", 1), sub("plain/topic", 1))
 	c.Close()
 	// MQTT 3.1.1 clean session: purged, not restored.
 	c3, _ := dialRaw(t, env.port, rawConnect{ClientID: "c3", Version: 4, Clean: true})
@@ -278,7 +278,7 @@ func TestNativeStoreSessions(t *testing.T) {
 	c3.Close()
 	// MQTT 5 with zero expiry: gone at disconnect.
 	c0, _ := dialRaw(t, env.port, rawConnect{ClientID: "p0", Version: 5, Clean: true})
-	c0.Subscribe(sub("winccoa/System1/tags/Pump1/speed", 1))
+	c0.Subscribe(sub("winccoa/systems/System1/tags/Pump1/speed", 1))
 	c0.Close()
 	time.Sleep(300 * time.Millisecond)
 	ctx := context.Background()
@@ -302,7 +302,7 @@ func TestNativeStoreSessions(t *testing.T) {
 	if !ack.SessionPresent {
 		t.Fatal("CONNACK session present must reflect the restored OA session")
 	}
-	if pk, ok := r.NextOn("winccoa/System1/tags/Pump1/count", 3*time.Second); !ok || payloadValue(t, pk) != float64(5) {
+	if pk, ok := r.NextOn("winccoa/systems/System1/tags/Pump1/count", 3*time.Second); !ok || payloadValue(t, pk) != float64(5) {
 		t.Fatal("queued native change not delivered after restart")
 	}
 	pub, _ := dialRaw(t, env2.port, rawConnect{ClientID: "pub", Version: 5, Clean: true})
@@ -392,10 +392,10 @@ func TestNativeStoreRetained(t *testing.T) {
 	}
 	pub.Close()
 	// The broker's own status topic is retained but gets no datapoint.
-	if _, err := sim.Get("System1:" + oastore.DPName(oastore.RetainedType, "retained", "winccoa/System1") + ".value"); err == nil {
+	if _, err := sim.Get("System1:" + oastore.DPName(oastore.RetainedType, "retained", "winccoa/systems/System1") + ".value"); err == nil {
 		t.Fatal("datapoint created for the native status topic")
 	}
-	if m, _ := env.srv.Storage().Retained.Get(context.Background(), "winccoa/System1"); m == nil {
+	if m, _ := env.srv.Storage().Retained.Get(context.Background(), "winccoa/systems/System1"); m == nil {
 		t.Fatal("native status topic not retained in memory")
 	}
 	check := func(el string, want oahost.Value) {

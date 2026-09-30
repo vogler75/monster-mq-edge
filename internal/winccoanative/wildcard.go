@@ -39,13 +39,12 @@ func (n Names) ParseWildcard(filter string) (WildTarget, error) {
 	if n.Classify(filter) != KindNative || !HasWildcard(filter) {
 		return w, fmt.Errorf("%w: not a native wildcard filter", ErrWildcard)
 	}
-	segs := strings.Split(strings.TrimPrefix(filter, n.Root+"/"), "/")
-	sys, err := decodeSegment(segs[0], false)
-	if err != nil || sys == "" {
+	sys, segs, err := n.scope(filter)
+	if err != nil {
 		return w, fmt.Errorf("%w: bad system", ErrWildcard)
 	}
 	w.System = sys
-	i := 1
+	i := 0
 	if i >= len(segs) {
 		return w, fmt.Errorf("%w: missing %s/%s", ErrWildcard, n.Tags, n.Types)
 	}
@@ -171,13 +170,15 @@ func (w WildTarget) Key() string {
 	if w.Types {
 		form = "types"
 	}
-	return form + "|" + w.Query()
+	// The system part keeps the shortcut and the explicit form apart: the
+	// same query publishes under different topics.
+	return form + "|" + w.System + "|" + w.Query()
 }
 
 // RowTarget maps a query row name ("Sys:DP.el.el" or "Sys:DP.") to the
 // exact target it is published under. typeName is used for the types form.
 func (w WildTarget) RowTarget(row, typeName string) (Target, bool) {
-	sys, rest, ok := strings.Cut(row, ":")
+	_, rest, ok := strings.Cut(row, ":")
 	if !ok {
 		return Target{}, false
 	}
@@ -185,7 +186,8 @@ func (w WildTarget) RowTarget(row, typeName string) (Target, bool) {
 	if dp == "" || Protected(dp) {
 		return Target{}, false
 	}
-	t := Target{System: sys, DP: dp, Attr: DefaultAttr, names: w.names}
+	// The row keeps the filter's form: "" stays the local shortcut.
+	t := Target{System: w.System, DP: dp, Attr: DefaultAttr, names: w.names}
 	if w.Types {
 		t.TypeName = typeName
 	}

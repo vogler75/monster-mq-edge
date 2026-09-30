@@ -11,7 +11,7 @@ Embed `monster-mq-edge` in a WinCC OA C++ API Manager through an isolated C ABI.
 1. Remove the GraphQL/WebSocket transport between the broker and the local WinCC OA manager. C ABI calls still incur scheduling, copying, conversion, and potentially JSON serialization; latency and throughput improvements must be measured.
 2. Preserve the existing WinCC OA query bridge's query, initial-answer, topic transformation, retained-message, and payload-format behavior using a native transport. *(Removed 2026-09-30: `WinCCOA-Client` devices always use the WinCC OA GraphQL server; `WinCCOaNative.Transport` no longer exists.)*
 3. Optionally persist device/archive/database-connection configuration and session metadata in `MMQConfigs` and `MMQSessions` datapoints.
-4. Expose tag/type MQTT namespaces under `winccoa/<systemname>/`, validated subscriptions, and typed writes. Reserve `winccoa/<systemname>/cns/` for the separate future CNS feature.
+4. Expose tag/type MQTT namespaces under `winccoa/systems/<systemname>/`, validated subscriptions, and typed writes. Reserve `winccoa/systems/<systemname>/cns/` for the separate future CNS feature.
 5. Optionally support a WinCC OA redundant pair, with explicit durability, recovery, and write-ownership rules.
 6. Keep the standalone broker and its ARM builds compatible with `CGO_ENABLED=0`; isolate CGO to an opt-in embedding target.
 
@@ -128,24 +128,24 @@ OA redundancy and backup are useful only for the state actually persisted there 
 
 ### 5.1 Canonical grammar
 
-The first level after `winccoa/` is always the WinCC OA system name, for the manager's own system as well as for distributed systems. There is no `this`/`local` alias: one element has one topic on every broker, which keeps bridged, archived and multi-broker data unambiguous. (Decision 2026-09-30; replaces the earlier `local`/`this` and `remote/<systemname>` scopes.)
+Every system, the manager's own included, is addressed as `winccoa/systems/<systemname>/...`; this explicit form means the same on every broker, which keeps bridged, archived and multi-broker data unambiguous. For single (non-distributed) systems the local system is also reachable through the shortcut `winccoa/tags|types/...` (`LocalShortcut`, default on); shortcut and explicit topics are aliases of one element. (Decisions 2026-09-30; replace the earlier `local`/`this` and `remote/<systemname>` scopes and the `winccoa/<systemname>/...` form.)
 
 | Topic | Read target |
 |---|---|
-| `winccoa/System1/tags/Pump101/speed` | `System1:Pump101.speed:_online.._value`, assuming the manager's local system is `System1` |
-| `winccoa/System1/types/AnalogDrive/Pump101/speed` | Same local target, after verifying DPT `AnalogDrive` |
-| `winccoa/SubstationA/tags/Feeder1/voltage` | `SubstationA:Feeder1.voltage:_online.._value` |
-| `winccoa/SubstationA/types/Feeder/Feeder1/voltage` | Same remote target, after verifying DPT `Feeder` |
-| `winccoa/System1/tags/ScalarTag` | `System1:ScalarTag.:_online.._value` |
-| `winccoa/SubstationA/tags/ScalarTag` | `SubstationA:ScalarTag.:_online.._value` |
-| `winccoa/System1/tags/Pump101/speed/_online.._value` | Explicit form of the first local read target |
-| `winccoa/SubstationA/tags/Feeder1/voltage/_online.._value` | Explicit form of the remote read target |
+| `winccoa/systems/System1/tags/Pump101/speed` | `System1:Pump101.speed:_online.._value`, assuming the manager's local system is `System1` |
+| `winccoa/systems/System1/types/AnalogDrive/Pump101/speed` | Same local target, after verifying DPT `AnalogDrive` |
+| `winccoa/systems/SubstationA/tags/Feeder1/voltage` | `SubstationA:Feeder1.voltage:_online.._value` |
+| `winccoa/systems/SubstationA/types/Feeder/Feeder1/voltage` | Same remote target, after verifying DPT `Feeder` |
+| `winccoa/systems/System1/tags/ScalarTag` | `System1:ScalarTag.:_online.._value` |
+| `winccoa/systems/SubstationA/tags/ScalarTag` | `SubstationA:ScalarTag.:_online.._value` |
+| `winccoa/systems/System1/tags/Pump101/speed/_online.._value` | Explicit form of the first local read target |
+| `winccoa/systems/SubstationA/tags/Feeder1/voltage/_online.._value` | Explicit form of the remote read target |
 
-The former `winccoa/local|this/...` and `winccoa/remote/<systemname>/...` scopes are superseded, not compatibility aliases. An unknown or disconnected system is unavailable; a remote outage must never fall back to local resolution. `winccoa/<systemname>` itself is the broker status topic of the local system, and `winccoa/<systemname>/cns/...` is reserved. This grammar governs native resolution; existing configured query output keeps its explicit topic contract and must not collide with reserved native/status/CNS topics.
+The former `winccoa/local|this/...` and `winccoa/remote/<systemname>/...` scopes are superseded, not compatibility aliases. An unknown or disconnected system is unavailable; a remote outage must never fall back to local resolution. `winccoa/systems/<systemname>` itself is the broker status topic of the local system, and `winccoa/systems/<systemname>/cns/...` is reserved. This grammar governs native resolution; existing configured query output keeps its explicit topic contract and must not collide with reserved native/status/CNS topics.
 
 The local system ID must be resolved to its actual name using the selected SDK; do not assume a default-system helper returns a string. Writes use a terminal `/set` and target `:_original.._value`. Do not allow arbitrary config writes through attribute syntax.
 
-Topic-to-DPE conversion joins the DP and element segments with dots and appends a trailing dot only when the result contains no dot (`Pump101/speed` → `Pump101.speed`, never `Pump101.speed.`). A DP-only topic such as `winccoa/System1/tags/Pump101` becomes the root form `Pump101.` only after the resolver confirms that the DPT root is itself a value element. For a structured DPT the struct root is not a value leaf, so the filter or command is rejected rather than connected.
+Topic-to-DPE conversion joins the DP and element segments with dots and appends a trailing dot only when the result contains no dot (`Pump101/speed` → `Pump101.speed`, never `Pump101.speed.`). A DP-only topic such as `winccoa/systems/System1/tags/Pump101` becomes the root form `Pump101.` only after the resolver confirms that the DPT root is itself a value element. For a structured DPT the struct root is not a value leaf, so the filter or command is rejected rather than connected.
 
 Before implementation, freeze an unambiguous encoding for reserved segments (`tags`, `types`, `cns`, `set`, attribute tokens), slash, percent, wildcard characters, and system/DP/element names. Reject noncanonical forms; preserve case. Define an allowlist of explicit read attributes. Root-element access needs the dot; lifecycle create/delete uses the DP identity. [WinCC OA API messages and root-element naming](https://www.winccoa.com/documentation/WinCCOA/latest/en_US/API/topics/API-08_2.html)
 
@@ -157,13 +157,13 @@ The tag-centric, type-centric, and explicit-attribute forms can share one underl
 - Validate exact native read filters on the manager thread (or against a synchronized, invalidatable catalog); check explicit local/remote scope, system, DPE, attribute, DPT, and authorization. Distinguish nonexistent objects from unavailable remote systems internally.
 - Produce one SUBACK result per requested filter before committing its subscription. The current engine has no per-filter result on `OnSubscribe`; design an explicit validation hook/path or prove a safe composition with existing ACL checks. `OnSubscribed` remains a notification for accepted filters.
 - Use MQTT 5 `0x87` for denied access and a documented supported failure code such as `0x83` for unavailable validation; MQTT 3.1.1 failures map to `0x80`. Never remove rejected filters from the response or mutate their order.
-- `winccoa/<local system>` is the broker-owned status topic (retained JSON) and bypasses DPE parsing while retaining ACL checks.
+- `winccoa/systems/<local system>` is the broker-owned status topic (retained JSON) and bypasses DPE parsing while retaining ACL checks.
 - Wildcard filters inside the native branches are served by shared `dpQueryConnectSingle` registrations (`+` = one level, `#` = subtree, `types/<T>/...` adds a `_DPT` filter); root filters (no DP name, no type) follow `AllowRootWildcardSubscription` like `#`. Broad filters above the native branches stay ordinary MQTT routing and never create OA registrations. Shared filters targeting native data are rejected. Details and limits: spec section 4.2.
 - Invalidate subscriptions/caches when DPs are deleted or renamed, types change, or distributed systems disconnect. Clear stale retained native values according to a documented policy; never replay a deleted DP's value as current.
 
 ### 5.3 Future feature: CNS access
 
-Reserve `winccoa/<systemname>/cns/...` for WinCC OA Common Name Service access. The separate [CNS integration plan](plan-winccoa-broker-cns-mqtt-namespace.md) proposes view/tree/node mapping, local and remote scopes, DPE resolution, subscriptions, topology updates, and later optional discovery/writes.
+Reserve `winccoa/systems/<systemname>/cns/...` for WinCC OA Common Name Service access. The separate [CNS integration plan](plan-winccoa-broker-cns-mqtt-namespace.md) proposes view/tree/node mapping, local and remote scopes, DPE resolution, subscriptions, topology updates, and later optional discovery/writes.
 
 CNS is deferred and is not part of milestones M0–M7 or a prerequisite for releasing native tag/type access. Until enabled by that future feature, explicit CNS subscriptions fail with the documented unsupported/unavailable result, commands are rejected, and the native resolver does not treat `cns` as a system or DPE. Broad MQTT filters do not activate CNS discovery. Protect this reserved branch from external publishes and configured query-output collisions. No CNS catalog, observer, or OA connection is created while the feature is disabled.
 
@@ -193,7 +193,7 @@ Unsubscribe, clean-session removal, expiry, and client takeover update interests
 
 ### 6.3 Writes
 
-A command such as `winccoa/System1/tags/Pump1/speed/set` (local system `System1`) or `winccoa/SubstationA/tags/Pump1/speed/set` with `{"value":1500.0}` becomes a typed write to `System1:Pump1.speed:_original.._value` or `SubstationA:Pump1.speed:_original.._value`, respectively, after ACL, existence, value-type, range, and size validation. Unsupported types and malformed values fail without coercing them to an unrelated type. Define bool, signed/unsigned integer, float, string, time, and dynamic-value handling explicitly.
+A command such as `winccoa/systems/System1/tags/Pump1/speed/set` (local system `System1`) or `winccoa/systems/SubstationA/tags/Pump1/speed/set` with `{"value":1500.0}` becomes a typed write to `System1:Pump1.speed:_original.._value` or `SubstationA:Pump1.speed:_original.._value`, respectively, after ACL, existence, value-type, range, and size validation. Unsupported types and malformed values fail without coercing them to an unrelated type. Define bool, signed/unsigned integer, float, string, time, and dynamic-value handling explicitly.
 
 Reject retained commands to prevent replay on reconnect. Tag OA-origin publications and forwarded commands so values cannot re-enter the command path. Do not run writes directly on a Go callback thread.
 
@@ -231,7 +231,7 @@ After recovery, perform snapshot plus ordered delta replay (or equivalent), incl
 
 ### 7.4 Status topics
 
-Publish retained JSON on `winccoa/<local system>` with node/system identity, role, OA partner connectivity, broker peer connectivity, synchronization readiness, durability mode, and timestamp. Only internal code may publish this topic. With redundancy, both nodes serve the same system, so the status must carry the node identity and a replicated peer status must not overwrite the local node's view.
+Publish retained JSON on `winccoa/systems/<local system>` with node/system identity, role, OA partner connectivity, broker peer connectivity, synchronization readiness, durability mode, and timestamp. Only internal code may publish this topic. With redundancy, both nodes serve the same system, so the status must carry the node identity and a replicated peer status must not overwrite the local node's view.
 
 Publish transitions promptly. A crashed broker cannot publish its own final offline state; document client disconnect/timeout or peer observation as the crash indication. Status is operational information, not a fencing authority.
 

@@ -316,6 +316,8 @@ func CanonicalTopic(t Target) string {
 
 // CanonicalOf returns the canonical tags-form topic of an exact native
 // topic; ok is false for other topics and filters with wildcards.
+// A shortcut topic of the local system maps to its explicit
+// <root>/<systems>/<local>/... form once n.Local is known.
 func (n Names) CanonicalOf(topic string) (string, bool) {
 	if n.Classify(topic) != KindNative || HasWildcard(topic) {
 		return "", false
@@ -323,6 +325,9 @@ func (n Names) CanonicalOf(topic string) (string, bool) {
 	t, err := n.Parse(topic)
 	if err != nil {
 		return "", false
+	}
+	if t.System == "" {
+		t.System = n.Local
 	}
 	return CanonicalTopic(t), true
 }
@@ -335,7 +340,7 @@ func (s *Service) resolveTarget(t Target) (string, oahost.Resolution, Verdict, s
 	if !s.ready.Load() || !s.oaUp.Load() {
 		return "", oahost.Resolution{}, Unavailable, "WinCC OA not ready"
 	}
-	sys := t.System
+	sys := s.sysOf(t.System)
 	name := t.DPE(sys)
 	res, err := s.lookup(name)
 	if err != nil {
@@ -402,7 +407,7 @@ func (s *Service) Subscribed(clientID, filter string, existed bool) {
 	if err != nil || t.Command {
 		return
 	}
-	key := t.Key(t.System)
+	key := t.Key(s.sysOf(t.System))
 	sk := subKey{clientID, filter}
 
 	s.mu.Lock()
@@ -427,7 +432,7 @@ func (s *Service) Subscribed(clientID, filter string, existed bool) {
 			s.logger.Warn("native interest limit reached", "limit", s.opts.MaxInterests, "filter", filter)
 			return
 		}
-		d = &dpeEntry{key: key, system: t.System, dp: t.DP, subs: map[subKey]*subEntry{}}
+		d = &dpeEntry{key: key, system: s.sysOf(t.System), dp: t.DP, subs: map[subKey]*subEntry{}}
 		s.dpes[key] = d
 	}
 	e := &subEntry{key: key, topic: f, waiting: true}
@@ -548,7 +553,7 @@ func (s *Service) addRestored(clientID, filter string) {
 	if err != nil {
 		return
 	}
-	key := t.Key(t.System)
+	key := t.Key(s.sysOf(t.System))
 	sk := subKey{clientID, filter}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -557,7 +562,7 @@ func (s *Service) addRestored(clientID, filter string) {
 	}
 	d := s.dpes[key]
 	if d == nil {
-		d = &dpeEntry{key: key, system: t.System, dp: t.DP, subs: map[subKey]*subEntry{}}
+		d = &dpeEntry{key: key, system: s.sysOf(t.System), dp: t.DP, subs: map[subKey]*subEntry{}}
 		s.dpes[key] = d
 	}
 	e := &subEntry{key: key, topic: filter}
@@ -1049,25 +1054,53 @@ func (s *Service) PublishStatus() {
 	}
 	b, _ := json.Marshal(st)
 	if s.localSystem != "" {
-		_ = s.broker.Publish(s.opts.Names.StatusTopic(s.localSystem), b, true, 1)
+		for _, topic := range s.statusTopics() {
+			_ = s.broker.Publish(topic, b, true, 1)
+		}
 	}
 }
 
-// StatusTopic is the retained status topic of a system: winccoa/<system>.
-func (n Names) StatusTopic(system string) string { return n.Root + "/" + encodeSegment(system, false) }
+// statusTopics are this broker's status topics: <root>/<systems>/<local
+// system>, and the root itself with the local shortcut.
+func (s *Service) statusTopics() []string {
+	topics := []string{s.opts.Names.StatusTopic(s.localSystem)}
+	if !s.opts.Names.NoShortcut {
+		topics = append(topics, s.opts.Names.StatusTopic(""))
+	}
+	return topics
+}
 
-// Names returns the topic levels the service uses.
-func (s *Service) Names() Names { return s.opts.Names }
+// sysOf binds a parsed system to a WinCC OA system name ("" is the local
+// shortcut).
+func (s *Service) sysOf(system string) string {
+	if system == "" {
+		return s.localSystem
+	}
+	return system
+}
+
+// Names returns the topic levels the service uses, with the local system
+// once it is known.
+func (s *Service) Names() Names {
+	n := s.opts.Names
+	n.Local = s.localSystem
+	return n
+}
 
 // StaleStatusClear reports whether a publish removes a retained status
-// this broker does not own: a retained empty payload on winccoa/<system>
-// for a system other than the local one (e.g. left behind after the
+// this broker does not own: a retained empty payload on the status topic
+// of a system other than the local one (e.g. left behind after the
 // project's system name changed).
 func (s *Service) StaleStatusClear(topic string, retain bool, payload []byte) bool {
 	if !retain || len(payload) != 0 || s.opts.Names.Classify(topic) != KindStatus {
 		return false
 	}
-	return topic != s.opts.Names.StatusTopic(s.localSystem)
+	for _, own := range s.statusTopics() {
+		if topic == own {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Service) Stats() Stats {

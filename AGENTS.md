@@ -108,7 +108,7 @@ internal/
   metrics/, log/, version/
   oahost/                  # WinCC OA embedding contract (TLV, request client);
                            # oahost/simhost is an in-process OA stand-in for tests
-  winccoanative/           # native winccoa/<system> namespace, interests, writes
+  winccoanative/           # native winccoa/systems/<system> namespace, interests, writes
   stores/oastore/          # MMQConfigs / MMQSessions datapoint stores
 embed/cabi/                # cgo C ABI (c-archive) for the WinCC OA manager
 embed/harness/             # plain C host exercising the ABI (make embed-test)

@@ -23,16 +23,26 @@ var ReadAttrs = map[string]bool{
 	"_online.._invalid": true,
 }
 
-// Names are the configurable topic levels of the namespace:
-// <Root>/<system>/<Tags>/... and <Root>/<system>/<Types>/<dpt>/....
+// Names are the configurable topic levels of the namespace. Every system,
+// the local one included, is addressed as <Root>/<Systems>/<system>/<Tags>/...
+// and <Root>/<Systems>/<system>/<Types>/<dpt>/...; unless NoShortcut is set,
+// the local system is also reachable without the system part as
+// <Root>/<Tags>/... and <Root>/<Types>/....
 type Names struct {
-	Root  string // one or more topic levels, e.g. "winccoa" or "plant/oa"
-	Tags  string // one level
-	Types string // one level
+	Root       string // one or more topic levels, e.g. "winccoa" or "plant/oa"
+	Tags       string // one level
+	Types      string // one level
+	Systems    string // one level
+	NoShortcut bool   // no <Root>/<Tags>/... shortcut for the local system
+
+	// Local is the local system name once known; it maps shortcut topics to
+	// their explicit (canonical) form.
+	Local string
 }
 
-// DefaultNames is winccoa/<system>/tags|types.
-var DefaultNames = Names{Root: "winccoa", Tags: "tags", Types: "types"}
+// DefaultNames is winccoa/systems/<system>/tags|types with the local
+// shortcut winccoa/tags|types.
+var DefaultNames = Names{Root: "winccoa", Tags: "tags", Types: "types", Systems: "systems"}
 
 // Validate checks that the names are usable topic levels.
 func (n Names) Validate() error {
@@ -47,7 +57,7 @@ func (n Names) Validate() error {
 	if strings.HasPrefix(n.Root, "$") {
 		return fmt.Errorf("topic root %q must not start with $", n.Root)
 	}
-	for _, v := range []struct{ what, name string }{{"tags", n.Tags}, {"types", n.Types}} {
+	for _, v := range []struct{ what, name string }{{"tags", n.Tags}, {"types", n.Types}, {"systems", n.Systems}} {
 		if v.name == "" || strings.ContainsAny(v.name, "/+#%") || strings.ContainsRune(v.name, 0) {
 			return fmt.Errorf("%s name %q must be one non-empty topic level without / + # %%", v.what, v.name)
 		}
@@ -55,8 +65,8 @@ func (n Names) Validate() error {
 			return fmt.Errorf("%s name %q is reserved", v.what, v.name)
 		}
 	}
-	if n.Tags == n.Types {
-		return fmt.Errorf("tags and types names must differ (both %q)", n.Tags)
+	if n.Tags == n.Types || n.Tags == n.Systems || n.Types == n.Systems {
+		return fmt.Errorf("tags, types and systems names must differ (%q, %q, %q)", n.Tags, n.Types, n.Systems)
 	}
 	return nil
 }
@@ -72,6 +82,9 @@ func (n Names) WithDefaults() Names {
 	if n.Types == "" {
 		n.Types = DefaultNames.Types
 	}
+	if n.Systems == "" {
+		n.Systems = DefaultNames.Systems
+	}
 	return n
 }
 
@@ -79,9 +92,9 @@ type Kind int
 
 const (
 	KindOther  Kind = iota // not in the native namespace
-	KindNative             // <root>/<system>/...
-	KindStatus             // <root>/<system>: broker status (retained JSON)
-	KindCNS                // <root>/<system>/cns/... (reserved, disabled)
+	KindNative             // <root>/<systems>/<system>/..., local shortcut <root>/<tags|types>/...
+	KindStatus             // <root>/<systems>/<system>, local shortcut <root>: broker status (retained JSON)
+	KindCNS                // <root>/<systems>/<system>/cns/..., <root>/cns/... (reserved, disabled)
 )
 
 var (
@@ -92,7 +105,7 @@ var (
 
 // Target is a parsed native topic.
 type Target struct {
-	System   string // WinCC OA system name (the first level)
+	System   string // WinCC OA system name; empty for the local shortcut
 	TypeName string // non-empty for the types/ form
 	DP       string
 	Elements []string
@@ -111,10 +124,28 @@ func (n Names) Classify(topic string) Kind {
 	}
 	rest := strings.TrimPrefix(topic, n.Root)
 	rest = strings.TrimPrefix(rest, "/")
-	system, after, more := strings.Cut(rest, "/")
+	first, after, more := strings.Cut(rest, "/")
 	switch {
-	case system == "" || system == "+" || system == "#":
-		// "<root>", "<root>/#", "<root>/+/...": ordinary MQTT filters.
+	case topic == n.Root:
+		if n.NoShortcut {
+			return KindNative // reserved; parsing rejects it
+		}
+		return KindStatus
+	case first == "+" || first == "#":
+		// "<root>/#", "<root>/+/...": ordinary MQTT filters.
+		return KindOther
+	case first != n.Systems:
+		if first == SegCNS && !n.NoShortcut {
+			return KindCNS
+		}
+		return KindNative // local shortcut, or rejected when parsed
+	case !more:
+		return KindNative // "<root>/<systems>": missing system
+	}
+	system, after, more := strings.Cut(after, "/")
+	switch {
+	case system == "+" || system == "#":
+		// "<root>/<systems>/+/...": ordinary MQTT filter.
 		return KindOther
 	case !more:
 		return KindStatus
@@ -122,6 +153,39 @@ func (n Names) Classify(topic string) Kind {
 		return KindCNS
 	}
 	return KindNative
+}
+
+// scope splits a native topic into its system ("" for the local shortcut)
+// and the levels after it (starting with tags/types).
+func (n Names) scope(topic string) (string, []string, error) {
+	segs := strings.Split(strings.TrimPrefix(topic, n.Root+"/"), "/")
+	if segs[0] != n.Systems {
+		if n.NoShortcut {
+			return "", nil, fmt.Errorf("%w: expected %s/<system>", ErrMalformed, n.Systems)
+		}
+		return "", segs, nil
+	}
+	segs = segs[1:]
+	if len(segs) == 0 {
+		return "", nil, fmt.Errorf("%w: missing system", ErrMalformed)
+	}
+	sys, err := decodeSegment(segs[0], false)
+	if err != nil {
+		return "", nil, err
+	}
+	if sys == "" {
+		return "", nil, fmt.Errorf("%w: missing system", ErrMalformed)
+	}
+	return sys, segs[1:], nil
+}
+
+// StatusTopic is the retained status topic of a system; "" is the local
+// shortcut (the root itself).
+func (n Names) StatusTopic(system string) string {
+	if system == "" {
+		return n.Root
+	}
+	return n.Root + "/" + n.Systems + "/" + encodeSegment(system, false)
 }
 
 // HasWildcard reports whether a filter contains an MQTT wildcard.
@@ -149,16 +213,12 @@ func (n Names) Parse(topic string) (Target, error) {
 	if HasWildcard(topic) {
 		return t, fmt.Errorf("%w: wildcard", ErrMalformed)
 	}
-	segs := strings.Split(strings.TrimPrefix(topic, n.Root+"/"), "/")
-	sys, err := decodeSegment(segs[0], false)
+	sys, segs, err := n.scope(topic)
 	if err != nil {
 		return t, err
 	}
-	if sys == "" {
-		return t, fmt.Errorf("%w: missing system", ErrMalformed)
-	}
 	t.System = sys
-	i := 1
+	i := 0
 	if i >= len(segs) {
 		return t, fmt.Errorf("%w: missing %s/%s", ErrMalformed, n.Tags, n.Types)
 	}
@@ -246,7 +306,10 @@ func (t Target) IsRoot() bool { return len(t.Elements) == 0 }
 // Topic renders the canonical topic for the target in the given form.
 func (t Target) Topic() string {
 	n := t.names.WithDefaults()
-	segs := []string{n.Root, encodeSegment(t.System, false)}
+	segs := []string{n.Root}
+	if t.System != "" {
+		segs = append(segs, n.Systems, encodeSegment(t.System, false))
+	}
 	if t.TypeName != "" {
 		segs = append(segs, n.Types, encodeSegment(t.TypeName, false))
 	} else {

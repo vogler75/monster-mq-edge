@@ -152,20 +152,20 @@ func TestNativeSubackPerFilter(t *testing.T) {
 	defer env.srv.Close()
 
 	filters := []packets.Subscription{
-		sub("winccoa/System1/tags/Pump101/speed", 1),          // valid
-		sub("winccoa/System1/tags/Nope/speed", 1),             // missing DP
-		sub("winccoa/System1/tags/_Users", 1),                 // internal DP: denied
-		sub("winccoa/SubstationB/tags/Feeder1/voltage", 1),    // unavailable remote system
-		sub("winccoa/System1/tags/Pump101/+/x", 1),            // wildcard below a leaf: accepted, matches nothing
-		sub("$share/g/winccoa/System1/tags/Pump101/speed", 1), // shared
-		sub("winccoa/System1", 1),                             // status topic
-		sub("winccoa/System1/cns/View/node", 1),               // reserved CNS
-		sub("winccoa/System1/tags/Pump101", 1),                // struct root: not a value element
-		sub("winccoa/System1/types/Feeder/Pump101/speed", 1),  // DPT mismatch
-		sub("winccoa/Unknown/tags/Pump101/speed", 1),          // unknown system
-		sub("winccoa/tags/Pump101/speed", 1),                  // no tags/types after the system
-		sub("winccoa/System1/tags/ScalarTag", 0),              // scalar root
-		sub("winccoa/System1/tags/MMQConfigs_k1/config", 1),   // native store DP: denied
+		sub("winccoa/systems/System1/tags/Pump101/speed", 1),          // valid
+		sub("winccoa/systems/System1/tags/Nope/speed", 1),             // missing DP
+		sub("winccoa/systems/System1/tags/_Users", 1),                 // internal DP: denied
+		sub("winccoa/systems/SubstationB/tags/Feeder1/voltage", 1),    // unavailable remote system
+		sub("winccoa/systems/System1/tags/Pump101/+/x", 1),            // wildcard below a leaf: accepted, matches nothing
+		sub("$share/g/winccoa/systems/System1/tags/Pump101/speed", 1), // shared
+		sub("winccoa/systems/System1", 1),                             // status topic
+		sub("winccoa/systems/System1/cns/View/node", 1),               // reserved CNS
+		sub("winccoa/systems/System1/tags/Pump101", 1),                // struct root: not a value element
+		sub("winccoa/systems/System1/types/Feeder/Pump101/speed", 1),  // DPT mismatch
+		sub("winccoa/systems/Unknown/tags/Pump101/speed", 1),          // unknown system
+		sub("winccoa/System1/tags/Pump101/speed", 1),                  // system without systems/
+		sub("winccoa/systems/System1/tags/ScalarTag", 0),              // scalar root
+		sub("winccoa/systems/System1/tags/MMQConfigs_k1/config", 1),   // native store DP: denied
 	}
 	want5 := []byte{0x01, 0x8F, 0x87, 0x83, 0x01, 0x9E, 0x01, 0x83, 0x8F, 0x8F, 0x83, 0x8F, 0x00, 0x87}
 	want3 := make([]byte, len(want5))
@@ -223,9 +223,9 @@ func TestNativeInterestsAndInitialValue(t *testing.T) {
 	if err := sim.Set("System1:Pump101.speed", oahost.Value{Kind: oahost.KindFloat, Float: 42.5}); err != nil {
 		t.Fatal(err)
 	}
-	tags := "winccoa/System1/tags/Pump101/speed"
-	types := "winccoa/System1/types/AnalogDrive/Pump101/speed"
-	explicit := "winccoa/System1/tags/Pump101/speed/_online.._value"
+	tags := "winccoa/systems/System1/tags/Pump101/speed"
+	types := "winccoa/systems/System1/types/AnalogDrive/Pump101/speed"
+	explicit := "winccoa/systems/System1/tags/Pump101/speed/_online.._value"
 
 	a, _ := dialRaw(t, env.port, rawConnect{ClientID: "ia", Version: 5, Clean: true})
 	defer a.Close()
@@ -308,7 +308,7 @@ func TestNativeOfflinePersistentSubscriber(t *testing.T) {
 	}, broker.Options{})
 	defer env.srv.Close()
 
-	topic := "winccoa/System1/tags/Pump1/count"
+	topic := "winccoa/systems/System1/tags/Pump1/count"
 	a, _ := dialRaw(t, env.port, rawConnect{ClientID: "off", Version: 5, Clean: true, SessionExpiry: 3600})
 	a.Subscribe(sub(topic, 1))
 	a.NextOn(topic, 2*time.Second)
@@ -353,7 +353,7 @@ func TestNativeTypedWrites(t *testing.T) {
 	defer c.Close()
 	c.Subscribe(sub("results/#", 1))
 
-	base := "winccoa/System1/tags/Pump1/"
+	base := "winccoa/systems/System1/tags/Pump1/"
 	cases := []struct {
 		elem    string
 		payload string
@@ -412,10 +412,10 @@ func TestNativeTypedWrites(t *testing.T) {
 	if code := c.Publish(rawPub{Topic: base + "speed", Payload: []byte(`1`), QoS: 1}); code != 0x87 {
 		t.Errorf("publish to value topic PUBACK 0x%02x", code)
 	}
-	if code := c.Publish(rawPub{Topic: "winccoa/System1", Payload: []byte(`{}`), QoS: 1}); code != 0x87 {
+	if code := c.Publish(rawPub{Topic: "winccoa/systems/System1", Payload: []byte(`{}`), QoS: 1}); code != 0x87 {
 		t.Errorf("forged status PUBACK 0x%02x", code)
 	}
-	if code := c.Publish(rawPub{Topic: "winccoa/System1/cns/x", Payload: []byte(`1`), QoS: 1}); code != 0x87 {
+	if code := c.Publish(rawPub{Topic: "winccoa/systems/System1/cns/x", Payload: []byte(`1`), QoS: 1}); code != 0x87 {
 		t.Errorf("publish into CNS PUBACK 0x%02x", code)
 	}
 
@@ -474,8 +474,8 @@ func TestNativeRemoteSystems(t *testing.T) {
 
 	_ = sim.Set("System1:Pump101.speed", oahost.Value{Kind: oahost.KindFloat, Float: 1})
 	_ = sim.Set("SubstationA:Pump101.speed", oahost.Value{Kind: oahost.KindFloat, Float: 2})
-	local := "winccoa/System1/tags/Pump101/speed"
-	remote := "winccoa/SubstationA/tags/Pump101/speed"
+	local := "winccoa/systems/System1/tags/Pump101/speed"
+	remote := "winccoa/systems/SubstationA/tags/Pump101/speed"
 
 	c, _ := dialRaw(t, env.port, rawConnect{ClientID: "rs", Version: 5, Clean: true})
 	defer c.Close()
@@ -502,10 +502,10 @@ func TestNativeRemoteSystems(t *testing.T) {
 	}
 	d, _ := dialRaw(t, env.port, rawConnect{ClientID: "rs2", Version: 5, Clean: true})
 	defer d.Close()
-	if got := d.Subscribe(sub("winccoa/SubstationA/tags/Feeder1/voltage", 1)); got[0] != 0x83 {
+	if got := d.Subscribe(sub("winccoa/systems/SubstationA/tags/Feeder1/voltage", 1)); got[0] != 0x83 {
 		t.Fatalf("subscribe during outage: 0x%02x", got[0])
 	}
-	if code := d.Publish(rawPub{Topic: "winccoa/SubstationA/tags/Pump101/speed/set", Payload: []byte(`5`), QoS: 1}); code != 0x83 {
+	if code := d.Publish(rawPub{Topic: "winccoa/systems/SubstationA/tags/Pump101/speed/set", Payload: []byte(`5`), QoS: 1}); code != 0x83 {
 		t.Fatalf("write during outage: 0x%02x", code)
 	}
 
@@ -532,7 +532,7 @@ func TestNativeDeletedDatapoint(t *testing.T) {
 	defer env.srv.Close()
 
 	_ = sim.Set("System1:Pump1.speed", oahost.Value{Kind: oahost.KindFloat, Float: 5})
-	topic := "winccoa/System1/tags/Pump1/speed"
+	topic := "winccoa/systems/System1/tags/Pump1/speed"
 	c, _ := dialRaw(t, env.port, rawConnect{ClientID: "del", Version: 5, Clean: true})
 	defer c.Close()
 	c.Subscribe(sub(topic, 1))
@@ -579,7 +579,7 @@ func TestNativeRestoreBatches(t *testing.T) {
 	c, _ := dialRaw(t, env.port, rawConnect{ClientID: "bulk", Version: 4, Clean: false})
 	var subs []packets.Subscription
 	for i := 0; i < 250; i++ {
-		subs = append(subs, sub(fmt.Sprintf("winccoa/System1/tags/Bulk%03d", i), 0))
+		subs = append(subs, sub(fmt.Sprintf("winccoa/systems/System1/tags/Bulk%03d", i), 0))
 	}
 	for i := 0; i < len(subs); i += 50 {
 		for _, code := range c.Subscribe(subs[i : i+50]...) {
@@ -626,7 +626,7 @@ func TestNativeOverload(t *testing.T) {
 	c, _ := dialRaw(t, env.port, rawConnect{ClientID: "ov", Version: 5, Clean: true})
 	defer c.Close()
 	// Warm the catalog so writes only need the DP_SET round trip.
-	if code := c.Publish(rawPub{Topic: "winccoa/System1/tags/Pump1/count/set", Payload: []byte(`0`), QoS: 1}); code != 0 {
+	if code := c.Publish(rawPub{Topic: "winccoa/systems/System1/tags/Pump1/count/set", Payload: []byte(`0`), QoS: 1}); code != 0 {
 		t.Fatalf("warm-up PUBACK 0x%02x", code)
 	}
 	time.Sleep(100 * time.Millisecond)
@@ -636,7 +636,7 @@ func TestNativeOverload(t *testing.T) {
 	sim.Pause()
 	var accepted int
 	for i := 1; i <= 40; i++ {
-		code := c.Publish(rawPub{Topic: "winccoa/System1/tags/Pump1/count/set", Payload: []byte(fmt.Sprintf(`{"value":%d,"id":"o%d","replyTo":"ov/res"}`, i, i)), QoS: 1})
+		code := c.Publish(rawPub{Topic: "winccoa/systems/System1/tags/Pump1/count/set", Payload: []byte(fmt.Sprintf(`{"value":%d,"id":"o%d","replyTo":"ov/res"}`, i, i)), QoS: 1})
 		if code == 0 {
 			accepted++
 		}
@@ -677,7 +677,7 @@ func TestNativeOverload(t *testing.T) {
 		t.Fatal("operations ran off the manager goroutine")
 	}
 	// Processing resumes normally.
-	if code := c.Publish(rawPub{Topic: "winccoa/System1/tags/Pump1/count/set", Payload: []byte(`77`), QoS: 1}); code != 0 {
+	if code := c.Publish(rawPub{Topic: "winccoa/systems/System1/tags/Pump1/count/set", Payload: []byte(`77`), QoS: 1}); code != 0 {
 		t.Fatalf("after resume PUBACK 0x%02x", code)
 	}
 	time.Sleep(200 * time.Millisecond)
@@ -695,8 +695,8 @@ func TestNativeStatusTopic(t *testing.T) {
 	resolves := sim.Calls(oahost.OpResolve)
 	c, _ := dialRaw(t, env.port, rawConnect{ClientID: "st", Version: 5, Clean: true})
 	defer c.Close()
-	c.Subscribe(sub("winccoa/System1", 1))
-	pk, ok := c.NextOn("winccoa/System1", 2*time.Second)
+	c.Subscribe(sub("winccoa/systems/System1", 1))
+	pk, ok := c.NextOn("winccoa/systems/System1", 2*time.Second)
 	if !ok || !pk.FixedHeader.Retain {
 		t.Fatal("retained status missing")
 	}
@@ -709,7 +709,7 @@ func TestNativeStatusTopic(t *testing.T) {
 		t.Fatal("status subscription caused a DPE lookup")
 	}
 	sim.SetSystemAvailable("System1", false)
-	pk, ok = c.NextOn("winccoa/System1", 2*time.Second)
+	pk, ok = c.NextOn("winccoa/systems/System1", 2*time.Second)
 	if !ok || !strings.Contains(string(pk.Payload), `"disconnected"`) {
 		t.Fatal("status transition not published")
 	}
@@ -723,7 +723,7 @@ func TestNativeStaleStatusClear(t *testing.T) {
 	defer sim.Close()
 	env := startNative(t, 27110, filepath.Join(t.TempDir(), "n.db"), sim, client, nil, broker.Options{})
 	defer env.srv.Close()
-	const own, stale = "winccoa/System1", "winccoa/OldSystem"
+	const own, stale = "winccoa/systems/System1", "winccoa/systems/OldSystem"
 	if err := env.srv.MQTT().Publish(stale, []byte(`{"system":"OldSystem"}`), true, 1); err != nil {
 		t.Fatal(err)
 	}
@@ -765,22 +765,26 @@ func TestNativeCustomTopicNames(t *testing.T) {
 		c.WinCCOaNative.TopicRoot = "plant/oa"
 		c.WinCCOaNative.TagsName = "t"
 		c.WinCCOaNative.TypesName = "dpt"
+		c.WinCCOaNative.SystemsName = "sys"
 	}, broker.Options{})
 	defer env.srv.Close()
 	_ = sim.Set("System1:Pump1.speed", oahost.Value{Kind: oahost.KindFloat, Float: 5})
 	c, _ := dialRaw(t, env.port, rawConnect{ClientID: "names", Version: 5, Clean: true})
 	defer c.Close()
 
-	const exact, typed, status = "plant/oa/System1/t/Pump1/speed", "plant/oa/System1/dpt/AnalogDrive/Pump1/speed", "plant/oa/System1"
+	const exact, typed, status = "plant/oa/sys/System1/t/Pump1/speed", "plant/oa/sys/System1/dpt/AnalogDrive/Pump1/speed", "plant/oa/sys/System1"
 	queries := sim.Queries()
-	got := c.Subscribe(sub(exact, 1), sub(typed, 1), sub(status, 1), sub("plant/oa/System1/t/+/speed", 1),
-		sub("winccoa/System1/tags/Pump1/speed", 1)) // default names: an ordinary topic now
+	got := c.Subscribe(sub(exact, 1), sub(typed, 1), sub(status, 1), sub("plant/oa/sys/System1/t/+/speed", 1),
+		sub("winccoa/systems/System1/tags/Pump1/speed", 1)) // default names: an ordinary topic now
 	if string(got) != "\x01\x01\x01\x01\x01" {
 		t.Fatalf("SUBACK % x", got)
 	}
 	init := c.NextOnAll(2*time.Second, exact, typed, status)
 	if len(init) != 3 {
 		t.Fatalf("initial publications %v", len(init))
+	}
+	for deadline := time.Now().Add(2 * time.Second); sim.Queries() != queries+1 && time.Now().Before(deadline); {
+		time.Sleep(20 * time.Millisecond)
 	}
 	if sim.Queries() != queries+1 {
 		t.Fatalf("wildcard queries %d, want %d", sim.Queries(), queries+1)
@@ -793,11 +797,67 @@ func TestNativeCustomTopicNames(t *testing.T) {
 		t.Fatalf("write not applied: %v", v.Float)
 	}
 	// The configured root is reserved; the default one is not any more.
-	if code := c.Publish(rawPub{Topic: "plant/oa/System1/t/Pump1/speed", Payload: []byte(`1`), QoS: 1}); code != 0x87 {
+	if code := c.Publish(rawPub{Topic: "plant/oa/sys/System1/t/Pump1/speed", Payload: []byte(`1`), QoS: 1}); code != 0x87 {
 		t.Errorf("publish to value topic PUBACK 0x%02x", code)
 	}
-	if code := c.Publish(rawPub{Topic: "winccoa/System1/tags/Pump1/speed", Payload: []byte(`1`), QoS: 1}); code != 0 {
+	if code := c.Publish(rawPub{Topic: "winccoa/systems/System1/tags/Pump1/speed", Payload: []byte(`1`), QoS: 1}); code != 0 {
 		t.Errorf("publish under the default root PUBACK 0x%02x", code)
+	}
+}
+
+// Every system under winccoa/systems/<system>; the local system also via
+// the shortcut winccoa/tags|types, unless LocalShortcut is false.
+func TestNativeLocalShortcut(t *testing.T) {
+	sim, client := newSim(0)
+	defer sim.Close()
+	env := startNative(t, 27112, filepath.Join(t.TempDir(), "n.db"), sim, client, nil, broker.Options{})
+	_ = sim.Set("System1:Pump1.speed", oahost.Value{Kind: oahost.KindFloat, Float: 5})
+	_ = sim.Set("SubstationA:Feeder1.voltage", oahost.Value{Kind: oahost.KindFloat, Float: 230})
+	c, _ := dialRaw(t, env.port, rawConnect{ClientID: "short", Version: 5, Clean: true})
+
+	const short, typed, explicit, remote = "winccoa/tags/Pump1/speed", "winccoa/types/AnalogDrive/Pump1/speed", "winccoa/systems/System1/tags/Pump1/speed", "winccoa/systems/SubstationA/tags/Feeder1/voltage"
+	const status, statusExplicit = "winccoa", "winccoa/systems/System1"
+	got := c.Subscribe(sub(short, 1), sub(typed, 1), sub(explicit, 1), sub(remote, 1), sub(status, 1), sub(statusExplicit, 1),
+		sub("winccoa/System1/tags/Pump1/speed", 1), // system without systems/: no such form
+		sub("winccoa/tags/+/speed", 1), sub("winccoa/systems/System1/tags/+/speed", 1))
+	if string(got) != "\x01\x01\x01\x01\x01\x01\x8f\x01\x01" {
+		t.Fatalf("SUBACK % x", got)
+	}
+	init := c.NextOnAll(2*time.Second, short, typed, explicit, remote, status, statusExplicit)
+	if len(init) != 6 {
+		t.Fatalf("initial publications: %d of 6", len(init))
+	}
+	// One change reaches every subscribed form of the element.
+	_ = sim.Set("System1:Pump1.speed", oahost.Value{Kind: oahost.KindFloat, Float: 6})
+	if live := c.NextOnAll(2*time.Second, short, typed, explicit); len(live) != 3 {
+		t.Fatalf("live publications: %d of 3", len(live))
+	}
+	for topic, v := range map[string]float64{short: 42, explicit: 43, remote: 231} {
+		if code := c.Publish(rawPub{Topic: topic + "/set", Payload: []byte(fmt.Sprintf(`{"value":%v}`, v)), QoS: 1}); code != 0 {
+			t.Fatalf("write %s PUBACK 0x%02x", topic, code)
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+	if v, _ := sim.Get("System1:Pump1.speed"); v.Float != 43 {
+		t.Fatalf("local writes not applied: %v", v.Float)
+	}
+	if v, _ := sim.Get("SubstationA:Feeder1.voltage"); v.Float != 231 {
+		t.Fatalf("remote write not applied: %v", v.Float)
+	}
+	c.Close()
+	env.srv.Close()
+
+	// LocalShortcut: false - only the explicit form.
+	no := false
+	env = startNative(t, 27113, filepath.Join(t.TempDir(), "n2.db"), sim, client, func(c *config.Config) {
+		c.WinCCOaNative.LocalShortcut = &no
+	}, broker.Options{})
+	defer env.srv.Close()
+	c, _ = dialRaw(t, env.port, rawConnect{ClientID: "noshort", Version: 5, Clean: true})
+	defer c.Close()
+	got = c.Subscribe(sub(short, 1), sub(explicit, 1), sub(status, 1), sub(statusExplicit, 1))
+	if string(got) != "\x8f\x01\x8f\x01" {
+		t.Fatalf("SUBACK without shortcut % x", got)
 	}
 }
 

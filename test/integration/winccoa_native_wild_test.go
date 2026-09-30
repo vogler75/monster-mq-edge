@@ -49,44 +49,44 @@ func TestNativeWildcardSubscriptions(t *testing.T) {
 	// Subtree of one datapoint: initial values of every value element.
 	a, _ := dialRaw(t, env.port, rawConnect{ClientID: "wa", Version: 5, Clean: true})
 	defer a.Close()
-	if got := a.Subscribe(sub("winccoa/System1/tags/Pump1/#", 1)); got[0] != 1 {
+	if got := a.Subscribe(sub("winccoa/systems/System1/tags/Pump1/#", 1)); got[0] != 1 {
 		t.Fatalf("suback 0x%02x", got[0])
 	}
 	init := collectTopics(a, time.Second)
 	want := []string{"%73et", "blob", "count", "name", "nested/a", "running", "speed", "ts", "unsigned"}
 	var got []string
 	for _, tp := range topicList(init) {
-		got = append(got, strings.TrimPrefix(tp, "winccoa/System1/tags/Pump1/"))
+		got = append(got, strings.TrimPrefix(tp, "winccoa/systems/System1/tags/Pump1/"))
 	}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("Pump1/# initial topics %v", got)
 	}
-	if !strings.Contains(init["winccoa/System1/tags/Pump1/speed"][0], `"value":11`) {
-		t.Fatalf("initial speed %v", init["winccoa/System1/tags/Pump1/speed"])
+	if !strings.Contains(init["winccoa/systems/System1/tags/Pump1/speed"][0], `"value":11`) {
+		t.Fatalf("initial speed %v", init["winccoa/systems/System1/tags/Pump1/speed"])
 	}
 
 	// Element subtree of every datapoint of a type.
 	b, _ := dialRaw(t, env.port, rawConnect{ClientID: "wb", Version: 5, Clean: true})
 	defer b.Close()
-	b.Subscribe(sub("winccoa/System1/types/AnalogDrive/+/nested/#", 1))
-	if got := topicList(collectTopics(b, time.Second)); strings.Join(got, ",") != "winccoa/System1/types/AnalogDrive/Pump1/nested/a,winccoa/System1/types/AnalogDrive/Pump101/nested/a" {
+	b.Subscribe(sub("winccoa/systems/System1/types/AnalogDrive/+/nested/#", 1))
+	if got := topicList(collectTopics(b, time.Second)); strings.Join(got, ",") != "winccoa/systems/System1/types/AnalogDrive/Pump1/nested/a,winccoa/systems/System1/types/AnalogDrive/Pump101/nested/a" {
 		t.Fatalf("types/+/nested/# initial %v", got)
 	}
 
 	// One element of every datapoint.
 	c, _ := dialRaw(t, env.port, rawConnect{ClientID: "wc", Version: 5, Clean: true})
 	defer c.Close()
-	c.Subscribe(sub("winccoa/System1/tags/+/speed", 1))
-	if got := topicList(collectTopics(c, time.Second)); strings.Join(got, ",") != "winccoa/System1/tags/Pump1/speed,winccoa/System1/tags/Pump101/speed" {
+	c.Subscribe(sub("winccoa/systems/System1/tags/+/speed", 1))
+	if got := topicList(collectTopics(c, time.Second)); strings.Join(got, ",") != "winccoa/systems/System1/tags/Pump1/speed,winccoa/systems/System1/tags/Pump101/speed" {
 		t.Fatalf("+/speed initial %v", got)
 	}
 
 	// Whole system: scalar roots included, internal and store DPs never.
 	d, _ := dialRaw(t, env.port, rawConnect{ClientID: "wd", Version: 5, Clean: true})
 	defer d.Close()
-	d.Subscribe(sub("winccoa/System1/tags/#", 0))
+	d.Subscribe(sub("winccoa/systems/System1/tags/#", 0))
 	all := collectTopics(d, time.Second)
-	if _, ok := all["winccoa/System1/tags/ScalarTag"]; !ok {
+	if _, ok := all["winccoa/systems/System1/tags/ScalarTag"]; !ok {
 		t.Fatalf("scalar root missing from tags/#: %v", topicList(all))
 	}
 	for tp := range all {
@@ -102,11 +102,11 @@ func TestNativeWildcardSubscriptions(t *testing.T) {
 	// same wildcard: one registration per filter, one message per change.
 	e, _ := dialRaw(t, env.port, rawConnect{ClientID: "we", Version: 5, Clean: true})
 	defer e.Close()
-	e.Subscribe(sub("winccoa/System1/tags/Pump1/speed", 1))
+	e.Subscribe(sub("winccoa/systems/System1/tags/Pump1/speed", 1))
 	e.Drain(300 * time.Millisecond)
 	f, _ := dialRaw(t, env.port, rawConnect{ClientID: "wf", Version: 5, Clean: true})
 	defer f.Close()
-	f.Subscribe(sub("winccoa/System1/tags/Pump1/#", 1))
+	f.Subscribe(sub("winccoa/systems/System1/tags/Pump1/#", 1))
 	if n := len(collectTopics(f, 500*time.Millisecond)); n != 9 {
 		t.Fatalf("second subscriber got %d cached current values, want 9", n)
 	}
@@ -120,7 +120,7 @@ func TestNativeWildcardSubscriptions(t *testing.T) {
 	_ = sim.Set("System1:Pump1.speed", oahost.Value{Kind: oahost.KindFloat, Float: 12})
 	time.Sleep(500 * time.Millisecond)
 	for name, cl := range map[string]*rawClient{"a": a, "c": c, "d": d, "e": e, "f": f} {
-		msgs := collectTopics(cl, 300*time.Millisecond)["winccoa/System1/tags/Pump1/speed"]
+		msgs := collectTopics(cl, 300*time.Millisecond)["winccoa/systems/System1/tags/Pump1/speed"]
 		if len(msgs) != 1 || !strings.Contains(msgs[0], `"value":12`) {
 			t.Errorf("client %s: %d messages for one change: %v", name, len(msgs), msgs)
 		}
@@ -134,20 +134,20 @@ func TestNativeWildcardSubscriptions(t *testing.T) {
 
 	// A new matching element change reaches the type subscriber.
 	_ = sim.Set("System1:Pump101.nested.a", oahost.Value{Kind: oahost.KindFloat, Float: 9})
-	if pk, ok := b.NextOn("winccoa/System1/types/AnalogDrive/Pump101/nested/a", 2*time.Second); !ok || !strings.Contains(string(pk.Payload), `"value":9`) {
+	if pk, ok := b.NextOn("winccoa/systems/System1/types/AnalogDrive/Pump101/nested/a", 2*time.Second); !ok || !strings.Contains(string(pk.Payload), `"value":9`) {
 		t.Fatalf("types wildcard live value: %s", pk.Payload)
 	}
 
 	// Last unsubscribe releases each query.
-	a.Unsubscribe("winccoa/System1/tags/Pump1/#")
+	a.Unsubscribe("winccoa/systems/System1/tags/Pump1/#")
 	time.Sleep(200 * time.Millisecond)
 	if n := sim.Queries(); n != 4 {
 		t.Fatalf("query released while f still subscribed: %d", n)
 	}
-	f.Unsubscribe("winccoa/System1/tags/Pump1/#")
-	b.Unsubscribe("winccoa/System1/types/AnalogDrive/+/nested/#")
-	c.Unsubscribe("winccoa/System1/tags/+/speed")
-	d.Unsubscribe("winccoa/System1/tags/#")
+	f.Unsubscribe("winccoa/systems/System1/tags/Pump1/#")
+	b.Unsubscribe("winccoa/systems/System1/types/AnalogDrive/+/nested/#")
+	c.Unsubscribe("winccoa/systems/System1/tags/+/speed")
+	d.Unsubscribe("winccoa/systems/System1/tags/#")
 	time.Sleep(300 * time.Millisecond)
 	if n := sim.Queries(); n != 0 {
 		t.Fatalf("queries left: %d", n)
@@ -172,15 +172,15 @@ func TestNativeWildcardRootPolicy(t *testing.T) {
 		got := c.Subscribe(
 			sub("#", 0),
 			sub("$share/g/#", 0),
-			sub("winccoa/System1/tags/#", 0),
-			sub("winccoa/System1/types/#", 0),
-			sub("winccoa/System1/tags/+/speed", 0),
-			sub("winccoa/System1/types/+/+/speed", 0),
-			sub("winccoa/System1/tags/Pump1/#", 0),
-			sub("winccoa/System1/types/AnalogDrive/#", 0),
-			sub("winccoa/System1/types/Nope/#", 0),
-			sub("winccoa/SubstationB/tags/Feeder1/#", 0),
-			sub("winccoa/System1/tags/_Users/#", 0),
+			sub("winccoa/systems/System1/tags/#", 0),
+			sub("winccoa/systems/System1/types/#", 0),
+			sub("winccoa/systems/System1/tags/+/speed", 0),
+			sub("winccoa/systems/System1/types/+/+/speed", 0),
+			sub("winccoa/systems/System1/tags/Pump1/#", 0),
+			sub("winccoa/systems/System1/types/AnalogDrive/#", 0),
+			sub("winccoa/systems/System1/types/Nope/#", 0),
+			sub("winccoa/systems/SubstationB/tags/Feeder1/#", 0),
+			sub("winccoa/systems/System1/tags/_Users/#", 0),
 			sub("plain/#", 0),
 		)
 		want := []byte{0x8F, 0x8F, 0x8F, 0x8F, 0x8F, 0x8F, 0x00, 0x00, 0x8F, 0x83, 0x8F, 0x00}
@@ -207,9 +207,9 @@ func TestNativeWildcardRemoteAndRestore(t *testing.T) {
 	env := startNative(t, 27182, db, sim, client, nil, broker.Options{})
 	_ = sim.Set("SubstationA:Feeder1.voltage", oahost.Value{Kind: oahost.KindFloat, Float: 230})
 	c, _ := dialRaw(t, env.port, rawConnect{ClientID: "wr", Version: 5, Clean: true, SessionExpiry: 3600})
-	c.Subscribe(sub("winccoa/SubstationA/tags/Feeder1/#", 1), sub("winccoa/System1/types/AnalogDrive/+/speed", 1))
+	c.Subscribe(sub("winccoa/systems/SubstationA/tags/Feeder1/#", 1), sub("winccoa/systems/System1/types/AnalogDrive/+/speed", 1))
 	init := collectTopics(c, time.Second)
-	if _, ok := init["winccoa/SubstationA/tags/Feeder1/voltage"]; !ok {
+	if _, ok := init["winccoa/systems/SubstationA/tags/Feeder1/voltage"]; !ok {
 		t.Fatalf("remote initial %v", topicList(init))
 	}
 	sim.SetSystemAvailable("SubstationA", false)
@@ -219,7 +219,7 @@ func TestNativeWildcardRemoteAndRestore(t *testing.T) {
 	_ = sim.Set("SubstationA:Feeder1.voltage", oahost.Value{Kind: oahost.KindFloat, Float: 231})
 	// The re-registration first delivers the current value again.
 	var seen []string
-	for _, p := range collectTopics(c, 2*time.Second)["winccoa/SubstationA/tags/Feeder1/voltage"] {
+	for _, p := range collectTopics(c, 2*time.Second)["winccoa/systems/SubstationA/tags/Feeder1/voltage"] {
 		seen = append(seen, p)
 	}
 	if len(seen) == 0 || !strings.Contains(seen[len(seen)-1], "231") {
@@ -255,7 +255,7 @@ func TestNativeWildcardRemoteAndRestore(t *testing.T) {
 		t.Fatal("session not present")
 	}
 	_ = sim.Set("System1:Pump1.speed", oahost.Value{Kind: oahost.KindFloat, Float: 77})
-	if pk, ok := r.NextOn("winccoa/System1/types/AnalogDrive/Pump1/speed", 2*time.Second); !ok || !strings.Contains(string(pk.Payload), "77") {
+	if pk, ok := r.NextOn("winccoa/systems/System1/types/AnalogDrive/Pump1/speed", 2*time.Second); !ok || !strings.Contains(string(pk.Payload), "77") {
 		t.Fatal("restored wildcard subscription inactive")
 	}
 }
