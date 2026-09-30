@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -141,6 +142,13 @@ func build(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus, opts Optio
 	}
 	if err != nil {
 		return nil, fmt.Errorf("storage init: %w", err)
+	}
+	if sqliteDB != nil {
+		path, absErr := filepath.Abs(cfg.SQLite.Path)
+		if absErr != nil {
+			path = cfg.SQLite.Path
+		}
+		logger.Info("sqlite database", "path", path)
 	}
 	if err := configureVolatileStores(ctx, cfg, storage); err != nil {
 		_ = storage.Close()

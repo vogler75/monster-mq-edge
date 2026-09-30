@@ -1067,6 +1067,18 @@ func (s *Service) PublishStatus() {
 	}
 }
 
+// StaleStatusClear reports whether a publish removes the retained status
+// of another node: a retained empty payload on winccoa/node/<id>/status
+// where <id> is neither "this" nor this broker's NodeId (e.g. a status
+// left behind by an earlier NodeId).
+func (s *Service) StaleStatusClear(topic string, retain bool, payload []byte) bool {
+	if !retain || len(payload) != 0 || Classify(topic) != KindStatus {
+		return false
+	}
+	id := strings.TrimSuffix(strings.TrimPrefix(topic, Root+"/"+SegNode+"/"), "/status")
+	return id != "this" && id != s.opts.NodeID
+}
+
 func (s *Service) Stats() Stats {
 	s.mu.Lock()
 	st := Stats{Interests: len(s.subs), DPEs: len(s.dpes), Batches: len(s.batches), WildQueries: len(s.wild), WildSubs: len(s.wildSubs)}

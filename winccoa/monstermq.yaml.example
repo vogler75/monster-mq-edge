@@ -11,7 +11,8 @@ GraphQL:
   Enabled: true
   Port: 4000
 SQLite:
-  Path: ./data/monstermq.db     # relative to the manager's working directory
+  Path: ./data/monstermq.db     # relative to the WinCC OA project directory
+RetainedStoreType: SQLITE       # retained messages: SQLITE (default, kept across restarts) or MEMORY (lost on restart)
 Features:
   WinCCOa: true                 # run WinCCOA-Client query devices
 WinCCOaNative:

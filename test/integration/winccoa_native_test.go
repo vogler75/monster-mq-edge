@@ -715,5 +715,49 @@ func TestNativeStatusTopic(t *testing.T) {
 	}
 }
 
+// A stale status of an earlier NodeId can be cleared with a retained empty
+// publish; the broker's own status topics stay protected.
+func TestNativeStaleStatusClear(t *testing.T) {
+	sim, client := newSim(0)
+	defer sim.Close()
+	env := startNative(t, 27110, filepath.Join(t.TempDir(), "n.db"), sim, client, nil, broker.Options{})
+	defer env.srv.Close()
+	const stale = "winccoa/node/old-node/status"
+	if err := env.srv.MQTT().Publish(stale, []byte(`{"nodeId":"old-node"}`), true, 1); err != nil {
+		t.Fatal(err)
+	}
+	c, _ := dialRaw(t, env.port, rawConnect{ClientID: "clr", Version: 5, Clean: true})
+	defer c.Close()
+
+	// Own status topics: neither a forged value nor a clear is accepted.
+	for _, topic := range []string{"winccoa/node/this/status", "winccoa/node/n-27110/status"} {
+		if code := c.Publish(rawPub{Topic: topic, QoS: 1, Retain: true}); code != 0x87 {
+			t.Errorf("clear of own %s PUBACK 0x%02x", topic, code)
+		}
+	}
+	// Another node: only a retained empty payload is accepted.
+	if code := c.Publish(rawPub{Topic: stale, Payload: []byte(`{}`), QoS: 1, Retain: true}); code != 0x87 {
+		t.Errorf("forged stale status PUBACK 0x%02x", code)
+	}
+	if code := c.Publish(rawPub{Topic: stale, QoS: 1}); code != 0x87 {
+		t.Errorf("non-retained empty status PUBACK 0x%02x", code)
+	}
+	if code := c.Publish(rawPub{Topic: stale, QoS: 1, Retain: true}); code != 0 {
+		t.Fatalf("stale status clear PUBACK 0x%02x", code)
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	s, _ := dialRaw(t, env.port, rawConnect{ClientID: "clr-sub", Version: 5, Clean: true})
+	defer s.Close()
+	s.Subscribe(sub("winccoa/node/this/status", 1), sub("winccoa/node/n-27110/status", 1), sub(stale, 1))
+	got := s.NextOnAll(time.Second, "winccoa/node/this/status", "winccoa/node/n-27110/status", stale)
+	if _, ok := got[stale]; ok {
+		t.Fatal("stale status still retained")
+	}
+	if len(got) != 2 {
+		t.Fatalf("own status topics missing: %v", len(got))
+	}
+}
+
 var _ = context.Background
 var _ stores.MqttSubscription

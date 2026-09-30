@@ -29,6 +29,14 @@ cd winccoa/manager && mkdir -p build && cd build
 cmake .. && make                      # produces WCCOAmmq
 ```
 
+Or in one step with `winccoa/build.sh` (`--test` runs the C ABI harness,
+`--install <project>` copies the manager to `<project>/bin`, `--restart <index>`
+stops and starts that PMON manager via `woa`):
+
+```bash
+./winccoa/build.sh --test --restart 11
+```
+
 The standalone broker is unaffected: `make build`, `build-arm64` and
 `build-armv7` stay `CGO_ENABLED=0` and never link the embedding library.
 
@@ -40,7 +48,9 @@ The standalone broker is unaffected: `make build`, `build-arm64` and
    (or copy the script to `<project>/scripts`). The broker checks the
    layout at startup and refuses to start with a missing or different type.
 3. Copy `monstermq.yaml.example` to `<project>/config/monstermq.yaml` and
-   adjust ports, users and stores.
+   adjust ports, users and stores. The manager runs in the project
+   directory, so relative paths in it (`SQLite.Path`, key stores) resolve
+   against `<project>/`.
 4. Add to `<project>/config/config`:
 
    ```ini

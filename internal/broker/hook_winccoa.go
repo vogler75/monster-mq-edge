@@ -113,11 +113,16 @@ func (h *WinCCOaNativeHook) OnPublish(cl *mqtt.Client, pk packets.Packet) (packe
 	if cl.Net.Inline {
 		return pk, nil
 	}
-	switch winccoanative.Classify(pk.TopicName) {
+	switch kind := winccoanative.Classify(pk.TopicName); kind {
 	case winccoanative.KindOther:
 		return pk, nil
 	case winccoanative.KindNative:
 	default:
+		if kind == winccoanative.KindStatus && h.svc.StaleStatusClear(pk.TopicName, pk.FixedHeader.Retain, pk.Payload) {
+			h.logger.Info("stale node status cleared", "client", cl.ID, "topic", pk.TopicName)
+			return pk, nil
+		}
+		h.logger.Info("publish to reserved topic rejected", "client", cl.ID, "topic", pk.TopicName)
 		return pk, packets.ErrNotAuthorized
 	}
 	reply := winccoanative.Reply{Topic: pk.Properties.ResponseTopic, Correlation: pk.Properties.CorrelationData}

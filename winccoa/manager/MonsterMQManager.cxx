@@ -3,6 +3,7 @@
 
 #include <csignal>
 #include <unistd.h>
+#include <cerrno>
 #include <cstring>
 #include <iostream>
 #include <thread>
@@ -1131,6 +1132,12 @@ int MonsterMQManager::run()
   host.user = this;
   host.submit = &MonsterMQManager::cbSubmit;
   host.log = &MonsterMQManager::cbLog;
+
+  // Relative paths in the broker config (SQLite.Path, key stores, ...) are
+  // resolved against the project directory, not PMON's working directory.
+  if (chdir((const char *)Resources::getProjDir()) != 0)
+    logLine(MMQ_LOG_WARN, "cannot change to project directory " + std::string((const char *)Resources::getProjDir()) +
+                              ": " + std::strerror(errno));
 
   CharString cfgPath = MonsterMQResources::getBrokerConfig();
   if (cfgPath.len() && ((const char *)cfgPath)[0] != '/')
