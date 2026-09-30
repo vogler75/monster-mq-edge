@@ -263,3 +263,14 @@ func TestShortcutNames(t *testing.T) {
 		t.Error("shortcut status/cns classified with NoShortcut")
 	}
 }
+
+func TestProtectedStoreDatapoints(t *testing.T) {
+	for _, dp := range []string{"_Users", "MMQConfigs_k1", "MMQSessions_k1", "MMQRetained_k1", "MMQUsers_k1"} {
+		if !Protected(dp) {
+			t.Errorf("%s not protected", dp)
+		}
+	}
+	if Protected("Pump1") {
+		t.Error("Pump1 protected")
+	}
+}

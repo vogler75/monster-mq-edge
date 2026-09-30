@@ -292,13 +292,14 @@ func (s *Service) Validate(filter string) (Verdict, string) {
 }
 
 // Storage datapoint types of the native stores; never exposed as tags.
-var protectedTypes = map[string]bool{"MMQConfigs": true, "MMQSessions": true, "MMQRetained": true}
+var protectedTypes = map[string]bool{"MMQConfigs": true, "MMQSessions": true, "MMQRetained": true, "MMQUsers": true}
 
 // Protected reports datapoints that the namespace never exposes: OA
 // internal datapoints (leading underscore, e.g. _Users) and the native
 // store datapoints.
 func Protected(dp string) bool {
-	return strings.HasPrefix(dp, "_") || strings.HasPrefix(dp, "MMQConfigs_") || strings.HasPrefix(dp, "MMQSessions_") || strings.HasPrefix(dp, "MMQRetained_")
+	return strings.HasPrefix(dp, "_") || strings.HasPrefix(dp, "MMQConfigs_") || strings.HasPrefix(dp, "MMQSessions_") || strings.HasPrefix(dp, "MMQRetained_") ||
+		strings.HasPrefix(dp, "MMQUsers_")
 }
 
 // CanonicalTopic is the tags-form topic of t (type path and default

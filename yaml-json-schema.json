@@ -116,7 +116,8 @@
       "minimum": 0,
       "default": 1048576
     },
-    "DefaultStoreType":  { "$ref": "#/$defs/StoreBackend", "description": "Backend used by every store unless overridden below." },
+    "DefaultStoreType":  { "type": "string", "enum": ["SQLITE", "POSTGRES", "MONGODB", "WINCCOA"], "description": "Backend used by every store unless overridden below. WINCCOA (WinCC OA manager only): configs, sessions, retained messages and users in WinCC OA datapoints, queue and metrics in memory, no database file." },
+    "UserStoreType":     { "type": "string", "enum": ["SQLITE", "POSTGRES", "MONGODB", "WINCCOA"], "description": "Store of MQTT users and ACL rules; falls back to DefaultStoreType. Only WINCCOA (MMQUsers datapoints, WinCC OA manager only) may differ from DefaultStoreType." },
     "SessionStoreType":  { "type": "string", "enum": ["SQLITE", "POSTGRES", "MONGODB", "MEMORY", "WINCCOA"], "description": "Override for the session/subscription store; falls back to DefaultStoreType. MEMORY uses an in-memory SQLite database. WINCCOA keeps them in MMQSessions datapoints (WinCC OA manager only)." },
     "RetainedStoreType": { "type": "string", "enum": ["SQLITE", "POSTGRES", "MONGODB", "MEMORY", "WINCCOA"], "description": "Override for the retained-message store; falls back to DefaultStoreType. MEMORY = built-in in-memory map only, no DB persistence and no startup load. WINCCOA = one MMQRetained datapoint per retained topic (WinCC OA manager only)." },
     "ConfigStoreType":   { "type": "string", "enum": ["SQLITE", "POSTGRES", "MONGODB", "WINCCOA"], "description": "Override for the device-config and archive-config store; falls back to DefaultStoreType. WINCCOA keeps them in MMQConfigs datapoints (WinCC OA manager only)." },

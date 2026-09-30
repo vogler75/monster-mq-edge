@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -18,6 +19,7 @@ import (
 	"monstermq.io/edge/internal/oahost/simhost"
 	"monstermq.io/edge/internal/stores"
 	"monstermq.io/edge/internal/stores/oastore"
+	storesqlite "monstermq.io/edge/internal/stores/sqlite"
 )
 
 func withOAStores(c *config.Config) {
@@ -440,6 +442,143 @@ func TestNativeStoreRetained(t *testing.T) {
 	sub.Subscribe(sub1("plant/#"))
 	if pk, ok := sub.NextOn(topic, 500*time.Millisecond); ok {
 		t.Fatalf("cleared retained message delivered: %q", pk.Payload)
+	}
+}
+
+// UserStoreType WINCCOA: one MMQUsers datapoint per user with its ACL
+// rules; the default admin, MQTT login, ACLs and restart all work on it.
+func TestNativeStoreUsers(t *testing.T) {
+	sim, client := newSim(0)
+	defer sim.Close()
+	withUsers := func(c *config.Config) {
+		c.UserStoreType = config.StoreWinCCOA
+		c.UserManagement.Enabled = true
+		c.UserManagement.AnonymousEnabled = false
+	}
+	ctx := context.Background()
+	env := startNative(t, 27146, filepath.Join(t.TempDir(), "n.db"), sim, client, withUsers, broker.Options{})
+	us, ok := env.srv.Storage().Users.(*oastore.UserStore)
+	if !ok {
+		t.Fatalf("user store is %T", env.srv.Storage().Users)
+	}
+	dp := func(user string) string { return "System1:" + oastore.DPName(oastore.UserType, "user", user) }
+	if v, err := sim.Get(dp("Admin") + ".isAdmin"); err != nil || !v.Bool {
+		t.Fatalf("default admin datapoint: %v %v", v, err)
+	}
+	hash, _ := storesqlite.HashPassword("pw")
+	if err := us.CreateUser(ctx, stores.User{Username: "alice", PasswordHash: hash, Enabled: true, CanSubscribe: true, CanPublish: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := us.CreateUser(ctx, stores.User{Username: "alice"}); err == nil {
+		t.Fatal("duplicate user created")
+	}
+	for _, r := range []stores.AclRule{
+		{Username: "alice", TopicPattern: "plant/#", CanSubscribe: true, CanPublish: true, Priority: 1},
+		{Username: "alice", TopicPattern: "winccoa/tags/Pump1/#", CanSubscribe: true, Priority: 5},
+	} {
+		if err := us.CreateAclRule(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := env.srv.AuthCache().Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := sim.Get(dp("alice") + ".acl"); !strings.Contains(v.Str, "plant/#") {
+		t.Fatalf("acl element %q", v.Str)
+	}
+	env.srv.Close()
+
+	// Restart with an empty SQLite file: users and rules come from OA.
+	env = startNative(t, 27146, filepath.Join(t.TempDir(), "n2.db"), sim, client, withUsers, broker.Options{})
+	us = env.srv.Storage().Users.(*oastore.UserStore)
+	rules, _ := us.GetUserAclRules(ctx, "alice")
+	if len(rules) != 2 || rules[0].TopicPattern != "winccoa/tags/Pump1/#" {
+		t.Fatalf("rules after restart (priority order): %+v", rules)
+	}
+	if u, err := us.ValidateCredentials(ctx, "alice", "wrong"); u != nil || err != nil {
+		t.Fatalf("wrong password accepted: %v %v", u, err)
+	}
+	c, ack := dialRaw(t, env.port, rawConnect{ClientID: "u-ok", Version: 5, Clean: true, Username: "alice", Password: "pw"})
+	if ack.ReasonCode != 0 {
+		t.Fatalf("login 0x%02x", ack.ReasonCode)
+	}
+	// Allowed by the ACL; the user datapoints are never reachable as tags.
+	got := c.Subscribe(sub("plant/x", 1), sub("other/x", 1), sub("winccoa/tags/"+oastore.DPName(oastore.UserType, "user", "alice")+"/passwordHash", 1))
+	if string(got) != "\x01\x87\x87" {
+		t.Fatalf("SUBACK % x", got)
+	}
+	c.Close()
+	// Moving a rule to another user, deleting a rule and the user.
+	if err := us.CreateUser(ctx, stores.User{Username: "bob", PasswordHash: hash, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	moved := rules[1]
+	moved.Username = "bob"
+	if err := us.UpdateAclRule(ctx, moved); err != nil {
+		t.Fatal(err)
+	}
+	if a, _ := us.GetUserAclRules(ctx, "alice"); len(a) != 1 {
+		t.Fatalf("alice rules after move: %+v", a)
+	}
+	if b, _ := us.GetUserAclRules(ctx, "bob"); len(b) != 1 || b[0].ID != moved.ID {
+		t.Fatalf("bob rules after move: %+v", b)
+	}
+	if err := us.DeleteAclRule(ctx, moved.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := us.DeleteUser(ctx, "alice"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sim.Get(dp("alice") + ".user"); err == nil {
+		t.Fatal("user datapoint not deleted")
+	}
+	env.srv.Close()
+}
+
+// DefaultStoreType WINCCOA: every persistent store in WinCC OA, queue and
+// metrics in memory, no SQLite file.
+func TestNativeDefaultStoreWinCCOA(t *testing.T) {
+	sim, client := newSim(0)
+	defer sim.Close()
+	dbPath := filepath.Join(t.TempDir(), "never.db")
+	env := startNative(t, 27147, dbPath, sim, client, func(c *config.Config) {
+		c.DefaultStoreType = config.StoreWinCCOA
+		c.UserManagement.Enabled = true
+	}, broker.Options{})
+	defer env.srv.Close()
+	st := env.srv.Storage()
+	if _, ok := st.DeviceConfig.(*oastore.DeviceConfigStore); !ok {
+		t.Errorf("device configs: %T", st.DeviceConfig)
+	}
+	if _, ok := st.Sessions.(*oastore.SessionStore); !ok {
+		t.Errorf("sessions: %T", st.Sessions)
+	}
+	if _, ok := st.Retained.(*oastore.RetainedStore); !ok {
+		t.Errorf("retained: %T", st.Retained)
+	}
+	if _, ok := st.Users.(*oastore.UserStore); !ok {
+		t.Errorf("users: %T", st.Users)
+	}
+	if st.Metrics == nil || fmt.Sprintf("%T", st.Metrics) != "*memory.MetricsStore" {
+		t.Errorf("metrics: %T", st.Metrics)
+	}
+	if _, err := os.Stat(dbPath); !os.IsNotExist(err) {
+		t.Errorf("SQLite file created: %v", err)
+	}
+	// Offline queue in memory works.
+	c, _ := dialRaw(t, env.port, rawConnect{ClientID: "q", Version: 5, Clean: false, SessionExpiry: 3600, Username: "Admin", Password: "Admin"})
+	c.Subscribe(sub("q/#", 1))
+	c.Close()
+	p, _ := dialRaw(t, env.port, rawConnect{ClientID: "qp", Version: 5, Clean: true, Username: "Admin", Password: "Admin"})
+	p.Publish(rawPub{Topic: "q/a", Payload: []byte("x"), QoS: 1})
+	p.Close()
+	c, ack := dialRaw(t, env.port, rawConnect{ClientID: "q", Version: 5, Clean: false, SessionExpiry: 3600, Username: "Admin", Password: "Admin"})
+	defer c.Close()
+	if !ack.SessionPresent {
+		t.Fatal("session not present")
+	}
+	if _, ok := c.NextOn("q/a", 2*time.Second); !ok {
+		t.Fatal("queued message not delivered")
 	}
 }
 

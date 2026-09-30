@@ -22,7 +22,7 @@ const (
 // types that are missing and checks the layout of all of them. An existing
 // type with a different layout is never changed: it stops the broker from
 // becoming ready instead of writing an incompatible layout.
-func EnsureTypes(ctx context.Context, api oahost.API, needConfig, needSessions, needRetained bool) error {
+func EnsureTypes(ctx context.Context, api oahost.API, needConfig, needSessions, needRetained, needUsers bool) error {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	str, tim, bl := uint32(oahost.KindString), uint32(oahost.KindTime), uint32(oahost.KindBool)
@@ -35,6 +35,7 @@ func EnsureTypes(ctx context.Context, api oahost.API, needConfig, needSessions, 
 		{needConfig, ConfigType, []string{"config", "type", "updated"}, []uint32{str, str, tim}},
 		{needSessions, SessionType, []string{"session", "subs", "connected", "nodeId", "updated"}, []uint32{str, str, bl, str, tim}},
 		{needRetained, RetainedType, retainedElements, retainedElementKinds()},
+		{needUsers, UserType, userElements, userElementKinds()},
 	}
 	for _, t := range types {
 		if !t.need {
@@ -53,6 +54,7 @@ type Stores struct {
 	Archive  *ArchiveConfigStore
 	Sessions *SessionStore
 	Retained *RetainedStore
+	Users    *UserStore
 }
 
 func New(api oahost.API, timeout time.Duration, logger *slog.Logger) *Stores {
@@ -66,6 +68,7 @@ func New(api oahost.API, timeout time.Duration, logger *slog.Logger) *Stores {
 		Archive:  &ArchiveConfigStore{r: cfg},
 		Sessions: &SessionStore{r: ses},
 		Retained: newRetainedStore(api, timeout, logger),
+		Users:    newUserStore(api, timeout, logger),
 	}
 }
 

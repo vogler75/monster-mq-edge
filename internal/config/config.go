@@ -290,7 +290,8 @@ func (w WinCCOaNativeConfig) Shortcut() bool {
 // UsesWinCCOaStores reports whether configs, sessions or retained messages
 // are kept in WinCC OA datapoints (store type WINCCOA).
 func (c *Config) UsesWinCCOaStores() bool {
-	return c.ConfigStore() == StoreWinCCOA || c.SessionStore() == StoreWinCCOA || c.RetainedStore() == StoreWinCCOA
+	return c.ConfigStore() == StoreWinCCOA || c.SessionStore() == StoreWinCCOA || c.RetainedStore() == StoreWinCCOA ||
+		c.UserStore() == StoreWinCCOA
 }
 
 type PythonScriptsConfig struct {
@@ -333,6 +334,7 @@ type Config struct {
 	RetainedStoreType StoreType `yaml:"RetainedStoreType"`
 	ConfigStoreType   StoreType `yaml:"ConfigStoreType"`
 	QueueStoreType    StoreType `yaml:"QueueStoreType"`
+	UserStoreType     StoreType `yaml:"UserStoreType"` // users and ACL rules; only WINCCOA differs from DefaultStoreType
 
 	SQLite   SQLiteConfig   `yaml:"SQLite"`
 	Postgres PostgresConfig `yaml:"Postgres"`
@@ -372,21 +374,17 @@ type Config struct {
 
 func Default() *Config {
 	return &Config{
-		NodeID:            "",
-		TCP:               Listener{Enabled: true, Port: 1883},
-		TCPS:              Listener{Enabled: false, Port: 8883},
-		WS:                Listener{Enabled: false, Port: 1884},
-		WSS:               Listener{Enabled: false, Port: 8884},
-		MaxMessageSize:    1048576,
-		DefaultStoreType:  StoreSQLite,
-		SessionStoreType:  StoreSQLite,
-		RetainedStoreType: StoreSQLite,
-		ConfigStoreType:   StoreSQLite,
-		QueueStoreType:    StoreSQLite,
-		SQLite:            SQLiteConfig{Path: "./data/monstermq.db"},
-		UserManagement:    UserManagementConfig{Enabled: false, PasswordAlgorithm: "BCRYPT", AnonymousEnabled: true, AclCacheEnabled: true, AllowAnonymousLocalhost: false},
-		Metrics:           MetricsConfig{Enabled: true, CollectionIntervalSeconds: 1, RetentionHours: 168, MaxHistoryRows: 3600},
-		Logging:           LoggingConfig{Level: "INFO", MqttSyslogEnabled: false, RingBufferSize: 1000},
+		NodeID:           "",
+		TCP:              Listener{Enabled: true, Port: 1883},
+		TCPS:             Listener{Enabled: false, Port: 8883},
+		WS:               Listener{Enabled: false, Port: 1884},
+		WSS:              Listener{Enabled: false, Port: 8884},
+		MaxMessageSize:   1048576,
+		DefaultStoreType: StoreSQLite,
+		SQLite:           SQLiteConfig{Path: "./data/monstermq.db"},
+		UserManagement:   UserManagementConfig{Enabled: false, PasswordAlgorithm: "BCRYPT", AnonymousEnabled: true, AclCacheEnabled: true, AllowAnonymousLocalhost: false},
+		Metrics:          MetricsConfig{Enabled: true, CollectionIntervalSeconds: 1, RetentionHours: 168, MaxHistoryRows: 3600},
+		Logging:          LoggingConfig{Level: "INFO", MqttSyslogEnabled: false, RingBufferSize: 1000},
 		GraphQL: GraphQLConfig{
 			Enabled:                 true,
 			Port:                    4000,
@@ -453,16 +451,34 @@ func (c *Config) ConfigStore() StoreType {
 	return c.DefaultStoreType
 }
 
+// QueueStore returns the offline-message queue store. WinCC OA does not
+// hold queues: with DefaultStoreType WINCCOA it falls back to MEMORY.
 func (c *Config) QueueStore() StoreType {
 	if c.QueueStoreType != "" {
 		return c.QueueStoreType
 	}
+	if c.DefaultStoreType == StoreWinCCOA {
+		return StoreMemory
+	}
 	return c.DefaultStoreType
 }
 
+// MetricsStore returns the metrics store. Metrics are never written to
+// WinCC OA: with DefaultStoreType WINCCOA it falls back to MEMORY.
 func (c *Config) MetricsStore() StoreType {
 	if c.Metrics.StoreType != "" {
 		return c.Metrics.StoreType
+	}
+	if c.DefaultStoreType == StoreWinCCOA {
+		return StoreMemory
+	}
+	return c.DefaultStoreType
+}
+
+// UserStore returns the store of users and ACL rules.
+func (c *Config) UserStore() StoreType {
+	if c.UserStoreType != "" {
+		return c.UserStoreType
 	}
 	return c.DefaultStoreType
 }
@@ -487,8 +503,32 @@ func (c *Config) Validate() error {
 	if c.DefaultStoreType == "" {
 		return fmt.Errorf("DefaultStoreType is required")
 	}
-	if !c.DefaultStoreType.isValidBackend() {
-		return fmt.Errorf("invalid DefaultStoreType %q (must be one of SQLITE, POSTGRES, MONGODB)", c.DefaultStoreType)
+	if c.DefaultStoreType != StoreWinCCOA && !c.DefaultStoreType.isValidBackend() {
+		return fmt.Errorf("invalid DefaultStoreType %q (must be one of SQLITE, POSTGRES, MONGODB, WINCCOA)", c.DefaultStoreType)
+	}
+	if c.UserStoreType != "" && c.UserStoreType != StoreWinCCOA && c.UserStoreType != c.DefaultStoreType {
+		return fmt.Errorf("invalid UserStoreType %q (must be WINCCOA or DefaultStoreType %q)", c.UserStoreType, c.DefaultStoreType)
+	}
+	if c.DefaultStoreType == StoreWinCCOA {
+		// Nothing else is opened: the other stores are WinCC OA datapoints
+		// or kept in memory.
+		for _, f := range []struct {
+			name  string
+			value StoreType
+			mem   bool
+		}{
+			{"ConfigStoreType", c.ConfigStoreType, false},
+			{"SessionStoreType", c.SessionStoreType, true},
+			{"RetainedStoreType", c.RetainedStoreType, true},
+			{"QueueStoreType", c.QueueStoreType, true},
+		} {
+			if f.value != "" && f.value != StoreWinCCOA && !(f.mem && f.value == StoreMemory) {
+				return fmt.Errorf("%s %q is not supported with DefaultStoreType WINCCOA (use WINCCOA or MEMORY)", f.name, f.value)
+			}
+		}
+		if c.Metrics.StoreType != "" && c.Metrics.StoreType != StoreMemory && c.Metrics.StoreType != StoreNone {
+			return fmt.Errorf("Metrics.StoreType %q is not supported with DefaultStoreType WINCCOA (use MEMORY or NONE)", c.Metrics.StoreType)
+		}
 	}
 	if c.ConfigStoreType != "" && c.ConfigStoreType != StoreWinCCOA && !c.ConfigStoreType.isValidBackend() {
 		return fmt.Errorf("invalid ConfigStoreType %q (must be one of SQLITE, POSTGRES, MONGODB, WINCCOA)", c.ConfigStoreType)

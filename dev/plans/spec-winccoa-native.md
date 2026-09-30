@@ -145,6 +145,7 @@ A native filter with `+` or `#` after `tags/` or `types/` becomes one `dpQueryCo
 - DP names: `MMQConfigs_<enc>` / `MMQSessions_<enc>` where `<enc>` is `k` + lowercase hex of the SHA-256 of the key, first 24 hex digits, plus a collision check against the stored original key. DP lifecycle calls use this name without a trailing dot; value access uses the named elements.
 - Maximum envelope size: 256 KiB. Larger records are rejected with `MMQ_E_TOO_LARGE`. Binary will payloads are base64 in the envelope.
 - Enumeration uses `DP_NAMES` with the DPT filter, in batches of at most 1000 names per request.
+- Users (`UserStoreType: WINCCOA`): one `MMQUsers_<enc>` datapoint per user (`<enc>` from the user name). Elements: `user` (string, checked against the name on load), `passwordHash` (string, bcrypt), `enabled`, `canSubscribe`, `canPublish`, `isAdmin` (bool), `acl` (string, JSON list of the user's rules `{id, topic, subscribe, publish, priority, created}`, rule ids are UUIDs), `created`, `updated` (time). Every change writes all elements in one confirmed `dpSet`; deleting a user deletes the datapoint and its rules. Rules are ordered by priority (highest first), then by creation. `MMQUsers_*` are protected like the other store datapoints.
 - Datapoint types: at startup the broker sends `TYPE_CHECK` with `FlagCreate` for every store type in use. The manager creates a missing type as a flat structure of the given elements (`dpTypeCreate`) and answers after the Data manager confirmed it; the broker then checks the layout until the type is known (bound 10 s). An existing type is never changed; a different layout stops the broker.
 - Retained messages (`RetainedStoreType: WINCCOA`): one `MMQRetained_<enc>` datapoint per retained topic, `<enc>` as above from the topic. Elements: `value` (blob, payload), `topic` (string, the MQTT topic; checked against the name on load), `user` (string, MQTT user name of the publisher, empty for anonymous and broker-internal publishes), `qos` (uint), `expiry` (uint, message expiry interval in seconds, 0 = none), `updated` (time). All elements are written in one confirmed `dpSet`. Topics at or below `TopicRoot` (the broker's status topics) get no datapoint and are kept in memory only. A retained publish with an empty payload, expiry and purges delete the datapoint (`dpDelete`). All retained messages are loaded at startup and served from memory; payloads are read in batches of at most 32 that are split further when an answer would exceed the 1 MiB ABI limit, which also bounds one retained payload. Changes made to these datapoints in WinCC OA while the broker runs are not picked up.
 - Unknown envelope version or corrupt JSON returns an error; the record is never overwritten implicitly.
@@ -166,7 +167,10 @@ WinCCOaNative:
 ConfigStoreType: WINCCOA   # device + archive configs in MMQConfigs datapoints
 SessionStoreType: WINCCOA  # sessions + subscriptions in MMQSessions datapoints
 RetainedStoreType: WINCCOA # retained messages in MMQRetained datapoints
+UserStoreType: WINCCOA     # MQTT users + ACL rules in MMQUsers datapoints
 ```
+
+`DefaultStoreType: WINCCOA` makes configs, sessions, retained messages and users WinCC OA datapoints; the queue and the metrics fall back to `MEMORY` (only `MEMORY`, for metrics also `NONE`, may be configured), no database file is opened, and no SQLite handle is offered to archive groups.
 
 `WINCCOA` is a value of the normal top-level store keys and is only accepted inside the embedding manager; a standalone broker refuses to start with it.
 

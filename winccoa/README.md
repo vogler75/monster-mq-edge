@@ -210,6 +210,38 @@ backup. They do not contain queued messages or MQTT inflight state; those
 stay in the configured SQL store (`SQLite.Path` by default) and need their
 own backup.
 
+## Stores in WinCC OA
+
+| Store | Key | Datapoint type |
+|---|---|---|
+| device and archive configs | `ConfigStoreType: WINCCOA` | `MMQConfigs` |
+| sessions and subscriptions | `SessionStoreType: WINCCOA` | `MMQSessions` |
+| retained messages | `RetainedStoreType: WINCCOA` | `MMQRetained` |
+| MQTT users and ACL rules | `UserStoreType: WINCCOA` | `MMQUsers` |
+
+`DefaultStoreType: WINCCOA` puts all four in WinCC OA. The offline message
+queue and the metrics then stay in memory (`QueueStoreType` and
+`Metrics.StoreType` may only be `MEMORY`, metrics also `NONE`), and no
+database file is written. Archive groups with a `SQLITE` last value or
+archive then need their own database connection.
+
+### Users (`MMQUsers`)
+
+One datapoint per user, `MMQUsers_k<hash of the user name>`:
+
+| Element | Type | Content |
+|---|---|---|
+| `user` | string | user name |
+| `passwordHash` | string | bcrypt hash |
+| `enabled`, `canSubscribe`, `canPublish`, `isAdmin` | bool | permissions |
+| `acl` | string | the user's ACL rules as JSON: `[{"id","topic","subscribe","publish","priority","created"}]` |
+| `created`, `updated` | time | |
+
+Deleting a user deletes its datapoint and with it its ACL rules. The
+password hashes are readable by everyone who may read these datapoints in
+WinCC OA; restrict read access to `MMQUsers_*` with WinCC OA's datapoint
+permissions. They are never reachable through the MQTT namespace.
+
 ## Retained messages in WinCC OA
 
 With `RetainedStoreType: WINCCOA` every retained topic is one datapoint of

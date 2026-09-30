@@ -36,4 +36,8 @@ main()
   // message expiry interval (s, 0 = none), time of the last write.
   createType("MMQRetained", makeDynString("value", "topic", "user", "qos", "expiry", "updated"),
              makeDynInt(DPEL_BLOB, DPEL_STRING, DPEL_STRING, DPEL_UINT, DPEL_UINT, DPEL_TIME));
+  // One datapoint per MQTT user: bcrypt password hash, permissions and the
+  // user's ACL rules as a JSON list.
+  createType("MMQUsers", makeDynString("user", "passwordHash", "enabled", "canSubscribe", "canPublish", "isAdmin", "acl", "created", "updated"),
+             makeDynInt(DPEL_STRING, DPEL_STRING, DPEL_BOOL, DPEL_BOOL, DPEL_BOOL, DPEL_BOOL, DPEL_STRING, DPEL_TIME, DPEL_TIME));
 }

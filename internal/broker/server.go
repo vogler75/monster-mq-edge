@@ -137,6 +137,13 @@ func build(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus, opts Optio
 		storage, pgDB, err = storepg.Build(ctx, cfg)
 	case cfg.DefaultStoreType == config.StoreMongoDB:
 		storage, mongoDB, err = storemongo.Build(ctx, cfg)
+	case cfg.DefaultStoreType == config.StoreWinCCOA:
+		// Configs, sessions, retained messages and users become WinCC OA
+		// datapoints below; queue and metrics stay in memory. No SQLite
+		// handle is exposed, so no archive group writes to a file here.
+		if storage, err = storesqlite.BuildMemory(ctx, cfg); err == nil {
+			storage.Backend = config.StoreWinCCOA
+		}
 	default:
 		return nil, fmt.Errorf("unsupported DefaultStoreType %q", cfg.DefaultStoreType)
 	}
@@ -503,8 +510,8 @@ func configureVolatileStores(ctx context.Context, cfg *config.Config, storage *s
 	if cfg.RetainedStore() == config.StoreMemory {
 		storage.Retained = storememory.NewMessageStore("retainedmessages")
 	}
-	if storage.Backend == config.StoreSQLite {
-		return nil
+	if storage.Backend == config.StoreSQLite || storage.Backend == config.StoreWinCCOA {
+		return nil // the SQLite factory (also the WINCCOA base) handled MEMORY itself
 	}
 	if cfg.SessionStore() == config.StoreMemory {
 		db, err := storesqlite.OpenMemory("monstermq-sessions-" + cfg.NodeID)
@@ -534,7 +541,8 @@ func useOAStores(ctx context.Context, cfg *config.Config, storage *stores.Storag
 	needCfg := cfg.ConfigStore() == config.StoreWinCCOA
 	needSes := cfg.SessionStore() == config.StoreWinCCOA
 	needRet := cfg.RetainedStore() == config.StoreWinCCOA
-	if err := oastore.EnsureTypes(ctx, api, needCfg, needSes, needRet); err != nil {
+	needUsr := cfg.UserStore() == config.StoreWinCCOA
+	if err := oastore.EnsureTypes(ctx, api, needCfg, needSes, needRet, needUsr); err != nil {
 		return fmt.Errorf("winccoa stores: %w", err)
 	}
 	st := oastore.New(api, 10*time.Second, logger)
@@ -564,7 +572,13 @@ func useOAStores(ctx context.Context, cfg *config.Config, storage *stores.Storag
 		}
 		storage.Retained = st.Retained
 	}
-	logger.Info("winccoa datapoint stores active", "config", needCfg, "sessions", needSes, "retained", needRet)
+	if needUsr {
+		if err := st.Users.Load(ctx); err != nil {
+			return fmt.Errorf("winccoa stores: %w", err)
+		}
+		storage.Users = st.Users
+	}
+	logger.Info("winccoa datapoint stores active", "config", needCfg, "sessions", needSes, "retained", needRet, "users", needUsr)
 	return nil
 }
 

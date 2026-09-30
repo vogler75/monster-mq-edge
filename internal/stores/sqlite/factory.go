@@ -20,6 +20,23 @@ func Build(ctx context.Context, cfg *config.Config) (*stores.Storage, *DB, error
 	if err != nil {
 		return nil, nil, err
 	}
+	return build(ctx, cfg, db)
+}
+
+// BuildMemory is Build on an in-memory database: nothing is written to a
+// file. Used as the base for DefaultStoreType WINCCOA, where the persistent
+// stores are replaced by WinCC OA datapoints and the rest is volatile.
+func BuildMemory(ctx context.Context, cfg *config.Config) (*stores.Storage, error) {
+	db, err := OpenMemory("monstermq-base-" + cfg.NodeID)
+	if err != nil {
+		return nil, err
+	}
+	st, _, err := build(ctx, cfg, db)
+	return st, err
+}
+
+func build(ctx context.Context, cfg *config.Config, db *DB) (*stores.Storage, *DB, error) {
+	var err error
 	closers := []func() error{db.Close}
 
 	var retained stores.MessageStore = NewMessageStore("retainedmessages", db)

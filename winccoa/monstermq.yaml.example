@@ -12,8 +12,9 @@ GraphQL:
   Port: 4000
 SQLite:
   Path: ./data/monstermq.db     # relative to the WinCC OA project directory
-DefaultStoreType: SQLITE
+DefaultStoreType: SQLITE        # WINCCOA: everything below in WinCC OA, queue and metrics in memory, no database file
 ConfigStoreType: WINCCOA        # device and archive configs in MMQConfigs datapoints (or SQLITE)
+UserStoreType: WINCCOA          # MQTT users and ACL rules in MMQUsers datapoints (or SQLITE)
 SessionStoreType: WINCCOA       # sessions and subscriptions in MMQSessions datapoints (or SQLITE, MEMORY)
 RetainedStoreType: SQLITE       # retained messages: SQLITE (default), WINCCOA (MMQRetained datapoints) or MEMORY (lost on restart)
 QueueStoreType: SQLITE          # offline messages of persistent sessions: SQLITE or MEMORY
