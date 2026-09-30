@@ -18,8 +18,16 @@ UserStoreType: WINCCOA          # MQTT users and ACL rules in MMQUsers datapoint
 SessionStoreType: WINCCOA       # sessions and subscriptions in MMQSessions datapoints (or SQLITE, MEMORY)
 RetainedStoreType: SQLITE       # retained messages: SQLITE (default), WINCCOA (MMQRetained datapoints) or MEMORY (lost on restart)
 QueueStoreType: SQLITE          # offline messages of persistent sessions: SQLITE or MEMORY
-Features:
-  WinCCOa: true                 # run WinCCOA-Client query devices
+Features:                       # optional subsystems; each is off unless set to true
+  WinCCOa: true                 # WinCCOA-Client devices: query WinCC OA through its GraphQL server
+  WinCCUa: false                # WinCC Unified bridge devices (GraphQL or Open Pipe)
+  MqttClient: false             # MQTT bridge devices to other brokers
+  DeviceImportExport: false     # export/import of device configurations (GraphQL, dashboard)
+  PythonScripts: false          # Python/Starlark scripting engine
+  RtspCamera: false             # RTSP camera snapshots published over MQTT
+  Hmi: false                    # hosting of HTML/JS HMI pages
+  Mcp: false                    # MCP server (AI assistant access)
+  Redfish: false                # DMTF Redfish REST API
 WinCCOaNative:
   Enabled: true
   Namespace: true               # winccoa/systems/<system>/tags|types, validated subscriptions, writes
