@@ -9,12 +9,12 @@ import (
 // WildTarget is a native filter with MQTT wildcards. It is served by one
 // dpQueryConnectSingle (spec-winccoa-native.md section 4.2):
 //
-//	winccoa/local/tags/#                 -> '*.**'
-//	winccoa/local/tags/Pump1/#           -> 'Pump1.**'
-//	winccoa/local/tags/Pump1/value/#     -> '{Pump1.value,Pump1.value.**}'
-//	winccoa/local/tags/+/speed           -> '*.speed'
-//	winccoa/local/types/Pump/#           -> '*.**' WHERE _DPT = "Pump"
-//	winccoa/local/types/Pump/+/value/#   -> '{*.value,*.value.**}' WHERE _DPT = "Pump"
+//	winccoa/this/tags/#                 -> '*.**'
+//	winccoa/this/tags/Pump1/#           -> 'Pump1.**'
+//	winccoa/this/tags/Pump1/value/#     -> '{Pump1.value,Pump1.value.**}'
+//	winccoa/this/tags/+/speed           -> '*.speed'
+//	winccoa/this/types/Pump/#           -> '*.**' WHERE _DPT = "Pump"
+//	winccoa/this/types/Pump/+/value/#   -> '{*.value,*.value.**}' WHERE _DPT = "Pump"
 //	winccoa/remote/Sys/tags/...          -> ... REMOTE 'Sys'
 type WildTarget struct {
 	Remote   bool
@@ -39,7 +39,7 @@ func ParseWildcard(filter string) (WildTarget, error) {
 	segs := strings.Split(filter, "/")[1:]
 	i := 0
 	switch segs[i] {
-	case SegLocal:
+	case SegThis:
 		i++
 	case SegRemote:
 		w.Remote = true

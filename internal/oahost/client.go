@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -173,6 +174,8 @@ type Client struct {
 
 	submitted, completed, timedOut, overloaded, late atomic.Uint64
 	delivered, dropped, unrouted, highWater          atomic.Uint64
+
+	logger atomic.Pointer[slog.Logger]
 }
 
 func NewClient(host Host, limits Limits) *Client {
@@ -214,6 +217,9 @@ func NewClient(host Host, limits Limits) *Client {
 }
 
 func (c *Client) Limits() Limits { return c.limits }
+
+// SetLogger sets the logger for the per-call DEBUG lines of API.
+func (c *Client) SetLogger(l *slog.Logger) { c.logger.Store(l) }
 
 // Call submits msg and waits for its completion, the context, or the
 // deadline, whichever comes first. The request is never retried.

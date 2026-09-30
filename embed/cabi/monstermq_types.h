@@ -76,7 +76,7 @@ typedef struct mmq_config {
   uint32_t max_pending;        /* 0 = default 4096 */
   uint32_t event_queue;        /* 0 = default 16384 */
   uint32_t default_timeout_ms; /* 0 = default 5000 */
-  int32_t log_level;           /* MMQ_LOG_* minimum level */
+  int32_t log_level;           /* MMQ_LOG_DEBUG forces DEBUG; otherwise Logging.Level applies */
 } mmq_config;
 
 #ifdef __cplusplus

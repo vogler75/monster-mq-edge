@@ -54,7 +54,7 @@ Assume the manager's local system is `System1` and the example CNS links already
 
 `Plant` and `Electrical` are view IDs; `Line1` and `Feeders` are root-node IDs. Remaining levels are actual CNS child IDs. Every node level is resolved through CNS; never infer `Pump101.speed` by replacing slashes in the MQTT path with dots.
 
-`local` selects the manager's system for CNS lookup. `remote/<systemname>` selects another system and never falls back to local. Reject the local system's name in the remote branch, consistent with native tag/type access. The system containing the CNS node and the system containing its linked DPE are separate facts; if cross-system links are supported by the selected SDK, validate and authorize both.
+`this` selects the manager's system for CNS lookup. `remote/<systemname>` selects another system and never falls back to local. Reject the local system's name in the remote branch, consistent with native tag/type access. The system containing the CNS node and the system containing its linked DPE are separate facts; if cross-system links are supported by the selected SDK, validate and authorize both.
 
 Use CNS ID segments in topics; display names are optional metadata. Share the native namespace's canonical segment-encoding utility. Before C0 exits, freeze encoding for slash, percent, MQTT wildcard characters, and reserved terminal names (`set`, `$meta`, `$children`) so an actual node with such an ID cannot be interpreted as an operation. Encode/decode each segment exactly once; reject alternate encodings and malformed UTF-8, preserving case. Assemble OA paths through validated SDK identifiers, not user-text concatenation.
 
@@ -62,7 +62,7 @@ The initial CNS read form always targets `:_online.._value`; no arbitrary attrib
 
 ### 4.2 Relationship to native tag/type topics
 
-The example Speed node and `winccoa/local/tags/Pump101/speed` resolve to the same underlying value but remain different MQTT topics. Register the DPE once in the shared interest registry where possible and fan out to each authorized, interested path. Reference ownership must include the CNS mapping revision; removing a CNS alias must not remove a direct tag subscription.
+The example Speed node and `winccoa/this/tags/Pump101/speed` resolve to the same underlying value but remain different MQTT topics. Register the DPE once in the shared interest registry where possible and fan out to each authorized, interested path. Reference ownership must include the CNS mapping revision; removing a CNS alias must not remove a direct tag subscription.
 
 Use the baseline native value-payload contract and retained policy. Do not apply lossy query-bridge regex or underscore transformations to CNS identifier paths. Different views may legitimately expose one DPE at different paths.
 

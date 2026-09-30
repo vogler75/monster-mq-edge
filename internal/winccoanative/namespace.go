@@ -10,7 +10,7 @@ import (
 
 const (
 	Root        = "winccoa"
-	SegLocal    = "local"
+	SegThis     = "this"
 	SegRemote   = "remote"
 	SegTags     = "tags"
 	SegTypes    = "types"
@@ -33,7 +33,7 @@ type Kind int
 
 const (
 	KindOther  Kind = iota // not under winccoa/<reserved>
-	KindNative             // winccoa/local|remote/...
+	KindNative             // winccoa/this|remote/...
 	KindStatus             // winccoa/node/<id>/status
 	KindNode               // other winccoa/node/... topics (broker-owned, not status)
 	KindCNS                // winccoa/cns/... (reserved, disabled)
@@ -68,7 +68,7 @@ func Classify(topic string) Kind {
 	rest = strings.TrimPrefix(rest, "/")
 	first, after, _ := strings.Cut(rest, "/")
 	switch first {
-	case SegLocal, SegRemote:
+	case SegThis, SegRemote:
 		return KindNative
 	case SegCNS:
 		return KindCNS
@@ -110,7 +110,7 @@ func Parse(topic string) (Target, error) {
 	segs := strings.Split(topic, "/")[1:]
 	i := 0
 	switch segs[i] {
-	case SegLocal:
+	case SegThis:
 		i++
 	case SegRemote:
 		t.Remote = true
@@ -218,7 +218,7 @@ func (t Target) Topic() string {
 	if t.Remote {
 		segs = append(segs, SegRemote, encodeSegment(t.System, false))
 	} else {
-		segs = append(segs, SegLocal)
+		segs = append(segs, SegThis)
 	}
 	if t.TypeName != "" {
 		segs = append(segs, SegTypes, encodeSegment(t.TypeName, false))

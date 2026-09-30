@@ -211,8 +211,7 @@ void MonsterMQManager::logLine(int32_t level, const std::string &msg)
     prio = ErrClass::PRIO_SEVERE;
   else if (level == MMQ_LOG_WARN)
     prio = ErrClass::PRIO_WARNING;
-  else if (level <= MMQ_LOG_DEBUG && !Resources::isDbgFlag(Resources::DBG_API_USR1))
-    return;
+  // DEBUG lines are filtered by the broker (-dbg USR1 or Logging.Level).
   // Informational lines use code 0 (no error) so the log does not show
   // "unexpected state" for normal broker output.
   ErrHdl::error(prio, ErrClass::ERR_CONTROL, prio == ErrClass::PRIO_INFO ? ErrClass::NOERR : ErrClass::UNEXPECTEDSTATE,

@@ -269,7 +269,7 @@ func TestNativeStoreSessions(t *testing.T) {
 	if ack.SessionPresent {
 		t.Fatal("unexpected session present")
 	}
-	c.Subscribe(sub("winccoa/local/tags/Pump1/count", 1), sub("plain/topic", 1))
+	c.Subscribe(sub("winccoa/this/tags/Pump1/count", 1), sub("plain/topic", 1))
 	c.Close()
 	// MQTT 3.1.1 clean session: purged, not restored.
 	c3, _ := dialRaw(t, env.port, rawConnect{ClientID: "c3", Version: 4, Clean: true})
@@ -277,7 +277,7 @@ func TestNativeStoreSessions(t *testing.T) {
 	c3.Close()
 	// MQTT 5 with zero expiry: gone at disconnect.
 	c0, _ := dialRaw(t, env.port, rawConnect{ClientID: "p0", Version: 5, Clean: true})
-	c0.Subscribe(sub("winccoa/local/tags/Pump1/speed", 1))
+	c0.Subscribe(sub("winccoa/this/tags/Pump1/speed", 1))
 	c0.Close()
 	time.Sleep(300 * time.Millisecond)
 	ctx := context.Background()
@@ -301,7 +301,7 @@ func TestNativeStoreSessions(t *testing.T) {
 	if !ack.SessionPresent {
 		t.Fatal("CONNACK session present must reflect the restored OA session")
 	}
-	if pk, ok := r.NextOn("winccoa/local/tags/Pump1/count", 3*time.Second); !ok || payloadValue(t, pk) != float64(5) {
+	if pk, ok := r.NextOn("winccoa/this/tags/Pump1/count", 3*time.Second); !ok || payloadValue(t, pk) != float64(5) {
 		t.Fatal("queued native change not delivered after restart")
 	}
 	pub, _ := dialRaw(t, env2.port, rawConnect{ClientID: "pub", Version: 5, Clean: true})

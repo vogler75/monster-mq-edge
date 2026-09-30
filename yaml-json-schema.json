@@ -287,7 +287,7 @@
       "properties": {
         "Enabled":    { "type": "boolean", "default": false, "description": "Enable the native WinCC OA embedding features." },
         "Transport":  { "type": "string", "enum": ["NATIVE", "GRAPHQL"], "default": "NATIVE", "description": "Transport for existing WinCCOA-Client devices on this node." },
-        "Namespace":  { "type": "boolean", "default": false, "description": "Expose winccoa/local and winccoa/remote tag/type topics, validated subscriptions and typed writes." },
+        "Namespace":  { "type": "boolean", "default": false, "description": "Expose winccoa/this and winccoa/remote tag/type topics, validated subscriptions and typed writes." },
         "Stores":     { "type": "array", "items": { "type": "string", "enum": ["DeviceConfig", "ArchiveConfig", "Sessions"] }, "uniqueItems": true, "description": "Stores kept in WinCC OA datapoints (MMQConfigs/MMQSessions) instead of DefaultStoreType." },
         "EchoPolicy": { "type": "string", "enum": ["BROKER_TAG", "NO_SOURCE"], "default": "BROKER_TAG", "description": "How values written through MQTT are echoed to native subscribers." }
       }

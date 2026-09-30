@@ -226,7 +226,7 @@ type FeaturesConfig struct {
 type WinCCOaNativeConfig struct {
 	Enabled    bool     `yaml:"Enabled"`
 	Transport  string   `yaml:"Transport"`  // NATIVE | GRAPHQL for WinCCOA-Client devices
-	Namespace  bool     `yaml:"Namespace"`  // winccoa/local|remote namespace and writes
+	Namespace  bool     `yaml:"Namespace"`  // winccoa/this|remote namespace and writes
 	Stores     []string `yaml:"Stores"`     // subset of DeviceConfig, ArchiveConfig, Sessions
 	EchoPolicy string   `yaml:"EchoPolicy"` // BROKER_TAG | NO_SOURCE
 }

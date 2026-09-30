@@ -2,7 +2,10 @@ package oahost
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"log/slog"
+	"strings"
 	"time"
 )
 
@@ -50,10 +53,68 @@ func (a API) call(ctx context.Context, w *Writer, timeout time.Duration) (Messag
 	return a.C.Call(ctx, w.Bytes(), timeout)
 }
 
+// logCall writes one DEBUG line per completed call: the WinCC OA function,
+// its arguments, the duration and the error, if any.
+func (a API) logCall(op string, start time.Time, err error, attrs ...any) {
+	if a.C == nil {
+		return
+	}
+	l := a.C.logger.Load()
+	if l == nil || !l.Enabled(context.Background(), slog.LevelDebug) {
+		return
+	}
+	attrs = append(attrs, "duration", time.Since(start).Round(time.Microsecond))
+	if err != nil {
+		attrs = append(attrs, "err", err)
+	}
+	l.Debug("oa "+op, attrs...)
+}
+
+// maxLoggedItems bounds the names/values listed in one log line.
+const maxLoggedItems = 20
+
+// nameList formats a name batch only when the line is actually written.
+type nameList []string
+
+func (n nameList) LogValue() slog.Value {
+	s := []string(n)
+	more := 0
+	if len(s) > maxLoggedItems {
+		s, more = s[:maxLoggedItems], len(s)-maxLoggedItems
+	}
+	out := "[" + strings.Join(s, " ") + "]"
+	if more > 0 {
+		out += fmt.Sprintf(" (+%d more)", more)
+	}
+	return slog.StringValue(out)
+}
+
+type valueList []Value
+
+func (v valueList) LogValue() slog.Value {
+	s := []Value(v)
+	more := 0
+	if len(s) > maxLoggedItems {
+		s, more = s[:maxLoggedItems], len(s)-maxLoggedItems
+	}
+	parts := make([]string, len(s))
+	for i, x := range s {
+		b, _ := json.Marshal(x.JSON())
+		parts[i] = string(b)
+	}
+	out := "[" + strings.Join(parts, " ") + "]"
+	if more > 0 {
+		out += fmt.Sprintf(" (+%d more)", more)
+	}
+	return slog.StringValue(out)
+}
+
 func (a API) SysInfo(ctx context.Context) (SysInfo, error) {
 	var w Writer
 	w.U32(TagOp, OpSysInfo)
+	start := time.Now()
 	m, err := a.call(ctx, &w, 0)
+	a.logCall("sysInfo", start, err, "system", m.String(TagSysName))
 	if err != nil {
 		return SysInfo{}, err
 	}
@@ -67,7 +128,9 @@ func (a API) Resolve(ctx context.Context, name string) (Resolution, error) {
 	var w Writer
 	w.U32(TagOp, OpResolve)
 	w.String(TagName, name)
+	start := time.Now()
 	m, err := a.call(ctx, &w, 0)
+	a.logCall("resolve", start, err, "name", name, "exists", m.Bool(TagExists), "type", m.String(TagTypeName))
 	if err != nil {
 		return Resolution{}, err
 	}
@@ -92,7 +155,10 @@ func (a API) QueryConnect(ctx context.Context, query string, answer bool, h Even
 	if answer {
 		w.U32(TagFlags, FlagAnswer)
 	}
-	if _, err := a.call(ctx, &w, timeout); err != nil {
+	start := time.Now()
+	_, err := a.call(ctx, &w, timeout)
+	a.logCall("dpQueryConnectSingle", start, err, "ref", ref, "query", query, "answer", answer)
+	if err != nil {
 		// The host owns any registration it sent; it disconnects it itself
 		// on a failed answer. Only the Go-side route is dropped here.
 		a.C.DropRef(ref)
@@ -105,7 +171,9 @@ func (a API) QueryDisconnect(ctx context.Context, ref uint64) error {
 	var w Writer
 	w.U32(TagOp, OpQueryDisconnect)
 	w.U64(TagRef, ref)
+	start := time.Now()
 	_, err := a.call(ctx, &w, 0)
+	a.logCall("dpQueryDisconnect", start, err, "ref", ref)
 	a.C.DropRef(ref)
 	return err
 }
@@ -124,7 +192,14 @@ func (a API) DpConnect(ctx context.Context, names []string, flags uint32, h Even
 	for _, n := range names {
 		w.String(TagName, n)
 	}
-	if _, err := a.call(ctx, &w, timeout); err != nil {
+	start := time.Now()
+	_, err := a.call(ctx, &w, timeout)
+	op := "dpConnect"
+	if flags&FlagNoSource != 0 {
+		op = "dpConnectNoSource"
+	}
+	a.logCall(op, start, err, "ref", ref, "count", len(names), "names", nameList(names), "answer", flags&FlagAnswer != 0)
+	if err != nil {
 		a.C.DropRef(ref)
 		return 0, err
 	}
@@ -135,7 +210,9 @@ func (a API) DpDisconnect(ctx context.Context, ref uint64) error {
 	var w Writer
 	w.U32(TagOp, OpDpDisconnect)
 	w.U64(TagRef, ref)
+	start := time.Now()
 	_, err := a.call(ctx, &w, 0)
+	a.logCall("dpDisconnect", start, err, "ref", ref)
 	a.C.DropRef(ref)
 	return err
 }
@@ -153,7 +230,9 @@ func (a API) DpSet(ctx context.Context, names []string, values []Value, timeout 
 		w.String(TagName, names[i])
 		w.Value(TagValue, values[i])
 	}
+	start := time.Now()
 	_, err := a.call(ctx, &w, timeout)
+	a.logCall("dpSetWait", start, err, "count", len(names), "names", nameList(names), "values", valueList(values))
 	return err
 }
 
@@ -163,7 +242,9 @@ func (a API) DpGet(ctx context.Context, names []string, timeout time.Duration) (
 	for _, n := range names {
 		w.String(TagName, n)
 	}
+	start := time.Now()
 	m, err := a.call(ctx, &w, timeout)
+	a.logCall("dpGet", start, err, "count", len(names), "names", nameList(names))
 	if err != nil {
 		return nil, err
 	}
@@ -188,11 +269,13 @@ func (a API) DpNames(ctx context.Context, pattern, typeName string, timeout time
 	w.U32(TagOp, OpDpNames)
 	w.String(TagName, pattern)
 	w.String(TagTypeName, typeName)
+	start := time.Now()
 	m, err := a.call(ctx, &w, timeout)
+	names := m.All(TagName)
+	a.logCall("dpNames", start, err, "pattern", pattern, "type", typeName, "found", len(names))
 	if err != nil {
 		return nil, err
 	}
-	names := m.All(TagName)
 	out := make([]string, len(names))
 	for i, n := range names {
 		out[i] = string(n)
@@ -206,7 +289,9 @@ func (a API) DpCreate(ctx context.Context, dpName, typeName string, timeout time
 	w.U32(TagOp, OpDpCreate)
 	w.String(TagName, dpName)
 	w.String(TagTypeName, typeName)
+	start := time.Now()
 	_, err := a.call(ctx, &w, timeout)
+	a.logCall("dpCreate", start, err, "dp", dpName, "type", typeName)
 	return err
 }
 
@@ -215,7 +300,9 @@ func (a API) DpDelete(ctx context.Context, dpName string, timeout time.Duration)
 	var w Writer
 	w.U32(TagOp, OpDpDelete)
 	w.String(TagName, dpName)
+	start := time.Now()
 	_, err := a.call(ctx, &w, timeout)
+	a.logCall("dpDelete", start, err, "dp", dpName)
 	return err
 }
 
@@ -229,7 +316,9 @@ func (a API) TypeCheck(ctx context.Context, typeName string, elements []string, 
 		w.String(TagName, e)
 		w.U32(TagElemType, elemTypes[i])
 	}
+	start := time.Now()
 	_, err := a.call(ctx, &w, 0)
+	a.logCall("typeCheck", start, err, "type", typeName, "elements", nameList(elements))
 	return err
 }
 

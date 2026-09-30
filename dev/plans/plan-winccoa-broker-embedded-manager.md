@@ -11,7 +11,7 @@ Embed `monster-mq-edge` in a WinCC OA C++ API Manager through an isolated C ABI.
 1. Remove the GraphQL/WebSocket transport between the broker and the local WinCC OA manager. C ABI calls still incur scheduling, copying, conversion, and potentially JSON serialization; latency and throughput improvements must be measured.
 2. Preserve the existing WinCC OA query bridge's query, initial-answer, topic transformation, retained-message, and payload-format behavior using a native transport.
 3. Optionally persist device/archive/database-connection configuration and session metadata in `MMQConfigs` and `MMQSessions` datapoints.
-4. Expose tag/type MQTT namespaces under `winccoa/local/` and `winccoa/remote/<systemname>/`, validated subscriptions, and typed writes. Reserve `winccoa/cns/` for the separate future CNS feature.
+4. Expose tag/type MQTT namespaces under `winccoa/this/` and `winccoa/remote/<systemname>/`, validated subscriptions, and typed writes. Reserve `winccoa/cns/` for the separate future CNS feature.
 5. Optionally support a WinCC OA redundant pair, with explicit durability, recovery, and write-ownership rules.
 6. Keep the standalone broker and its ARM builds compatible with `CGO_ENABLED=0`; isolate CGO to an opt-in embedding target.
 
@@ -132,22 +132,22 @@ OA redundancy and backup are useful only for the state actually persisted there 
 
 | Topic | Read target |
 |---|---|
-| `winccoa/local/tags/Pump101/speed` | `System1:Pump101.speed:_online.._value`, assuming the manager's local system is `System1` |
-| `winccoa/local/types/AnalogDrive/Pump101/speed` | Same local target, after verifying DPT `AnalogDrive` |
+| `winccoa/this/tags/Pump101/speed` | `System1:Pump101.speed:_online.._value`, assuming the manager's local system is `System1` |
+| `winccoa/this/types/AnalogDrive/Pump101/speed` | Same local target, after verifying DPT `AnalogDrive` |
 | `winccoa/remote/SubstationA/tags/Feeder1/voltage` | `SubstationA:Feeder1.voltage:_online.._value` |
 | `winccoa/remote/SubstationA/types/Feeder/Feeder1/voltage` | Same remote target, after verifying DPT `Feeder` |
-| `winccoa/local/tags/ScalarTag` | `System1:ScalarTag.:_online.._value` |
+| `winccoa/this/tags/ScalarTag` | `System1:ScalarTag.:_online.._value` |
 | `winccoa/remote/SubstationA/tags/ScalarTag` | `SubstationA:ScalarTag.:_online.._value` |
-| `winccoa/local/tags/Pump101/speed/_online.._value` | Explicit form of the first local read target |
+| `winccoa/this/tags/Pump101/speed/_online.._value` | Explicit form of the first local read target |
 | `winccoa/remote/SubstationA/tags/Feeder1/voltage/_online.._value` | Explicit form of the remote read target |
 
 Reject the former unscoped `winccoa/tags/...`, `winccoa/types/...`, and direct-system `winccoa/<systemname>/...` forms in the native resolver; they are superseded proposals, not compatibility aliases. Reject a missing/unknown remote system and a `remote` system name that identifies the local system. A remote outage must never fall back to local resolution. Broker-owned `winccoa/node/...` and reserved `winccoa/cns/...` are separate branches, not system names. This grammar governs native resolution; existing configured query output keeps its explicit topic contract and must not collide with reserved native/status/CNS topics.
 
 The local system ID must be resolved to its actual name using the selected SDK; do not assume a default-system helper returns a string. Writes use a terminal `/set` and target `:_original.._value`. Do not allow arbitrary config writes through attribute syntax.
 
-Topic-to-DPE conversion joins the DP and element segments with dots and appends a trailing dot only when the result contains no dot (`Pump101/speed` → `Pump101.speed`, never `Pump101.speed.`). A DP-only topic such as `winccoa/local/tags/Pump101` becomes the root form `Pump101.` only after the resolver confirms that the DPT root is itself a value element. For a structured DPT the struct root is not a value leaf, so the filter or command is rejected rather than connected.
+Topic-to-DPE conversion joins the DP and element segments with dots and appends a trailing dot only when the result contains no dot (`Pump101/speed` → `Pump101.speed`, never `Pump101.speed.`). A DP-only topic such as `winccoa/this/tags/Pump101` becomes the root form `Pump101.` only after the resolver confirms that the DPT root is itself a value element. For a structured DPT the struct root is not a value leaf, so the filter or command is rejected rather than connected.
 
-Before implementation, freeze an unambiguous encoding for reserved segments (`local`, `remote`, `tags`, `types`, `node`, `cns`, `set`, attribute tokens), slash, percent, wildcard characters, and system/DP/element names. Reject noncanonical forms; preserve case. Define an allowlist of explicit read attributes. Root-element access needs the dot; lifecycle create/delete uses the DP identity. [WinCC OA API messages and root-element naming](https://www.winccoa.com/documentation/WinCCOA/latest/en_US/API/topics/API-08_2.html)
+Before implementation, freeze an unambiguous encoding for reserved segments (`this`, `remote`, `tags`, `types`, `node`, `cns`, `set`, attribute tokens), slash, percent, wildcard characters, and system/DP/element names. Reject noncanonical forms; preserve case. Define an allowlist of explicit read attributes. Root-element access needs the dot; lifecycle create/delete uses the DP identity. [WinCC OA API messages and root-element naming](https://www.winccoa.com/documentation/WinCCOA/latest/en_US/API/topics/API-08_2.html)
 
 The tag-centric, type-centric, and explicit-attribute forms can share one underlying OA connection, but MQTT topic matching is literal: publish to each subscribed alias or implement documented equivalent routing. A retained value at a canonical topic alone will not reach an alias subscriber. Arbitrary bridge regex/underscore transformations may be lossy and must not be reverse-parsed for writes; keep baseline query output separate from the canonical writable namespace.
 
@@ -193,7 +193,7 @@ Unsubscribe, clean-session removal, expiry, and client takeover update interests
 
 ### 6.3 Writes
 
-A command such as `winccoa/local/tags/Pump1/speed/set` (local system `System1`) or `winccoa/remote/SubstationA/tags/Pump1/speed/set` with `{"value":1500.0}` becomes a typed write to `System1:Pump1.speed:_original.._value` or `SubstationA:Pump1.speed:_original.._value`, respectively, after ACL, existence, value-type, range, and size validation. Unsupported types and malformed values fail without coercing them to an unrelated type. Define bool, signed/unsigned integer, float, string, time, and dynamic-value handling explicitly.
+A command such as `winccoa/this/tags/Pump1/speed/set` (local system `System1`) or `winccoa/remote/SubstationA/tags/Pump1/speed/set` with `{"value":1500.0}` becomes a typed write to `System1:Pump1.speed:_original.._value` or `SubstationA:Pump1.speed:_original.._value`, respectively, after ACL, existence, value-type, range, and size validation. Unsupported types and malformed values fail without coercing them to an unrelated type. Define bool, signed/unsigned integer, float, string, time, and dynamic-value handling explicitly.
 
 Reject retained commands to prevent replay on reconnect. Tag OA-origin publications and forwarded commands so values cannot re-enter the command path. Do not run writes directly on a Go callback thread.
 

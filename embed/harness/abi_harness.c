@@ -358,7 +358,7 @@ int main(void) {
   CHECK(mmq_state(h, NULL, 0, NULL) == MMQ_STATE_RUNNING, "still running after bad input");
 
   /* End-to-end: a native SUBSCRIBE triggers RESOLVE on the host. */
-  int code = mqtt_subscribe_code(27190, "winccoa/local/tags/Pump1/speed");
+  int code = mqtt_subscribe_code(27190, "winccoa/this/tags/Pump1/speed");
   CHECK(code == 0x80, "native subscribe SUBACK 0x%02x", code);
   CHECK(atomic_load(&resolves) >= 1 && strcmp(last_resolve, "HarnessSys:Pump1.speed") == 0,
         "resolve %d name %s", atomic_load(&resolves), last_resolve);

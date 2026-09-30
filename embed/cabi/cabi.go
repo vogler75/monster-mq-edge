@@ -178,7 +178,11 @@ func mmq_create(cfg *C.mmq_config, host *C.mmq_host, out *C.uint64_t) (rc C.int3
 		started: make(chan struct{}),
 		stopped: make(chan struct{}),
 	}
-	inst.cfg.Logging.Level = levelName(int32(cfg.log_level))
+	// The host's DEBUG (WCCOAmmq -dbg USR1) wins; otherwise Logging.Level
+	// from the broker YAML applies.
+	if int32(cfg.log_level) == 0 || inst.cfg.Logging.Level == "" {
+		inst.cfg.Logging.Level = levelName(int32(cfg.log_level))
+	}
 	*out = C.uint64_t(inst.handle)
 	return C.int32_t(oahost.StatusOK)
 }
@@ -209,6 +213,7 @@ func (in *instance) start() {
 		}
 	}()
 	logger := newHostLogger(in.host, in.cfg.Logging.Level)
+	in.client.SetLogger(logger)
 	in.startDiagnostics(logger)
 	srv, err := broker.NewWithOptions(in.cfg, logger, nil, broker.Options{OA: in.client})
 	if err != nil {

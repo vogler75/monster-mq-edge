@@ -14,7 +14,7 @@ import (
 
 // reservedNativeBranches are owned by the native namespace; configured query
 // output must never publish into them.
-var reservedNativeBranches = []string{"winccoa/local", "winccoa/remote", "winccoa/node", "winccoa/cns"}
+var reservedNativeBranches = []string{"winccoa/this", "winccoa/remote", "winccoa/node", "winccoa/cns"}
 
 // CheckReservedOutput reports an error when an address's output topic prefix
 // falls into a reserved native branch.

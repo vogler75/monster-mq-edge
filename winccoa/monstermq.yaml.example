@@ -2,6 +2,8 @@
 # (WCCOAmmq). Copy to <project>/config/monstermq.yaml; the manager
 # reads it through the [monstermq] brokerConfig entry.
 NodeId: edge-oa-1
+Logging:
+  Level: INFO                   # DEBUG logs every WinCC OA call (dpConnect, dpQueryConnectSingle with the query, dpSetWait, ...)
 TCP:
   Enabled: true
   Port: 1883
@@ -15,7 +17,7 @@ Features:
 WinCCOaNative:
   Enabled: true
   Transport: NATIVE             # existing WinCCOA-Client devices use the manager, not GraphQL
-  Namespace: true               # winccoa/local|remote tags/types, validated subscriptions, writes
+  Namespace: true               # winccoa/this|remote tags/types, validated subscriptions, writes
   Stores: [DeviceConfig, ArchiveConfig, Sessions]   # kept in MMQConfigs/MMQSessions datapoints
   EchoPolicy: BROKER_TAG
 UserManagement:

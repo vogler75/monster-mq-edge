@@ -55,7 +55,8 @@ The standalone broker is unaffected: `make build`, `build-arm64` and
    ```
 
 5. Add the manager to the console (PMON) as `WCCOAmmq -num <n>`.
-   Use a distinct manager number; `-dbg USR1` enables debug logging. Every
+   Use a distinct manager number; `-dbg USR1` enables debug logging
+   (see "Debug logging of WinCC OA calls" below). Every
    `statsSeconds` the manager logs a statistics line (`connects`, `queries`,
    `liveCallbacks`, `queued`, `queueHighWater`, `overloads`, `offThreadCalls`,
    `setMessages`, `setItems`, `hotlinkItems`); set `MMQ_STATS_SECONDS` in the
@@ -69,12 +70,34 @@ The standalone broker is unaffected: `make build`, `build-arm64` and
   with the `MonsterMQ` catalog prefix. A start failure (bad config, occupied
   port, missing DPT, unreachable store) is logged as `broker failed: ...` and
   the manager exits with code 1.
-- Namespace: `winccoa/local/tags/<DP>/<element...>`,
-  `winccoa/local/types/<DPT>/<DP>/<element...>`, the same under
+- Namespace: `winccoa/this/tags/<DP>/<element...>`,
+  `winccoa/this/types/<DPT>/<DP>/<element...>`, the same under
   `winccoa/remote/<System>/`, optional read attribute suffix
   (`_online.._value`, `_online.._stime`, `_online.._status`,
   `_online.._invalid`), writes via `.../set` with `{"value": ..}`. See the
   spec for encoding, reason codes and command results.
+
+## Debug logging of WinCC OA calls
+
+At level DEBUG the broker logs one line per WinCC OA call, after the answer,
+with its arguments, duration and error:
+
+```
+oa dpQueryConnectSingle ref=12 query="SELECT '_online.._value', '_online.._stime' FROM '*.**'" answer=true duration=3.2ms
+oa dpConnect ref=13 count=2 names="[System1:Pump1.speed:_online.._value ...]" answer=true duration=450µs
+oa dpSetWait count=1 names="[System1:Pump1.speed:_original.._value]" values=[42.5] duration=1.1ms
+oa dpQueryDisconnect ref=12 duration=210µs
+```
+
+Also logged: `dpConnectNoSource`, `dpDisconnect`, `dpGet`, `dpNames`,
+`dpCreate`, `dpDelete`, `resolve`, `typeCheck`, `sysInfo`. Name and value
+lists are cut after 20 entries (`(+N more)`). Hotlink and query-row events
+are not logged.
+
+Enable it either with `Logging.Level: DEBUG` in `monstermq.yaml` or with
+the manager option `-dbg USR1`, which forces DEBUG regardless of the YAML.
+Without `-dbg USR1`, `Logging.Level` applies (`INFO` by default). The lines
+go to the WinCC OA log with the `MonsterMQ` prefix.
 
 ## Connection loss and restarts
 
@@ -94,12 +117,12 @@ The standalone broker is unaffected: `make build`, `build-arm64` and
 Wildcards inside `winccoa/<scope>/tags/` and `winccoa/<scope>/types/` are
 served by WinCC OA queries:
 
-- `winccoa/local/tags/Pump1/#`: every value element of `Pump1`
-- `winccoa/local/tags/Pump1/value/#`: `Pump1.value` and everything below
-- `winccoa/local/tags/+/speed`: the `speed` element of every datapoint
-- `winccoa/local/types/Pump/#`: every element of every datapoint of type `Pump`
-- `winccoa/local/types/Pump/+/value/#`: the `value` subtree of all `Pump`s
-- `winccoa/local/tags/#`: the whole system (internal and store datapoints excluded)
+- `winccoa/this/tags/Pump1/#`: every value element of `Pump1`
+- `winccoa/this/tags/Pump1/value/#`: `Pump1.value` and everything below
+- `winccoa/this/tags/+/speed`: the `speed` element of every datapoint
+- `winccoa/this/types/Pump/#`: every element of every datapoint of type `Pump`
+- `winccoa/this/types/Pump/+/value/#`: the `value` subtree of all `Pump`s
+- `winccoa/this/tags/#`: the whole system (internal and store datapoints excluded)
 
 Each element is published to its own topic, so a client can mix wildcard and
 exact subscriptions; a change is delivered once. Filters that cover every

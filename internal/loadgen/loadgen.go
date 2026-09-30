@@ -26,7 +26,7 @@ type Config struct {
 	Subscribers int           // subscribing clients
 	Writers     int           // writing clients
 	DPEs        int           // number of elements Name(0..DPEs-1)
-	TopicFmt    string        // e.g. "winccoa/local/tags/Load%05d/value"
+	TopicFmt    string        // e.g. "winccoa/this/tags/Load%05d/value"
 	Rate        int           // total writes per second
 	Duration    time.Duration // measuring time
 	Settle      time.Duration // wait for late values after the last write
@@ -291,5 +291,5 @@ func sequenceOf(payload []byte) (int64, bool) {
 
 // TopicFmtFor builds the topic format for local tags named prefix%05d.
 func TopicFmtFor(prefix, element string) string {
-	return "winccoa/local/tags/" + prefix + "%05d/" + strings.Trim(element, "/")
+	return "winccoa/this/tags/" + prefix + "%05d/" + strings.Trim(element, "/")
 }

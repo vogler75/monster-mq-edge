@@ -150,20 +150,20 @@ func TestNativeSubackPerFilter(t *testing.T) {
 	defer env.srv.Close()
 
 	filters := []packets.Subscription{
-		sub("winccoa/local/tags/Pump101/speed", 1),                // valid
-		sub("winccoa/local/tags/Nope/speed", 1),                   // missing DP
-		sub("winccoa/local/tags/_Users", 1),                       // internal DP: denied
+		sub("winccoa/this/tags/Pump101/speed", 1),                 // valid
+		sub("winccoa/this/tags/Nope/speed", 1),                    // missing DP
+		sub("winccoa/this/tags/_Users", 1),                        // internal DP: denied
 		sub("winccoa/remote/SubstationB/tags/Feeder1/voltage", 1), // unavailable remote system
-		sub("winccoa/local/tags/Pump101/+/x", 1),                  // wildcard below a leaf: accepted, matches nothing
-		sub("$share/g/winccoa/local/tags/Pump101/speed", 1),       // shared
+		sub("winccoa/this/tags/Pump101/+/x", 1),                   // wildcard below a leaf: accepted, matches nothing
+		sub("$share/g/winccoa/this/tags/Pump101/speed", 1),        // shared
 		sub("winccoa/node/this/status", 1),                        // status topic
 		sub("winccoa/cns/View/node", 1),                           // reserved CNS
-		sub("winccoa/local/tags/Pump101", 1),                      // struct root: not a value element
-		sub("winccoa/local/types/Feeder/Pump101/speed", 1),        // DPT mismatch
+		sub("winccoa/this/tags/Pump101", 1),                       // struct root: not a value element
+		sub("winccoa/this/types/Feeder/Pump101/speed", 1),         // DPT mismatch
 		sub("winccoa/remote/System1/tags/Pump101/speed", 1),       // remote name is the local system
 		sub("winccoa/tags/Pump101/speed", 1),                      // former unscoped form: ordinary topic
-		sub("winccoa/local/tags/ScalarTag", 0),                    // scalar root
-		sub("winccoa/local/tags/MMQConfigs_k1/config", 1),         // native store DP: denied
+		sub("winccoa/this/tags/ScalarTag", 0),                     // scalar root
+		sub("winccoa/this/tags/MMQConfigs_k1/config", 1),          // native store DP: denied
 	}
 	want5 := []byte{0x01, 0x8F, 0x87, 0x83, 0x01, 0x9E, 0x01, 0x83, 0x8F, 0x8F, 0x8F, 0x01, 0x00, 0x87}
 	want3 := make([]byte, len(want5))
@@ -221,9 +221,9 @@ func TestNativeInterestsAndInitialValue(t *testing.T) {
 	if err := sim.Set("System1:Pump101.speed", oahost.Value{Kind: oahost.KindFloat, Float: 42.5}); err != nil {
 		t.Fatal(err)
 	}
-	tags := "winccoa/local/tags/Pump101/speed"
-	types := "winccoa/local/types/AnalogDrive/Pump101/speed"
-	explicit := "winccoa/local/tags/Pump101/speed/_online.._value"
+	tags := "winccoa/this/tags/Pump101/speed"
+	types := "winccoa/this/types/AnalogDrive/Pump101/speed"
+	explicit := "winccoa/this/tags/Pump101/speed/_online.._value"
 
 	a, _ := dialRaw(t, env.port, rawConnect{ClientID: "ia", Version: 5, Clean: true})
 	defer a.Close()
@@ -306,7 +306,7 @@ func TestNativeOfflinePersistentSubscriber(t *testing.T) {
 	}, broker.Options{})
 	defer env.srv.Close()
 
-	topic := "winccoa/local/tags/Pump1/count"
+	topic := "winccoa/this/tags/Pump1/count"
 	a, _ := dialRaw(t, env.port, rawConnect{ClientID: "off", Version: 5, Clean: true, SessionExpiry: 3600})
 	a.Subscribe(sub(topic, 1))
 	a.NextOn(topic, 2*time.Second)
@@ -351,7 +351,7 @@ func TestNativeTypedWrites(t *testing.T) {
 	defer c.Close()
 	c.Subscribe(sub("results/#", 1))
 
-	base := "winccoa/local/tags/Pump1/"
+	base := "winccoa/this/tags/Pump1/"
 	cases := []struct {
 		elem    string
 		payload string
@@ -472,7 +472,7 @@ func TestNativeRemoteSystems(t *testing.T) {
 
 	_ = sim.Set("System1:Pump101.speed", oahost.Value{Kind: oahost.KindFloat, Float: 1})
 	_ = sim.Set("SubstationA:Pump101.speed", oahost.Value{Kind: oahost.KindFloat, Float: 2})
-	local := "winccoa/local/tags/Pump101/speed"
+	local := "winccoa/this/tags/Pump101/speed"
 	remote := "winccoa/remote/SubstationA/tags/Pump101/speed"
 
 	c, _ := dialRaw(t, env.port, rawConnect{ClientID: "rs", Version: 5, Clean: true})
@@ -530,7 +530,7 @@ func TestNativeDeletedDatapoint(t *testing.T) {
 	defer env.srv.Close()
 
 	_ = sim.Set("System1:Pump1.speed", oahost.Value{Kind: oahost.KindFloat, Float: 5})
-	topic := "winccoa/local/tags/Pump1/speed"
+	topic := "winccoa/this/tags/Pump1/speed"
 	c, _ := dialRaw(t, env.port, rawConnect{ClientID: "del", Version: 5, Clean: true})
 	defer c.Close()
 	c.Subscribe(sub(topic, 1))
@@ -577,7 +577,7 @@ func TestNativeRestoreBatches(t *testing.T) {
 	c, _ := dialRaw(t, env.port, rawConnect{ClientID: "bulk", Version: 4, Clean: false})
 	var subs []packets.Subscription
 	for i := 0; i < 250; i++ {
-		subs = append(subs, sub(fmt.Sprintf("winccoa/local/tags/Bulk%03d", i), 0))
+		subs = append(subs, sub(fmt.Sprintf("winccoa/this/tags/Bulk%03d", i), 0))
 	}
 	for i := 0; i < len(subs); i += 50 {
 		for _, code := range c.Subscribe(subs[i : i+50]...) {
@@ -624,7 +624,7 @@ func TestNativeOverload(t *testing.T) {
 	c, _ := dialRaw(t, env.port, rawConnect{ClientID: "ov", Version: 5, Clean: true})
 	defer c.Close()
 	// Warm the catalog so writes only need the DP_SET round trip.
-	if code := c.Publish(rawPub{Topic: "winccoa/local/tags/Pump1/count/set", Payload: []byte(`0`), QoS: 1}); code != 0 {
+	if code := c.Publish(rawPub{Topic: "winccoa/this/tags/Pump1/count/set", Payload: []byte(`0`), QoS: 1}); code != 0 {
 		t.Fatalf("warm-up PUBACK 0x%02x", code)
 	}
 	time.Sleep(100 * time.Millisecond)
@@ -634,7 +634,7 @@ func TestNativeOverload(t *testing.T) {
 	sim.Pause()
 	var accepted int
 	for i := 1; i <= 40; i++ {
-		code := c.Publish(rawPub{Topic: "winccoa/local/tags/Pump1/count/set", Payload: []byte(fmt.Sprintf(`{"value":%d,"id":"o%d","replyTo":"ov/res"}`, i, i)), QoS: 1})
+		code := c.Publish(rawPub{Topic: "winccoa/this/tags/Pump1/count/set", Payload: []byte(fmt.Sprintf(`{"value":%d,"id":"o%d","replyTo":"ov/res"}`, i, i)), QoS: 1})
 		if code == 0 {
 			accepted++
 		}
@@ -675,7 +675,7 @@ func TestNativeOverload(t *testing.T) {
 		t.Fatal("operations ran off the manager goroutine")
 	}
 	// Processing resumes normally.
-	if code := c.Publish(rawPub{Topic: "winccoa/local/tags/Pump1/count/set", Payload: []byte(`77`), QoS: 1}); code != 0 {
+	if code := c.Publish(rawPub{Topic: "winccoa/this/tags/Pump1/count/set", Payload: []byte(`77`), QoS: 1}); code != 0 {
 		t.Fatalf("after resume PUBACK 0x%02x", code)
 	}
 	time.Sleep(200 * time.Millisecond)
