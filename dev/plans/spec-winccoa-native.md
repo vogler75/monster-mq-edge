@@ -88,7 +88,7 @@ Element types reported by `RESOLVE`/`TYPE_CHECK` use the same numbers as value k
 
 ## 4. Topic namespace (frozen)
 
-- Native branches: `winccoa/<system>/tags/<dp>[/<elem>...][/<attr>]` and `winccoa/<system>/types/<dpt>/<dp>[/<elem>...][/<attr>]`. `<system>` is always the WinCC OA system name; the local system (the manager's own) and remote distributed systems use the same form. There is no `this` alias, so one element has one topic on every broker.
+- Native branches: `winccoa/<system>/tags/<dp>[/<elem>...][/<attr>]` and `winccoa/<system>/types/<dpt>/<dp>[/<elem>...][/<attr>]`. `winccoa`, `tags` and `types` are the defaults of `WinCCOaNative.TopicRoot`, `TagsName` and `TypesName` (section 6); everything in this section applies to the configured names. The root must not start with `$` or contain wildcards or empty levels; `TagsName`/`TypesName` are single levels, must differ and must not be `cns`. Invalid names stop the broker at startup. `<system>` is always the WinCC OA system name; the local system (the manager's own) and remote distributed systems use the same form. There is no `this` alias, so one element has one topic on every broker.
 - Broker-owned: `winccoa/<local system>` carries the broker status as retained JSON (`nodeId`, `system`, `oa`, `ready`, `role`, `timestamp`). Reserved: `winccoa/<system>/cns/...` (disabled).
 - Segment encoding: percent-encoding with uppercase hex. Only `%`, `/`, `+`, `#`, NUL, and characters below 0x20 are encoded, except that a segment spelling a reserved token (`set`, an attribute token) is written with its first character encoded to address an element of that name. Any other percent-escape or lowercase hex is noncanonical and rejected. Decoded names may not contain `.`, `:`, or control characters, and may not be empty. Case is preserved.
 - Attribute allowlist (read): `_online.._value` (default), `_online.._stime`, `_online.._status`, `_online.._invalid`. A terminal segment starting with `_` that is not in the allowlist is rejected.
@@ -144,25 +144,30 @@ A native filter with `+` or `#` after `tags/` or `types/` becomes one `dpQueryCo
 - DP names: `MMQConfigs_<enc>` / `MMQSessions_<enc>` where `<enc>` is `k` + lowercase hex of the SHA-256 of the key, first 24 hex digits, plus a collision check against the stored original key. DP lifecycle calls use this name without a trailing dot; value access uses the named elements.
 - Maximum envelope size: 256 KiB. Larger records are rejected with `MMQ_E_TOO_LARGE`. Binary will payloads are base64 in the envelope.
 - Enumeration uses `DP_NAMES` with the DPT filter, in batches of at most 1000 names per request.
+- Datapoint types: at startup the broker sends `TYPE_CHECK` with `FlagCreate` for every store type in use. The manager creates a missing type as a flat structure of the given elements (`dpTypeCreate`) and answers after the Data manager confirmed it; the broker then checks the layout until the type is known (bound 10 s). An existing type is never changed; a different layout stops the broker.
+- Retained messages (`RetainedStoreType: WINCCOA`): one `MMQRetained_<enc>` datapoint per retained topic, `<enc>` as above from the topic. Elements: `value` (blob, payload), `topic` (string, the MQTT topic; checked against the name on load), `user` (string, MQTT user name of the publisher, empty for anonymous and broker-internal publishes), `qos` (uint), `expiry` (uint, message expiry interval in seconds, 0 = none), `updated` (time). All elements are written in one confirmed `dpSet`. Topics at or below `TopicRoot` (the broker's status topics) get no datapoint and are kept in memory only. A retained publish with an empty payload, expiry and purges delete the datapoint (`dpDelete`). All retained messages are loaded at startup and served from memory; payloads are read in batches of at most 32 that are split further when an answer would exceed the 1 MiB ABI limit, which also bounds one retained payload. Changes made to these datapoints in WinCC OA while the broker runs are not picked up.
 - Unknown envelope version or corrupt JSON returns an error; the record is never overwritten implicitly.
 
-## 6. Native transport selection
+## 6. Configuration
 
 Bootstrap `config.yaml` key `WinCCOaNative` (read before any OA access):
 
 ```yaml
 WinCCOaNative:
   Enabled: true            # only effective inside the embedding manager
-  Transport: NATIVE        # NATIVE | GRAPHQL for existing WinCCOA-Client devices
   Namespace: true          # expose winccoa/<system> namespace and writes
+  TopicRoot: winccoa       # first level(s), may contain / (e.g. plant/oa)
+  TagsName: tags           # one level
+  TypesName: types         # one level, different from TagsName
   EchoPolicy: BROKER_TAG   # BROKER_TAG | NO_SOURCE
 ConfigStoreType: WINCCOA   # device + archive configs in MMQConfigs datapoints
 SessionStoreType: WINCCOA  # sessions + subscriptions in MMQSessions datapoints
+RetainedStoreType: WINCCOA # retained messages in MMQRetained datapoints
 ```
 
 `WINCCOA` is a value of the normal top-level store keys and is only accepted inside the embedding manager; a standalone broker refuses to start with it.
 
-The existing `WinCCOA-Client` device JSON is unchanged. With `Transport: NATIVE` the GraphQL endpoint fields are ignored for this node.
+`WinCCOA-Client` devices always connect through the WinCC OA GraphQL server, as in the standalone broker (the native query transport was removed on 2026-09-30). In the embedding manager a device whose output topics fall below `TopicRoot` is not started.
 
 Echo policy: `BROKER_TAG` (default) uses `dpConnect`; writes from MQTT come back as hotlinks and are published normally, and commands are only accepted from non-inline clients so OA-origin publications can never become commands. `NO_SOURCE` uses `dpConnectNoSource` and publishes the confirmed value of an accepted write from the command path.
 

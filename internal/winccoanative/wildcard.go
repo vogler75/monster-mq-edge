@@ -24,6 +24,8 @@ type WildTarget struct {
 	TypeName string   // fixed DPT; empty = any type
 	Path     []string // DP then elements; "+" = one level
 	Hash     bool     // trailing '#'
+
+	names Names // names the filter was parsed with; used for row topics
 }
 
 var ErrWildcard = errors.New("unsupported wildcard filter")
@@ -32,12 +34,12 @@ var ErrWildcard = errors.New("unsupported wildcard filter")
 const oaPatternChars = "*?[]{},'\""
 
 // ParseWildcard parses a native filter that contains '+' or '#'.
-func ParseWildcard(filter string) (WildTarget, error) {
-	var w WildTarget
-	if Classify(filter) != KindNative || !HasWildcard(filter) {
+func (n Names) ParseWildcard(filter string) (WildTarget, error) {
+	w := WildTarget{names: n}
+	if n.Classify(filter) != KindNative || !HasWildcard(filter) {
 		return w, fmt.Errorf("%w: not a native wildcard filter", ErrWildcard)
 	}
-	segs := strings.Split(filter, "/")[1:]
+	segs := strings.Split(strings.TrimPrefix(filter, n.Root+"/"), "/")
 	sys, err := decodeSegment(segs[0], false)
 	if err != nil || sys == "" {
 		return w, fmt.Errorf("%w: bad system", ErrWildcard)
@@ -45,12 +47,12 @@ func ParseWildcard(filter string) (WildTarget, error) {
 	w.System = sys
 	i := 1
 	if i >= len(segs) {
-		return w, fmt.Errorf("%w: missing tags/types", ErrWildcard)
+		return w, fmt.Errorf("%w: missing %s/%s", ErrWildcard, n.Tags, n.Types)
 	}
 	switch segs[i] {
-	case SegTags:
+	case n.Tags:
 		i++
-	case SegTypes:
+	case n.Types:
 		w.Types = true
 		i++
 		if i >= len(segs) {
@@ -73,7 +75,7 @@ func ParseWildcard(filter string) (WildTarget, error) {
 		}
 		i++
 	default:
-		return w, fmt.Errorf("%w: expected tags or types after the system", ErrWildcard)
+		return w, fmt.Errorf("%w: expected %s or %s after the system", ErrWildcard, n.Tags, n.Types)
 	}
 	rest := segs[i:]
 	for j, s := range rest {
@@ -183,7 +185,7 @@ func (w WildTarget) RowTarget(row, typeName string) (Target, bool) {
 	if dp == "" || Protected(dp) {
 		return Target{}, false
 	}
-	t := Target{System: sys, DP: dp, Attr: DefaultAttr}
+	t := Target{System: sys, DP: dp, Attr: DefaultAttr, names: w.names}
 	if w.Types {
 		t.TypeName = typeName
 	}

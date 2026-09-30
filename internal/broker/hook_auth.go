@@ -27,6 +27,7 @@ type AuthHook struct {
 	autoCreateUser          bool
 	allowAnonymousLocalhost bool
 	logger                  *slog.Logger
+	native                  winccoanative.Names // native namespace for alias checks
 }
 
 func NewAuthHook(
@@ -44,6 +45,7 @@ func NewAuthHook(
 		autoCreateUser:          autoCreateUser,
 		allowAnonymousLocalhost: allowAnonymousLocalhost,
 		logger:                  logger,
+		native:                  winccoanative.DefaultNames,
 	}
 }
 
@@ -185,7 +187,7 @@ func (h *AuthHook) OnACLCheck(cl *mqtt.Client, topic string, write bool) bool {
 	// A native WinCC OA alias (type path, explicit attribute) must never
 	// widen access: the tags form of the same element has to be allowed too.
 	// This covers subscribe filters and delivery to broad filters alike.
-	if c, ok := winccoanative.CanonicalOf(topic); ok && c != topic {
+	if c, ok := h.native.CanonicalOf(topic); ok && c != topic {
 		return h.cache.Allow(username, c, write)
 	}
 	return true

@@ -18,19 +18,30 @@ const (
 	kindSession = "session"
 )
 
-// CheckTypes verifies that the MMQConfigs / MMQSessions datapoint types
-// exist with the expected element types. A missing or different DPT stops
-// the broker from becoming ready instead of writing an incompatible layout.
-func CheckTypes(ctx context.Context, api oahost.API, needConfig, needSessions bool) error {
+// EnsureTypes creates the MMQConfigs / MMQSessions / MMQRetained datapoint
+// types that are missing and checks the layout of all of them. An existing
+// type with a different layout is never changed: it stops the broker from
+// becoming ready instead of writing an incompatible layout.
+func EnsureTypes(ctx context.Context, api oahost.API, needConfig, needSessions, needRetained bool) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	str, tim, bl := uint32(oahost.KindString), uint32(oahost.KindTime), uint32(oahost.KindBool)
-	if needConfig {
-		if err := api.TypeCheck(ctx, ConfigType, []string{"config", "type", "updated"}, []uint32{str, str, tim}); err != nil {
-			return fmt.Errorf("datapoint type %s: %w (create it with winccoa/scripts/mmqCreateTypes.ctl)", ConfigType, err)
-		}
+	types := []struct {
+		need     bool
+		name     string
+		elements []string
+		kinds    []uint32
+	}{
+		{needConfig, ConfigType, []string{"config", "type", "updated"}, []uint32{str, str, tim}},
+		{needSessions, SessionType, []string{"session", "subs", "connected", "nodeId", "updated"}, []uint32{str, str, bl, str, tim}},
+		{needRetained, RetainedType, retainedElements, retainedElementKinds()},
 	}
-	if needSessions {
-		if err := api.TypeCheck(ctx, SessionType, []string{"session", "subs", "connected", "nodeId", "updated"}, []uint32{str, str, bl, str, tim}); err != nil {
-			return fmt.Errorf("datapoint type %s: %w (create it with winccoa/scripts/mmqCreateTypes.ctl)", SessionType, err)
+	for _, t := range types {
+		if !t.need {
+			continue
+		}
+		if err := api.EnsureType(ctx, t.name, t.elements, t.kinds); err != nil {
+			return fmt.Errorf("datapoint type %s: %w (an existing type with a different layout is not changed)", t.name, err)
 		}
 	}
 	return nil
@@ -41,6 +52,7 @@ type Stores struct {
 	Device   *DeviceConfigStore
 	Archive  *ArchiveConfigStore
 	Sessions *SessionStore
+	Retained *RetainedStore
 }
 
 func New(api oahost.API, timeout time.Duration, logger *slog.Logger) *Stores {
@@ -53,6 +65,7 @@ func New(api oahost.API, timeout time.Duration, logger *slog.Logger) *Stores {
 		Device:   &DeviceConfigStore{r: cfg},
 		Archive:  &ArchiveConfigStore{r: cfg},
 		Sessions: &SessionStore{r: ses},
+		Retained: newRetainedStore(api, timeout, logger),
 	}
 }
 

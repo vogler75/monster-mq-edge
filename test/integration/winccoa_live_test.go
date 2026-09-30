@@ -252,46 +252,6 @@ func (e liveEnv) graphql(t *testing.T, query string) map[string]any {
 	return out
 }
 
-// AC-10/AC-12: a WinCCOA-Client device runs on the native transport.
-func TestLiveQueryDevice(t *testing.T) {
-	e := live(t)
-	if e.gql == 0 || e.node == "" {
-		t.Skip("MMQ_LIVE_GQL and MMQ_LIVE_NODE needed")
-	}
-	e.graphql(t, `mutation { winCCOaDevice { delete(name: "mmqlive") } }`)
-	e.set(t, "MMQLive1.count", "11", "int")
-	c := e.client(t, "live-query", 5)
-	defer c.Close()
-	c.Subscribe(sub("mmqlive/#", 0))
-	e.graphql(t, fmt.Sprintf(`mutation { winCCOaDevice { create(input: {name: "mmqlive", namespace: "mmqlive", nodeId: %q, config: {
-		addresses: [{query: "SELECT '_online.._value', '_online.._stime' FROM 'MMQLive*.count'", topic: "a", answer: true},
-		            {query: "SELECT '_online.._value' FROM 'MMQLive1.name'", topic: "b", answer: false}]}}) { success errors } } }`, e.node))
-	pk, ok := c.NextOn("mmqlive/a/MMQLive1/count", 10*time.Second)
-	if !ok {
-		t.Fatal("initial query answer not published")
-	}
-	t.Logf("initial row: %s", pk.Payload)
-	var row map[string]any
-	_ = json.Unmarshal(pk.Payload, &row)
-	if row["_online.._value"] != float64(11) || row["_online.._stime"] == nil {
-		t.Fatalf("row %s", pk.Payload)
-	}
-	if _, ok := c.NextOn("mmqlive/b/MMQLive1/name", 1*time.Second); ok {
-		t.Fatal("answer=false published an initial row")
-	}
-	e.set(t, "MMQLive1.name", "changed", "text")
-	if pk, ok := c.NextOn("mmqlive/b/MMQLive1/name", 5*time.Second); !ok || !strings.Contains(string(pk.Payload), "changed") {
-		t.Fatalf("live query row missing: %s", pk.Payload)
-	}
-	e.graphql(t, `mutation { winCCOaDevice { delete(name: "mmqlive") } }`)
-	time.Sleep(time.Second)
-	c.Drain(200 * time.Millisecond)
-	e.set(t, "MMQLive1.count", "12", "int")
-	if _, ok := c.NextOn("mmqlive/a/MMQLive1/count", 2*time.Second); ok {
-		t.Fatal("deleted device still publishes")
-	}
-}
-
 // lastStats returns the fields of the manager's latest statistics line
 // (statsSeconds must be small; MMQ_LIVE_LOG is PVSS_II.log of the project).
 func (e liveEnv) lastStats(t *testing.T, after time.Time) map[string]int {
@@ -361,31 +321,11 @@ func TestLiveNoGrowth(t *testing.T) {
 		a.Close()
 		b.Close()
 	}
-	for i := 0; i < 10; i++ {
-		e.graphql(t, fmt.Sprintf(`mutation { winCCOaDevice { create(input: {name: "grow%d", namespace: "grow", nodeId: %q, config: {addresses: [{query: "SELECT '_online.._value' FROM 'MMQLive*.speed'", topic: "g", answer: true}]}}) { success } } }`, i, e.node))
-		time.Sleep(200 * time.Millisecond)
-		e.graphql(t, fmt.Sprintf(`mutation { winCCOaDevice { delete(name: "grow%d") } }`, i))
-	}
 	time.Sleep(7 * time.Second)
 	st := e.lastStats(t, time.Now().Add(-5*time.Second))
 	t.Logf("after cycles: %v", st)
 	if st["connects"] != base["connects"] || st["queries"] != base["queries"] || st["liveCallbacks"] > base["liveCallbacks"] || st["offThreadCalls"] != 0 {
 		t.Fatalf("registrations or callbacks left: %v", st)
-	}
-}
-
-// AC-13: an invalid query never marks the device connected.
-func TestLiveInvalidQuery(t *testing.T) {
-	e := live(t)
-	e.graphql(t, `mutation { winCCOaDevice { delete(name: "badq") } }`)
-	e.graphql(t, fmt.Sprintf(`mutation { winCCOaDevice { create(input: {name: "badq", namespace: "badq", nodeId: %q, config: {addresses: [{query: "SELECT FROM WHERE", topic: "x"}]}}) { success errors } } }`, e.node))
-	defer e.graphql(t, `mutation { winCCOaDevice { delete(name: "badq") } }`)
-	time.Sleep(3 * time.Second)
-	out := e.graphql(t, `{ winCCOaClients(name: "badq") { name metrics { connected } } }`)
-	b, _ := json.Marshal(out)
-	t.Logf("%s", b)
-	if strings.Contains(string(b), `"connected":true`) {
-		t.Fatal("device with an invalid query reported connected")
 	}
 }
 

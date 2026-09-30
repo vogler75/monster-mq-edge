@@ -288,6 +288,33 @@ uint32_t kindOfElement(DpElementType et)
   }
 }
 
+DpElementType elementOfKind(uint32_t kind)
+{
+  switch (kind)
+  {
+    case KindBool:
+      return DPELEMENT_BIT;
+    case KindInt:
+      return DPELEMENT_INT;
+    case KindUint:
+      return DPELEMENT_UINT;
+    case KindFloat:
+      return DPELEMENT_FLOAT;
+    case KindString:
+      return DPELEMENT_TEXT;
+    case KindTime:
+      return DPELEMENT_TIME;
+    case KindBytes:
+      return DPELEMENT_BLOB;
+    case KindLangText:
+      return DPELEMENT_LANGTEXT;
+    case KindBit32:
+      return DPELEMENT_32BIT;
+    default:
+      return DPELEMENT_NOELEMENT;
+  }
+}
+
 Variable *decodeValue(const Field &f, DpElementType et, std::string &err)
 {
   if (f.n < 1)

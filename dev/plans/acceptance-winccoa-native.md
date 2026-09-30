@@ -54,10 +54,10 @@ Fixtures: `winccoa/scripts/mmqCreateTypes.ctl`, `mmqLiveFixture.ctl`,
 
 | AC | Status | Evidence |
 |---|---|---|
-| AC-10 | Met | Live `TestLiveQueryDevice`: `answer=true` publishes the initial row (value + stime), `answer=false` publishes none, live changes arrive; `values` flag verified by the AC-02 probe. |
-| AC-11 | Met | `TestNativeQueryParity`: native output equals the documented bridge behavior for `JSON_ISO`, `JSON_MS`, `RAW_VALUE`, two columns, float/string/blob, topic transform, retain. Live: the real 3.21 table layout (DpIdentifier header/name cells) is decoded into the same payloads (TestLiveQueryDevice). The GraphQL side-by-side comparison was removed from scope by the owner. |
-| AC-12 | Met | Live: device create/delete during traffic stops publishing and releases the registration (TestLiveQueryDevice, TestLiveNoGrowth: `queries=0`). Reload/disable/reconnect: `TestNativeQueryLifecycle`. Event connection loss terminates an API manager by design (PMON restart); after restart each device has one registration (TestLiveStoresRestart). |
-| AC-13 | Met | Live `TestLiveInvalidQuery`: OA syntax error surfaces in the log, device reports `connected: false`. Unavailable remote system: `TestNativeQueryLifecycle` (the test project has no remote systems). |
+| AC-10 | Superseded | 2026-09-30: the native query transport for `WinCCOA-Client` devices was removed; devices always use the WinCC OA GraphQL server (`TestWinCCOaClientGraphQL`, `TestWinCCOaClientReservedOutput`). Earlier evidence is in git history. |
+| AC-11 | Superseded | 2026-09-30: the native query transport for `WinCCOA-Client` devices was removed; devices always use the WinCC OA GraphQL server (`TestWinCCOaClientGraphQL`, `TestWinCCOaClientReservedOutput`). Earlier evidence is in git history. |
+| AC-12 | Superseded | 2026-09-30: the native query transport for `WinCCOA-Client` devices was removed; devices always use the WinCC OA GraphQL server (`TestWinCCOaClientGraphQL`, `TestWinCCOaClientReservedOutput`). Earlier evidence is in git history. |
+| AC-13 | Superseded | 2026-09-30: the native query transport for `WinCCOA-Client` devices was removed; devices always use the WinCC OA GraphQL server (`TestWinCCOaClientGraphQL`, `TestWinCCOaClientReservedOutput`). Earlier evidence is in git history. |
 
 ## 10.4 Native storage
 

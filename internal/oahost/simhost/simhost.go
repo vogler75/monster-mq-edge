@@ -86,6 +86,7 @@ type Host struct {
 	expired          atomic.Uint64
 	calls            map[uint32]*atomic.Uint64
 	threadViolations atomic.Uint64
+	typesCreated     atomic.Uint64
 	managerGoroutine atomic.Int64
 }
 
@@ -834,16 +835,30 @@ func (h *Host) dpNames(m oahost.Message, w *oahost.Writer) error {
 }
 
 func (h *Host) typeCheck(m oahost.Message) error {
-	t := h.types[m.String(oahost.TagTypeName)]
-	if t == nil {
-		return oahost.ErrNotFound
-	}
+	name := m.String(oahost.TagTypeName)
 	names := m.All(oahost.TagName)
 	var kinds []uint32
 	for _, f := range m.Fields {
 		if f.Tag == oahost.TagElemType && len(f.Data) == 4 {
 			kinds = append(kinds, uint32(f.Data[0])|uint32(f.Data[1])<<8|uint32(f.Data[2])<<16|uint32(f.Data[3])<<24)
 		}
+	}
+	t := h.types[name]
+	if flags, _ := m.U32(oahost.TagFlags); t == nil && flags&oahost.FlagCreate != 0 {
+		// Like the manager: create a flat structure, answer without checking.
+		nt := &Type{Name: name, Elements: map[string]uint32{"": ElemStruct}}
+		for i, n := range names {
+			if i >= len(kinds) {
+				return oahost.ErrInvalid
+			}
+			nt.Elements[string(n)] = kinds[i]
+		}
+		h.types[name] = nt
+		h.typesCreated.Add(1)
+		return nil
+	}
+	if t == nil {
+		return oahost.ErrNotFound
 	}
 	for i, n := range names {
 		k, ok := t.Elements[string(n)]
@@ -856,6 +871,9 @@ func (h *Host) typeCheck(m oahost.Message) error {
 	}
 	return nil
 }
+
+// TypesCreated counts datapoint types created through a type check.
+func (h *Host) TypesCreated() uint64 { return h.typesCreated.Load() }
 
 // ThreadViolations counts operations executed off the manager goroutine.
 func (h *Host) ThreadViolations() uint64 { return h.threadViolations.Load() }

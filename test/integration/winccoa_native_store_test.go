@@ -325,7 +325,7 @@ func TestNativeStoreSessions(t *testing.T) {
 }
 
 // AC-08: a missing or different store DPT stops startup.
-func TestNativeStoreMissingType(t *testing.T) {
+func TestNativeStoreTypes(t *testing.T) {
 	sim := simhost.New("System1", 0)
 	client := oahost.NewClient(sim, oahost.Limits{DefaultTimeout: time.Second})
 	sim.Attach(client)
@@ -346,15 +346,103 @@ func TestNativeStoreMissingType(t *testing.T) {
 	if _, err := broker.NewWithOptions(cfg, slog.New(slog.DiscardHandler), nil, broker.Options{}); err == nil || !strings.Contains(err.Error(), "WinCC OA manager") {
 		t.Fatalf("expected an error without OA, got %v", err)
 	}
+	// An existing type with a different layout is an error and stays as it is.
 	_, err := broker.NewWithOptions(cfg, slog.New(slog.DiscardHandler), nil, broker.Options{OA: client})
 	if err == nil || !strings.Contains(err.Error(), "MMQConfigs") {
-		t.Fatalf("expected a DPT error, got %v", err)
+		t.Fatalf("expected a layout error, got %v", err)
 	}
+	// Missing types are created by the manager.
 	cfg.ConfigStoreType = config.StoreSQLite
 	cfg.SessionStoreType = config.StoreWinCCOA
-	if _, err := broker.NewWithOptions(cfg, slog.New(slog.DiscardHandler), nil, broker.Options{OA: client}); err == nil || !strings.Contains(err.Error(), "MMQSessions") {
-		t.Fatalf("expected a missing DPT error, got %v", err)
+	cfg.RetainedStoreType = config.StoreWinCCOA
+	srv, err := broker.NewWithOptions(cfg, slog.New(slog.DiscardHandler), nil, broker.Options{OA: client})
+	if err != nil {
+		t.Fatalf("missing types not created: %v", err)
+	}
+	srv.Close()
+	if n := sim.TypesCreated(); n != 2 {
+		t.Fatalf("created %d types, want MMQSessions and MMQRetained", n)
+	}
+	// Once they exist, a restart creates nothing.
+	srv, err = broker.NewWithOptions(cfg, slog.New(slog.DiscardHandler), nil, broker.Options{OA: client})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.Close()
+	if n := sim.TypesCreated(); n != 2 {
+		t.Fatalf("types created again: %d", n)
 	}
 }
+
+// RetainedStoreType WINCCOA: one MMQRetained datapoint per retained topic
+// with payload and MQTT user; an empty retained publish deletes it.
+func TestNativeStoreRetained(t *testing.T) {
+	sim, client := newSim(0)
+	defer sim.Close()
+	withRetained := func(c *config.Config) { c.RetainedStoreType = config.StoreWinCCOA }
+	env := startNative(t, 27145, filepath.Join(t.TempDir(), "n.db"), sim, client, withRetained, broker.Options{})
+	if _, ok := env.srv.Storage().Retained.(*oastore.RetainedStore); !ok {
+		t.Fatalf("retained store is %T", env.srv.Storage().Retained)
+	}
+	const topic = "plant/line1/temp"
+	dp := oastore.DPName(oastore.RetainedType, "retained", topic)
+	pub, _ := dialRaw(t, env.port, rawConnect{ClientID: "ret-pub", Version: 5, Clean: true, Username: "alice", Password: "x"})
+	if code := pub.Publish(rawPub{Topic: topic, Payload: []byte("21.5"), QoS: 1, Retain: true}); code != 0 {
+		t.Fatalf("PUBACK 0x%02x", code)
+	}
+	pub.Close()
+	// The broker's own status topic is retained but gets no datapoint.
+	if _, err := sim.Get("System1:" + oastore.DPName(oastore.RetainedType, "retained", "winccoa/System1") + ".value"); err == nil {
+		t.Fatal("datapoint created for the native status topic")
+	}
+	if m, _ := env.srv.Storage().Retained.Get(context.Background(), "winccoa/System1"); m == nil {
+		t.Fatal("native status topic not retained in memory")
+	}
+	check := func(el string, want oahost.Value) {
+		t.Helper()
+		v, err := sim.Get("System1:" + dp + "." + el)
+		if err != nil {
+			t.Fatalf("%s.%s: %v", dp, el, err)
+		}
+		if v.Kind != want.Kind || v.Str != want.Str || v.Uint != want.Uint || !bytes.Equal(v.Bytes, want.Bytes) {
+			t.Fatalf("%s.%s = %+v, want %+v", dp, el, v, want)
+		}
+	}
+	check("value", oahost.Value{Kind: oahost.KindBytes, Bytes: []byte("21.5")})
+	check("topic", oahost.Value{Kind: oahost.KindString, Str: topic})
+	check("user", oahost.Value{Kind: oahost.KindString, Str: "alice"})
+	check("qos", oahost.Value{Kind: oahost.KindUint, Uint: 1})
+	env.srv.Close()
+
+	// Restart with an empty SQLite file: the retained value comes from OA.
+	env = startNative(t, 27145, filepath.Join(t.TempDir(), "n2.db"), sim, client, withRetained, broker.Options{})
+	defer env.srv.Close()
+	sub, _ := dialRaw(t, env.port, rawConnect{ClientID: "ret-sub", Version: 5, Clean: true})
+	sub.Subscribe(sub1("plant/#"))
+	pk, ok := sub.NextOn(topic, 2*time.Second)
+	if !ok || string(pk.Payload) != "21.5" || !pk.FixedHeader.Retain {
+		t.Fatalf("retained message after restart: %v %q", ok, pk.Payload)
+	}
+	sub.Close()
+
+	// An empty retained publish removes the datapoint.
+	pub, _ = dialRaw(t, env.port, rawConnect{ClientID: "ret-pub2", Version: 5, Clean: true, Username: "bob", Password: "x"})
+	defer pub.Close()
+	if code := pub.Publish(rawPub{Topic: topic, QoS: 1, Retain: true}); code != 0 {
+		t.Fatalf("clear PUBACK 0x%02x", code)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if _, err := sim.Get("System1:" + dp + ".value"); err == nil {
+		t.Fatal("retained datapoint not deleted")
+	}
+	sub, _ = dialRaw(t, env.port, rawConnect{ClientID: "ret-sub2", Version: 5, Clean: true})
+	defer sub.Close()
+	sub.Subscribe(sub1("plant/#"))
+	if pk, ok := sub.NextOn(topic, 500*time.Millisecond); ok {
+		t.Fatalf("cleared retained message delivered: %q", pk.Payload)
+	}
+}
+
+func sub1(filter string) packets.Subscription { return sub(filter, 1) }
 
 var _ = packets.Subscription{}

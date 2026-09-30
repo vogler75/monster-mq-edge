@@ -9,7 +9,7 @@ Embed `monster-mq-edge` in a WinCC OA C++ API Manager through an isolated C ABI.
 ### 1.1 Objectives
 
 1. Remove the GraphQL/WebSocket transport between the broker and the local WinCC OA manager. C ABI calls still incur scheduling, copying, conversion, and potentially JSON serialization; latency and throughput improvements must be measured.
-2. Preserve the existing WinCC OA query bridge's query, initial-answer, topic transformation, retained-message, and payload-format behavior using a native transport.
+2. Preserve the existing WinCC OA query bridge's query, initial-answer, topic transformation, retained-message, and payload-format behavior using a native transport. *(Removed 2026-09-30: `WinCCOA-Client` devices always use the WinCC OA GraphQL server; `WinCCOaNative.Transport` no longer exists.)*
 3. Optionally persist device/archive/database-connection configuration and session metadata in `MMQConfigs` and `MMQSessions` datapoints.
 4. Expose tag/type MQTT namespaces under `winccoa/<systemname>/`, validated subscriptions, and typed writes. Reserve `winccoa/<systemname>/cns/` for the separate future CNS feature.
 5. Optionally support a WinCC OA redundant pair, with explicit durability, recovery, and write-ownership rules.
@@ -171,7 +171,7 @@ CNS is deferred and is not part of milestones M0–M7 or a prerequisite for rele
 
 ### 6.1 Baseline configured queries
 
-Reuse `internal/bridge/winccoa/` address configuration (`query`, `topic`, `answer`, `retained`) and publisher transformations/formats. Compare output with the Kotlin `WinCCOaConnector.kt` implementation under `../main/` in this workspace. Select native transport through host configuration/injection, subject to section 1.2; do not fake a GraphQL endpoint as a native transport selector.
+Reuse `internal/bridge/winccoa/` address configuration (`query`, `topic`, `answer`, `retained`) and publisher transformations/formats. Compare output with the Kotlin `WinCCOaConnector.kt` implementation under `../main/` in this workspace. Select native transport through host configuration/injection, subject to section 1.2; do not fake a GraphQL endpoint as a native transport selector. *(Removed 2026-09-30, see goal 2.)*
 
 Register `dpQueryConnectSingle` on the manager thread. Confirm the chosen SDK's initial-answer and ongoing-hotlink dispatch mechanism with a minimal live example before finalizing the listener. A plain `WaitForAnswer::callBack(DpMsgAnswer&)` must not be assumed to receive every later update. Use the SDK-supported hotlink handler and capture the returned/confirmed query ID. Treat registration-send failure and asynchronous registration error separately.
 

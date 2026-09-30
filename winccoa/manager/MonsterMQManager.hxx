@@ -99,7 +99,7 @@ class SetBatchWait : public WaitForAnswer
 class RequestWait : public WaitForAnswer
 {
   public:
-    enum Kind { Set, Get, Create, Delete };
+    enum Kind { Set, Get, Create, Delete, TypeCreate };
     RequestWait(MonsterMQManager *m, Kind k, uint64_t reqId, const std::string &name = std::string());
     ~RequestWait() override;
     void callBack(DpMsgAnswer &answer) override;
@@ -242,7 +242,8 @@ class MonsterMQManager : public Manager
     int32_t opDpNames(const mmq::Message &m, mmq::Writer &w, std::string &err);
     void opDpCreate(uint64_t reqId, const mmq::Message &m);
     void opDpDelete(uint64_t reqId, const mmq::Message &m);
-    int32_t opTypeCheck(const mmq::Message &m, std::string &err);
+    void opTypeCheck(uint64_t reqId, const mmq::Message &m);
+    int32_t checkType(const mmq::Message &m, std::string &err);
 
     void connectDistState();
     void reportDpChange(SystemNumType system, DpIdType dp, DpTypeId type);

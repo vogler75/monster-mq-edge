@@ -26,7 +26,7 @@ type wildQuery struct {
 
 // parseWild parses a wildcard filter and binds it to the local system.
 func (s *Service) parseWild(filter string) (WildTarget, error) {
-	w, err := ParseWildcard(filter)
+	w, err := s.opts.Names.ParseWildcard(filter)
 	w.Remote = err == nil && w.System != s.localSystem
 	return w, err
 }

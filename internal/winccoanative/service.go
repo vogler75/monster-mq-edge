@@ -43,6 +43,8 @@ type Broker interface {
 }
 
 type Options struct {
+	// Names are the topic levels of the namespace; zero means DefaultNames.
+	Names          Names
 	NodeID         string
 	NoSource       bool
 	ResolveTimeout time.Duration
@@ -65,6 +67,7 @@ type Options struct {
 }
 
 func (o *Options) defaults() {
+	o.Names = o.Names.WithDefaults()
 	if o.ResolveTimeout <= 0 {
 		o.ResolveTimeout = 5 * time.Second
 	}
@@ -260,7 +263,7 @@ func (s *Service) LocalSystem() string { return s.localSystem }
 // thread (bounded by ResolveTimeout) and must not be called from it.
 func (s *Service) Validate(filter string) (Verdict, string) {
 	f, shared := SplitShared(filter)
-	switch Classify(f) {
+	switch s.opts.Names.Classify(f) {
 	case KindOther:
 		return NotNative, ""
 	case KindCNS:
@@ -277,7 +280,7 @@ func (s *Service) Validate(filter string) (Verdict, string) {
 	if HasWildcard(f) {
 		return s.validateWild(f)
 	}
-	t, err := Parse(f)
+	t, err := s.opts.Names.Parse(f)
 	if err != nil {
 		return Invalid, err.Error()
 	}
@@ -289,13 +292,13 @@ func (s *Service) Validate(filter string) (Verdict, string) {
 }
 
 // Storage datapoint types of the native stores; never exposed as tags.
-var protectedTypes = map[string]bool{"MMQConfigs": true, "MMQSessions": true}
+var protectedTypes = map[string]bool{"MMQConfigs": true, "MMQSessions": true, "MMQRetained": true}
 
 // Protected reports datapoints that the namespace never exposes: OA
 // internal datapoints (leading underscore, e.g. _Users) and the native
 // store datapoints.
 func Protected(dp string) bool {
-	return strings.HasPrefix(dp, "_") || strings.HasPrefix(dp, "MMQConfigs_") || strings.HasPrefix(dp, "MMQSessions_")
+	return strings.HasPrefix(dp, "_") || strings.HasPrefix(dp, "MMQConfigs_") || strings.HasPrefix(dp, "MMQSessions_") || strings.HasPrefix(dp, "MMQRetained_")
 }
 
 // CanonicalTopic is the tags-form topic of t (type path and default
@@ -313,11 +316,11 @@ func CanonicalTopic(t Target) string {
 
 // CanonicalOf returns the canonical tags-form topic of an exact native
 // topic; ok is false for other topics and filters with wildcards.
-func CanonicalOf(topic string) (string, bool) {
-	if Classify(topic) != KindNative || HasWildcard(topic) {
+func (n Names) CanonicalOf(topic string) (string, bool) {
+	if n.Classify(topic) != KindNative || HasWildcard(topic) {
 		return "", false
 	}
-	t, err := Parse(topic)
+	t, err := n.Parse(topic)
 	if err != nil {
 		return "", false
 	}
@@ -388,14 +391,14 @@ func (s *Service) lookup(name string) (oahost.Resolution, error) {
 // handling 1).
 func (s *Service) Subscribed(clientID, filter string, existed bool) {
 	f, shared := SplitShared(filter)
-	if shared || Classify(f) != KindNative {
+	if shared || s.opts.Names.Classify(f) != KindNative {
 		return
 	}
 	if HasWildcard(f) {
 		s.subscribedWild(clientID, f, existed, false, false)
 		return
 	}
-	t, err := Parse(f)
+	t, err := s.opts.Names.Parse(f)
 	if err != nil || t.Command {
 		return
 	}
@@ -524,7 +527,7 @@ func (s *Service) Restore(subs map[string][]string) (invalid map[string][]string
 				// the registration is retried.
 				f, _ := SplitShared(filter)
 				switch {
-				case Classify(f) != KindNative:
+				case s.opts.Names.Classify(f) != KindNative:
 				case HasWildcard(f):
 					s.subscribedWild(client, f, false, true, v == Unavailable)
 				default:
@@ -541,7 +544,7 @@ func (s *Service) Restore(subs map[string][]string) (invalid map[string][]string
 }
 
 func (s *Service) addRestored(clientID, filter string) {
-	t, err := Parse(filter)
+	t, err := s.opts.Names.Parse(filter)
 	if err != nil {
 		return
 	}
@@ -901,7 +904,7 @@ func (s *Service) targetForKey(key string) (Target, error) {
 	if topic == "" {
 		return Target{}, errors.New("no topic")
 	}
-	return Parse(topic)
+	return s.opts.Names.Parse(topic)
 }
 
 // CommandResult is the JSON published to the reply topic.
@@ -925,7 +928,7 @@ type ReplyPublisher func(r Reply, payload []byte)
 // The returned verdict decides the PUBACK; Accept means the command was
 // submitted (or was a duplicate whose earlier result was re-sent).
 func (s *Service) Command(clientID, topic string, payload []byte, retain bool, reply Reply, send ReplyPublisher) (Verdict, string) {
-	t, err := Parse(topic)
+	t, err := s.opts.Names.Parse(topic)
 	if err != nil {
 		return Invalid, err.Error()
 	}
@@ -1046,22 +1049,25 @@ func (s *Service) PublishStatus() {
 	}
 	b, _ := json.Marshal(st)
 	if s.localSystem != "" {
-		_ = s.broker.Publish(StatusTopic(s.localSystem), b, true, 1)
+		_ = s.broker.Publish(s.opts.Names.StatusTopic(s.localSystem), b, true, 1)
 	}
 }
 
 // StatusTopic is the retained status topic of a system: winccoa/<system>.
-func StatusTopic(system string) string { return Root + "/" + encodeSegment(system, false) }
+func (n Names) StatusTopic(system string) string { return n.Root + "/" + encodeSegment(system, false) }
+
+// Names returns the topic levels the service uses.
+func (s *Service) Names() Names { return s.opts.Names }
 
 // StaleStatusClear reports whether a publish removes a retained status
 // this broker does not own: a retained empty payload on winccoa/<system>
 // for a system other than the local one (e.g. left behind after the
 // project's system name changed).
 func (s *Service) StaleStatusClear(topic string, retain bool, payload []byte) bool {
-	if !retain || len(payload) != 0 || Classify(topic) != KindStatus {
+	if !retain || len(payload) != 0 || s.opts.Names.Classify(topic) != KindStatus {
 		return false
 	}
-	return topic != StatusTopic(s.localSystem)
+	return topic != s.opts.Names.StatusTopic(s.localSystem)
 }
 
 func (s *Service) Stats() Stats {

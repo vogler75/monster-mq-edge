@@ -1,7 +1,6 @@
 package integration
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
 	"net"
@@ -13,7 +12,6 @@ import (
 
 	"monstermq.io/edge/internal/broker"
 	"monstermq.io/edge/internal/config"
-	"monstermq.io/edge/internal/stores"
 )
 
 func portFree(t *testing.T, port int) bool {
@@ -78,12 +76,8 @@ func TestNativeStartupFailures(t *testing.T) {
 func TestNativeNoGrowth(t *testing.T) {
 	sim, client := newSim(0)
 	defer sim.Close()
-	env := startNative(t, 27161, filepath.Join(t.TempDir(), "n.db"), sim, client, func(c *config.Config) {
-		c.Features.WinCCOa = true
-		c.WinCCOaNative.Transport = config.WinCCOaTransportNative
-	}, broker.Options{})
+	env := startNative(t, 27161, filepath.Join(t.TempDir(), "n.db"), sim, client, nil, broker.Options{})
 	defer env.srv.Close()
-	ctx := context.Background()
 
 	cycle := func(i int) {
 		c, _ := dialRaw(t, env.port, rawConnect{ClientID: fmt.Sprintf("g%d", i%5), Version: 5, Clean: true})
@@ -91,18 +85,8 @@ func TestNativeNoGrowth(t *testing.T) {
 		c.Unsubscribe("winccoa/System1/tags/Pump1/speed")
 		c.Close() // clean session: remaining interest released on disconnect
 	}
-	reload := func(i int) {
-		cfg := fmt.Sprintf(`{"addresses":[{"query":"SELECT '_online.._value' FROM 'Pump*.speed'","topic":"q%d","answer":true}]}`, i)
-		if err := env.srv.Storage().DeviceConfig.Save(ctx, stores.DeviceConfig{Name: "oa", Namespace: "ns", NodeID: "n-27161", Type: "WinCCOA-Client", Enabled: true, Config: cfg}); err != nil {
-			t.Fatal(err)
-		}
-		if err := env.srv.WinCCOa().Reload(ctx); err != nil {
-			t.Fatal(err)
-		}
-	}
 	for i := 0; i < 20; i++ {
 		cycle(i)
-		reload(i)
 	}
 	time.Sleep(500 * time.Millisecond)
 	runtime.GC()
@@ -111,9 +95,6 @@ func TestNativeNoGrowth(t *testing.T) {
 
 	for i := 20; i < 220; i++ {
 		cycle(i)
-		if i%10 == 0 {
-			reload(i)
-		}
 	}
 	time.Sleep(800 * time.Millisecond)
 	runtime.GC()
@@ -121,8 +102,8 @@ func TestNativeNoGrowth(t *testing.T) {
 	if n := sim.Connections(); n != 0 {
 		t.Errorf("dpConnect registrations left: %d", n)
 	}
-	if n := sim.Queries(); n != 1 {
-		t.Errorf("query registrations: %d, want the one live device query", n)
+	if n := sim.Queries(); n != 0 {
+		t.Errorf("query registrations left: %d", n)
 	}
 	if st := env.srv.Native().Stats(); st.Interests != 0 || st.DPEs != 0 || st.Batches != 0 {
 		t.Errorf("native state left: %+v", st)

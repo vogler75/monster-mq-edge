@@ -190,8 +190,13 @@ func TestWinCCOaStoresLegacyKeyRejected(t *testing.T) {
 	if err := cfg.Validate(); err != nil || !cfg.UsesWinCCOaStores() {
 		t.Fatalf("WINCCOA store types: %v", err)
 	}
+	cfg.ConfigStoreType, cfg.SessionStoreType = StoreSQLite, StoreSQLite
 	cfg.RetainedStoreType = StoreWinCCOA
+	if err := cfg.Validate(); err != nil || !cfg.UsesWinCCOaStores() {
+		t.Fatalf("RetainedStoreType WINCCOA: %v", err)
+	}
+	cfg.QueueStoreType = StoreWinCCOA
 	if err := cfg.Validate(); err == nil {
-		t.Fatal("RetainedStoreType WINCCOA must be rejected")
+		t.Fatal("QueueStoreType WINCCOA must be rejected")
 	}
 }

@@ -15,6 +15,7 @@
 #include <DpIdentification.hxx>
 #include <DpType.hxx>
 #include <DpTypeContainer.hxx>
+#include <DpTypeDefinition.hxx>
 #include <DpTypeNode.hxx>
 #include <DpVCItem.hxx>
 #include <DynVar.hxx>
@@ -411,8 +412,7 @@ bool MonsterMQManager::process(const Pending &p)
       opDpDelete(p.id, m);
       return true;
     case OpTypeCheck:
-      st = opTypeCheck(m, err);
-      complete(p.id, st, nullptr, err);
+      opTypeCheck(p.id, m);
       return true;
   }
   complete(p.id, MMQ_E_INVALID, nullptr, "unknown operation " + std::to_string(op));
@@ -881,6 +881,8 @@ void MonsterMQManager::onRequestAnswer(RequestWait::Kind kind, uint64_t reqId, c
         w.value(TagValue, item->getValuePtr());
   if (kind == RequestWait::Create)
     recentCreates[name] = std::chrono::steady_clock::now();
+  if (kind == RequestWait::TypeCreate)
+    logLine(MMQ_LOG_INFO, "created datapoint type " + name);
   complete(reqId, MMQ_OK, &w);
 }
 
@@ -952,7 +954,43 @@ void MonsterMQManager::opDpDelete(uint64_t reqId, const Message &m)
     complete(reqId, MMQ_E_OA, nullptr, "dpDelete message not sent");
 }
 
-int32_t MonsterMQManager::opTypeCheck(const Message &m, std::string &err)
+// opTypeCheck checks a type's layout. With FlagCreate a missing type is
+// created from the given element names and kinds (a flat structure); an
+// existing type is never changed. The broker checks the layout again once
+// the new type is known.
+void MonsterMQManager::opTypeCheck(uint64_t reqId, const Message &m)
+{
+  std::string type = m.str(TagTypeName), err;
+  uint32_t flags = 0;
+  m.u32(TagFlags, flags);
+  DpTypeId tid = 0;
+  if ((flags & FlagCreate) && !getTypeId(CharString(type.c_str()), tid))
+  {
+    DpTypeDefinition def(CharString(type.c_str()), DPELEMENT_RECORD);
+    std::vector<const Field *> names = m.all(TagName), kinds = m.all(TagElemType);
+    for (size_t i = 0; i < names.size(); i++)
+    {
+      uint32_t kind = ElemUnsupported;
+      if (i < kinds.size() && kinds[i]->n == 4)
+        memcpy(&kind, kinds[i]->p, 4);
+      std::string el = fieldString(names[i]);
+      DpElementType et = elementOfKind(kind);
+      if (et == DPELEMENT_NOELEMENT || !def.addChild(CharString(el.c_str()), et))
+      {
+        complete(reqId, MMQ_E_INVALID, nullptr, "cannot create element " + type + "." + el);
+        return;
+      }
+    }
+    // The framework deletes the answer object.
+    if (!dpTypeCreate(def, new RequestWait(this, RequestWait::TypeCreate, reqId, type)))
+      complete(reqId, MMQ_E_OA, nullptr, "dpTypeCreate message not sent");
+    return;
+  }
+  int32_t st = checkType(m, err);
+  complete(reqId, st, nullptr, err);
+}
+
+int32_t MonsterMQManager::checkType(const Message &m, std::string &err)
 {
   std::string type = m.str(TagTypeName);
   DpTypeId tid = 0;

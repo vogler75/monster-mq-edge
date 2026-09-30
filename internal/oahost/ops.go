@@ -3,6 +3,7 @@ package oahost
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -31,6 +32,7 @@ const (
 	FlagNoSource uint32 = 1 << 1 // connect: dpConnectNoSource
 	FlagWait     uint32 = 1 << 2 // set: require the OA answer (always set by this package)
 	FlagMore     uint32 = 1 << 3 // event: the query answer continues in another event
+	FlagCreate   uint32 = 1 << 4 // type check: create a missing type from the given elements
 )
 
 // Resolution is the answer to OpResolve for one name.
@@ -320,6 +322,39 @@ func (a API) TypeCheck(ctx context.Context, typeName string, elements []string, 
 	_, err := a.call(ctx, &w, 0)
 	a.logCall("typeCheck", start, err, "type", typeName, "elements", nameList(elements))
 	return err
+}
+
+// EnsureType creates typeName as a flat structure of the given elements
+// when it does not exist, then checks its layout. An existing type is never
+// changed; a different layout is reported like TypeCheck does.
+func (a API) EnsureType(ctx context.Context, typeName string, elements []string, elemTypes []uint32) error {
+	var w Writer
+	w.U32(TagOp, OpTypeCheck)
+	w.U32(TagFlags, FlagCreate)
+	w.String(TagTypeName, typeName)
+	for i, e := range elements {
+		w.String(TagName, e)
+		w.U32(TagElemType, elemTypes[i])
+	}
+	start := time.Now()
+	_, err := a.call(ctx, &w, 0)
+	a.logCall("ensureType", start, err, "type", typeName, "elements", nameList(elements))
+	if err != nil {
+		return err
+	}
+	// A created type reaches the manager's type container shortly after
+	// the answer; check until it is known.
+	for {
+		err = a.TypeCheck(ctx, typeName, elements, elemTypes)
+		if !errors.Is(err, ErrNotFound) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
 }
 
 // HotlinkItems decodes a DP_CONNECT event: repeated (name, value) pairs.

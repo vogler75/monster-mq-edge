@@ -43,11 +43,11 @@ The standalone broker is unaffected: `make build`, `build-arm64` and
 ## Project setup
 
 1. Copy `WCCOAmmq` to `<project>/bin`.
-2. Create the store datapoint types once (needed only with `ConfigStoreType: WINCCOA`
-   or `SessionStoreType: WINCCOA`):
-   `WCCOActrl -proj <project> <repo>/winccoa/scripts/mmqCreateTypes.ctl`
-   (or copy the script to `<project>/scripts`). The broker checks the
-   layout at startup and refuses to start with a missing or different type.
+2. The store datapoint types (`MMQConfigs`, `MMQSessions`, `MMQRetained`)
+   are created by the manager at startup when a store type is `WINCCOA` and
+   the type is missing. An existing type is never changed: with a different
+   layout the broker refuses to start. `winccoa/scripts/mmqCreateTypes.ctl`
+   creates the same types manually, e.g. to prepare a project.
 3. Copy `monstermq.yaml.example` to `<project>/config/monstermq.yaml` and
    adjust ports, users and stores. The manager runs in the project
    directory, so relative paths in it (`SQLite.Path`, key stores) resolve
@@ -126,6 +126,24 @@ go to the WinCC OA log with the `MonsterMQ` prefix.
   native subscriptions from the stores and revalidates them against the
   current datapoints.
 
+## Topic names
+
+`winccoa`, `tags` and `types` are defaults and can be changed in
+`monstermq.yaml`:
+
+```yaml
+WinCCOaNative:
+  TopicRoot: plant/oa   # may have several levels
+  TagsName: t
+  TypesName: dpt
+```
+
+This gives `plant/oa/System1/t/Pump1/speed`,
+`plant/oa/System1/dpt/Pump/Pump1/speed` and the status topic
+`plant/oa/System1`. The whole `TopicRoot` branch is reserved for the
+broker; the default `winccoa` becomes an ordinary topic. Clients' ACLs and
+persisted subscriptions refer to topics, so they have to follow a rename.
+
 ## Wildcard subscriptions
 
 Wildcards inside `winccoa/<System>/tags/` and `winccoa/<System>/types/` are
@@ -165,12 +183,36 @@ disconnect variant deletes the callback object.
 ## Backup and restore
 
 The native stores keep configuration and session metadata in `MMQConfigs_*`
-and `MMQSessions_*` datapoints. Include them in the project's ASCII export
-(`WCCOAascii -out ... -filterDp "MMQ*"`) or database backup. They do not
-contain queued messages, retained messages or MQTT inflight state; those
+and `MMQSessions_*` datapoints, and with `RetainedStoreType: WINCCOA` the
+retained messages in `MMQRetained_*` datapoints. Include them in the
+project's ASCII export (`WCCOAascii -out ... -filterDp "MMQ*"`) or database
+backup. They do not contain queued messages or MQTT inflight state; those
 stay in the configured SQL store (`SQLite.Path` by default) and need their
-own backup. A restore of the datapoints alone restores configuration and
-session/subscription metadata only.
+own backup.
+
+## Retained messages in WinCC OA
+
+With `RetainedStoreType: WINCCOA` every retained topic is one datapoint of
+type `MMQRetained` (created by the manager when missing):
+
+| Element | Type | Content |
+|---|---|---|
+| `value` | blob | payload |
+| `topic` | string | MQTT topic (the datapoint name is a hash of it) |
+| `user` | string | MQTT user that published the value (empty for anonymous and broker-internal publishes) |
+| `qos` | uint | QoS of the publish |
+| `expiry` | uint | message expiry interval in seconds, 0 = none |
+| `updated` | time | time of the publish |
+
+Retained messages below `TopicRoot` (the broker's own status topics such as
+`winccoa/System1`) get no datapoint: they are kept in memory only and
+republished by the broker at startup.
+
+A retained publish with an empty payload deletes the datapoint, as do
+message expiry and retention purges. The broker loads all retained messages
+at startup and serves subscriptions from memory; edits made to these
+datapoints in WinCC OA while it runs are not picked up. One payload is
+limited to just under 1 MiB (the manager's message limit).
 
 ## Load and soak
 

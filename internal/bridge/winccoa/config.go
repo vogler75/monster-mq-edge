@@ -194,19 +194,6 @@ func (c *ConnectionConfig) Validate() []string {
 	return errs
 }
 
-// ValidateNative validates the fields the native transport uses; endpoint
-// and credential fields belong to the GraphQL transport and are ignored.
-func (c *ConnectionConfig) ValidateNative() []string {
-	var errs []string
-	for _, e := range c.Validate() {
-		if strings.HasPrefix(e, "graphqlEndpoint") || strings.HasPrefix(e, "username and password") {
-			continue
-		}
-		errs = append(errs, e)
-	}
-	return errs
-}
-
 func (c *ConnectionConfig) WebSocketEndpoint() string {
 	if c.WebsocketEndpoint != "" {
 		return c.WebsocketEndpoint

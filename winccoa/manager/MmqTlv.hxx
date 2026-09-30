@@ -41,6 +41,7 @@ enum Op : uint32_t
 const uint32_t FlagAnswer = 1u << 0;
 const uint32_t FlagNoSource = 1u << 1;
 const uint32_t FlagMore = 1u << 3;  // query answer continues in another event
+const uint32_t FlagCreate = 1u << 4;  // type check: create a missing type with the given elements
 
 class Writer
 {
@@ -92,6 +93,8 @@ std::string fieldString(const Field *f);
 
 // Maps an OA element type to the kind number reported to Go.
 uint32_t kindOfElement(DpElementType et);
+// elementOfKind is the element type created for a value kind (type creation).
+DpElementType elementOfKind(uint32_t kind);
 
 // Creates a new Variable of the element's type from an encoded TLV value.
 // Returns nullptr and sets err when the kinds do not match exactly.

@@ -15,8 +15,9 @@ const (
 	StoreSQLite   StoreType = "SQLITE"
 	StorePostgres StoreType = "POSTGRES"
 	StoreMongoDB  StoreType = "MONGODB"
-	// StoreWinCCOA keeps configs (ConfigStoreType) or sessions
-	// (SessionStoreType) in WinCC OA datapoints; only in the WinCC OA manager.
+	// StoreWinCCOA keeps configs (ConfigStoreType), sessions
+	// (SessionStoreType) or retained messages (RetainedStoreType) in WinCC OA
+	// datapoints; only in the WinCC OA manager.
 	StoreWinCCOA StoreType = "WINCCOA"
 )
 
@@ -228,8 +229,10 @@ type FeaturesConfig struct {
 // ignored by the standalone binary, which has no embedding host.
 type WinCCOaNativeConfig struct {
 	Enabled    bool   `yaml:"Enabled"`
-	Transport  string `yaml:"Transport"`  // NATIVE | GRAPHQL for WinCCOA-Client devices
-	Namespace  bool   `yaml:"Namespace"`  // winccoa/<system> namespace and writes
+	Namespace  bool   `yaml:"Namespace"`  // <TopicRoot>/<system> namespace and writes
+	TopicRoot  string `yaml:"TopicRoot"`  // first topic level(s), default "winccoa"
+	TagsName   string `yaml:"TagsName"`   // level for tag access, default "tags"
+	TypesName  string `yaml:"TypesName"`  // level for type access, default "types"
 	EchoPolicy string `yaml:"EchoPolicy"` // BROKER_TAG | NO_SOURCE
 
 	// LegacyStores is the removed Stores list; set only to reject old configs.
@@ -237,23 +240,22 @@ type WinCCOaNativeConfig struct {
 }
 
 const (
-	WinCCOaTransportNative  = "NATIVE"
-	WinCCOaTransportGraphQL = "GRAPHQL"
-	WinCCOaEchoBrokerTag    = "BROKER_TAG"
-	WinCCOaEchoNoSource     = "NO_SOURCE"
+	WinCCOaEchoBrokerTag = "BROKER_TAG"
+	WinCCOaEchoNoSource  = "NO_SOURCE"
 )
 
 func (w *WinCCOaNativeConfig) validate() error {
-	if w.Transport == "" {
-		w.Transport = WinCCOaTransportNative
-	}
 	if w.EchoPolicy == "" {
 		w.EchoPolicy = WinCCOaEchoBrokerTag
 	}
-	switch w.Transport {
-	case WinCCOaTransportNative, WinCCOaTransportGraphQL:
-	default:
-		return fmt.Errorf("WinCCOaNative.Transport %q must be NATIVE or GRAPHQL", w.Transport)
+	if w.TopicRoot == "" {
+		w.TopicRoot = "winccoa"
+	}
+	if w.TagsName == "" {
+		w.TagsName = "tags"
+	}
+	if w.TypesName == "" {
+		w.TypesName = "types"
 	}
 	switch w.EchoPolicy {
 	case WinCCOaEchoBrokerTag, WinCCOaEchoNoSource:
@@ -271,10 +273,10 @@ func (c *Config) AllowRootWildcard() bool {
 	return c.AllowRootWildcardSubscription == nil || *c.AllowRootWildcardSubscription
 }
 
-// UsesWinCCOaStores reports whether configs or sessions are kept in WinCC OA
-// datapoints (ConfigStoreType / SessionStoreType WINCCOA).
+// UsesWinCCOaStores reports whether configs, sessions or retained messages
+// are kept in WinCC OA datapoints (store type WINCCOA).
 func (c *Config) UsesWinCCOaStores() bool {
-	return c.ConfigStore() == StoreWinCCOA || c.SessionStore() == StoreWinCCOA
+	return c.ConfigStore() == StoreWinCCOA || c.SessionStore() == StoreWinCCOA || c.RetainedStore() == StoreWinCCOA
 }
 
 type PythonScriptsConfig struct {
@@ -477,8 +479,8 @@ func (c *Config) Validate() error {
 	if c.ConfigStoreType != "" && c.ConfigStoreType != StoreWinCCOA && !c.ConfigStoreType.isValidBackend() {
 		return fmt.Errorf("invalid ConfigStoreType %q (must be one of SQLITE, POSTGRES, MONGODB, WINCCOA)", c.ConfigStoreType)
 	}
-	if c.RetainedStoreType != "" && !c.RetainedStoreType.isValidRetainedBackend() {
-		return fmt.Errorf("invalid RetainedStoreType %q (must be one of SQLITE, POSTGRES, MONGODB, MEMORY)", c.RetainedStoreType)
+	if c.RetainedStoreType != "" && c.RetainedStoreType != StoreWinCCOA && !c.RetainedStoreType.isValidRetainedBackend() {
+		return fmt.Errorf("invalid RetainedStoreType %q (must be one of SQLITE, POSTGRES, MONGODB, MEMORY, WINCCOA)", c.RetainedStoreType)
 	}
 	if c.SessionStoreType != "" && c.SessionStoreType != StoreWinCCOA && !c.SessionStoreType.isValidVolatileBackend() {
 		return fmt.Errorf("invalid SessionStoreType %q (must be one of SQLITE, POSTGRES, MONGODB, MEMORY, WINCCOA)", c.SessionStoreType)

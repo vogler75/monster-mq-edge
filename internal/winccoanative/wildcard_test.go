@@ -20,7 +20,7 @@ func TestWildcardQueries(t *testing.T) {
 		{"winccoa/SubA/tags/Feeder1/#", `SELECT '_online.._value', '_online.._stime' FROM 'Feeder1.**' REMOTE 'SubA'`, false},
 	}
 	for _, c := range cases {
-		w, err := ParseWildcard(c.filter)
+		w, err := DefaultNames.ParseWildcard(c.filter)
 		if err != nil {
 			t.Fatalf("%s: %v", c.filter, err)
 		}
@@ -37,15 +37,15 @@ func TestWildcardQueries(t *testing.T) {
 		"winccoa/System1/tags/_Users/#", "winccoa/System1/tags/Pump1/+/_online.._stime",
 		"winccoa/System1/tags/Pu*mp/#", "winccoa/System1/#", "winccoa/System1/tags/Pump1/+/set",
 	} {
-		if _, err := ParseWildcard(bad); err == nil {
+		if _, err := DefaultNames.ParseWildcard(bad); err == nil {
 			t.Errorf("%s: expected error", bad)
 		}
 	}
-	w, _ := ParseWildcard("winccoa/System1/types/Pump/#")
+	w, _ := DefaultNames.ParseWildcard("winccoa/System1/types/Pump/#")
 	if tg, ok := w.RowTarget("System1:Pump7.value.speed", "Pump"); !ok || tg.Topic() != "winccoa/System1/types/Pump/Pump7/value/speed" {
 		t.Fatalf("row topic %v %q", ok, tg.Topic())
 	}
-	w, _ = ParseWildcard("winccoa/System1/tags/#")
+	w, _ = DefaultNames.ParseWildcard("winccoa/System1/tags/#")
 	if tg, ok := w.RowTarget("System1:Scalar.", ""); !ok || tg.Topic() != "winccoa/System1/tags/Scalar" {
 		t.Fatalf("scalar row %q", tg.Topic())
 	}

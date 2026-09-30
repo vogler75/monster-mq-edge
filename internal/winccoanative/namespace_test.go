@@ -25,7 +25,7 @@ func TestParseResolutionForms(t *testing.T) {
 		{"winccoa/System1/tags/A%2FB/x", "System1:A/B.x:_online.._value", "", false},
 	}
 	for _, c := range cases {
-		tg, err := Parse(c.topic)
+		tg, err := DefaultNames.Parse(c.topic)
 		if err != nil {
 			t.Fatalf("%s: %v", c.topic, err)
 		}
@@ -46,7 +46,7 @@ func TestParseResolutionForms(t *testing.T) {
 }
 
 func TestParseNeverDoubleDot(t *testing.T) {
-	tg, err := Parse("winccoa/System1/tags/Pump101/speed")
+	tg, err := DefaultNames.Parse("winccoa/System1/tags/Pump101/speed")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestParseRejects(t *testing.T) {
 		"winccoa/System1/tags/Pump%2",     // truncated escape
 	}
 	for _, b := range bad {
-		if _, err := Parse(b); err == nil {
+		if _, err := DefaultNames.Parse(b); err == nil {
 			t.Errorf("%s: expected error", b)
 		}
 	}
@@ -98,7 +98,7 @@ func TestClassify(t *testing.T) {
 		"plant/winccoa/System1/tags/a": KindOther,
 	}
 	for topic, want := range cases {
-		if got := Classify(topic); got != want {
+		if got := DefaultNames.Classify(topic); got != want {
 			t.Errorf("%s: got %v want %v", topic, got, want)
 		}
 	}
@@ -108,12 +108,71 @@ func TestClassify(t *testing.T) {
 }
 
 func TestErrorKinds(t *testing.T) {
-	_, err := Parse("winccoa/System1/tags/Pump%41/x")
+	_, err := DefaultNames.Parse("winccoa/System1/tags/Pump%41/x")
 	if !errors.Is(err, ErrNoncanonical) {
 		t.Fatalf("got %v", err)
 	}
-	_, err = Parse("winccoa/System1/tags/Pump/_config.._x")
+	_, err = DefaultNames.Parse("winccoa/System1/tags/Pump/_config.._x")
 	if !errors.Is(err, ErrAttribute) {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestCustomNames(t *testing.T) {
+	n := Names{Root: "plant/oa", Tags: "t", Types: "dpt"}
+	if err := n.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	tg, err := n.Parse("plant/oa/System1/dpt/Pump/Pump1/speed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tg.TypeName != "Pump" || tg.ReadAddress(tg.System) != "System1:Pump1.speed:_online.._value" {
+		t.Fatalf("parsed %+v", tg)
+	}
+	if got := tg.Topic(); got != "plant/oa/System1/dpt/Pump/Pump1/speed" {
+		t.Fatalf("round trip %q", got)
+	}
+	if c, ok := n.CanonicalOf("plant/oa/System1/dpt/Pump/Pump1/speed"); !ok || c != "plant/oa/System1/t/Pump1/speed" {
+		t.Fatalf("canonical %q %v", c, ok)
+	}
+	w, err := n.ParseWildcard("plant/oa/System1/t/Pump1/#")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rt, ok := w.RowTarget("System1:Pump1.speed", ""); !ok || rt.Topic() != "plant/oa/System1/t/Pump1/speed" {
+		t.Fatalf("row topic %q", rt.Topic())
+	}
+	for topic, want := range map[string]Kind{
+		"plant/oa/System1":            KindStatus,
+		"plant/oa/System1/t/Pump1/x":  KindNative,
+		"plant/oa/System1/cns/v":      KindCNS,
+		"plant/oa/#":                  KindOther,
+		"winccoa/System1/tags/Pump1":  KindOther,
+		"plant/oax/System1/t/Pump1/x": KindOther,
+	} {
+		if got := n.Classify(topic); got != want {
+			t.Errorf("%s: got %v want %v", topic, got, want)
+		}
+	}
+	if _, err := n.Parse("plant/oa/System1/tags/Pump1/speed"); err == nil {
+		t.Error("default tags name accepted with custom names")
+	}
+	if got := n.StatusTopic("System1"); got != "plant/oa/System1" {
+		t.Errorf("status topic %q", got)
+	}
+	for _, bad := range []Names{
+		{Root: "", Tags: "t", Types: "y"},
+		{Root: "a//b", Tags: "t", Types: "y"},
+		{Root: "a/+", Tags: "t", Types: "y"},
+		{Root: "$oa", Tags: "t", Types: "y"},
+		{Root: "oa", Tags: "t/x", Types: "y"},
+		{Root: "oa", Tags: "same", Types: "same"},
+		{Root: "oa", Tags: "cns", Types: "y"},
+		{Root: "oa", Tags: "t", Types: ""},
+	} {
+		if bad.Validate() == nil {
+			t.Errorf("%+v: expected a validation error", bad)
+		}
 	}
 }

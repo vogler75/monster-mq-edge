@@ -310,9 +310,10 @@ func (h *StorageHook) OnRetainMessage(cl *mqtt.Client, pk packets.Packet, r int6
 		_ = h.store.Retained.DelAll(ctx, []string{pk.TopicName})
 		return
 	}
-	clientID := ""
+	clientID, username := "", ""
 	if cl != nil {
 		clientID = cl.ID
+		username = string(cl.Properties.Username)
 	}
 	createdAt := time.Now().UTC()
 	if pk.Created > 0 {
@@ -325,6 +326,7 @@ func (h *StorageHook) OnRetainMessage(cl *mqtt.Client, pk packets.Packet, r int6
 		QoS:         pk.FixedHeader.Qos,
 		IsRetain:    true,
 		ClientID:    clientID,
+		Username:    username,
 		Time:        createdAt,
 	}
 	if pk.Expiry > pk.Created && pk.Created > 0 {

@@ -3,11 +3,12 @@ package winccoa
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
-	"monstermq.io/edge/internal/oahost"
 	"monstermq.io/edge/internal/stores"
 )
 
@@ -19,8 +20,8 @@ type Manager struct {
 	logger    *slog.Logger
 	nodeID    string
 
-	srvCtx context.Context
-	native *oahost.API
+	srvCtx       context.Context
+	reservedRoot string // native topic root, never a query output target
 
 	mu         sync.Mutex
 	connectors map[string]Connector
@@ -39,10 +40,23 @@ func NewManager(store stores.DeviceConfigStore, publisher LocalPublisher, nodeID
 	}
 }
 
-// SetNative switches every WinCCOA-Client device on this node to the
-// in-process native transport. It is set by the embedding host's bootstrap
-// configuration, never by device JSON, so the GraphQL contract is unchanged.
-func (m *Manager) SetNative(api oahost.API) { m.native = &api }
+// SetReservedRoot protects the native WinCC OA namespace of the embedded
+// broker: devices whose output topics fall below root are not started.
+func (m *Manager) SetReservedRoot(root string) { m.reservedRoot = root }
+
+// CheckReservedOutput reports an error when an address's output topic prefix
+// falls into the native namespace (<root>/<system> status and everything
+// below it), which configured query output must never publish into.
+func CheckReservedOutput(root, namespace string, addr Address) error {
+	if root == "" {
+		return nil
+	}
+	base := joinTopic(namespace, addr.Topic)
+	if base == root || strings.HasPrefix(base, root+"/") {
+		return fmt.Errorf("address topic %q resolves into reserved branch %q", base, root)
+	}
+	return nil
+}
 
 func (m *Manager) Start(ctx context.Context) error {
 	m.srvCtx = ctx
@@ -148,24 +162,18 @@ func (m *Manager) startDevice(d stores.DeviceConfig) {
 		m.logger.Warn("winccoa config parse failed", "name", d.Name, "err", err)
 		return
 	}
-	var errs []string
-	if m.native != nil {
-		errs = cfg.ValidateNative()
-	} else {
-		errs = cfg.Validate()
-	}
-	if len(errs) > 0 {
+	if errs := cfg.Validate(); len(errs) > 0 {
 		m.logger.Warn("winccoa config invalid", "name", d.Name, "errors", errs)
 		return
 	}
-	m.logger.Info("winccoa starting connector", "name", d.Name, "namespace", d.Namespace, "addresses", len(cfg.Addresses), "native", m.native != nil)
-	var c Connector
-	if m.native != nil {
-		pub := newPublisher(d.Namespace, cfg.TransformConfig, cfg.MessageFormat)
-		c = newNativeConnector(d.Name, d.Namespace, cfg, pub, m.publisher, *m.native, m.logger)
-	} else {
-		c = New(d.Name, cfg, d.Namespace, m.publisher, m.logger)
+	for _, a := range cfg.Addresses {
+		if err := CheckReservedOutput(m.reservedRoot, d.Namespace, a); err != nil {
+			m.logger.Warn("winccoa start failed", "name", d.Name, "err", err)
+			return
+		}
 	}
+	m.logger.Info("winccoa starting connector", "name", d.Name, "namespace", d.Namespace, "addresses", len(cfg.Addresses))
+	c := New(d.Name, cfg, d.Namespace, m.publisher, m.logger)
 	if err := c.Start(m.srvCtx); err != nil {
 		m.logger.Warn("winccoa start failed", "name", d.Name, "err", err)
 		return

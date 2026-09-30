@@ -155,12 +155,17 @@ func build(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus, opts Optio
 		return nil, err
 	}
 	nativeOn := opts.OA != nil && cfg.WinCCOaNative.Enabled
+	names := winccoanative.Names{Root: cfg.WinCCOaNative.TopicRoot, Tags: cfg.WinCCOaNative.TagsName, Types: cfg.WinCCOaNative.TypesName}.WithDefaults()
+	if err := names.Validate(); err != nil {
+		_ = storage.Close()
+		return nil, fmt.Errorf("WinCCOaNative topic names: %w", err)
+	}
 	if cfg.UsesWinCCOaStores() && !nativeOn {
 		_ = storage.Close()
-		return nil, fmt.Errorf("ConfigStoreType/SessionStoreType WINCCOA needs the WinCC OA manager (WCCOAmmq) with WinCCOaNative enabled")
+		return nil, fmt.Errorf("store type WINCCOA (Config/Session/RetainedStoreType) needs the WinCC OA manager (WCCOAmmq) with WinCCOaNative enabled")
 	}
 	if nativeOn && cfg.UsesWinCCOaStores() {
-		if err := useOAStores(ctx, cfg, storage, oahost.API{C: opts.OA}, logger); err != nil {
+		if err := useOAStores(ctx, cfg, storage, oahost.API{C: opts.OA}, names.Root, logger); err != nil {
 			_ = storage.Close()
 			return nil, err
 		}
@@ -233,6 +238,7 @@ func build(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus, opts Optio
 			cfg.UserManagement.AllowAnonymousLocalhost,
 			logger,
 		)
+		authHook.native = names
 		if err := server.AddHook(authHook, nil); err != nil {
 			return nil, fmt.Errorf("add monstermq auth hook: %w", err)
 		}
@@ -254,6 +260,7 @@ func build(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus, opts Optio
 	var native *winccoanative.Service
 	if nativeOn && cfg.WinCCOaNative.Namespace {
 		native = winccoanative.NewService(oahost.API{C: opts.OA}, server, winccoanative.Options{
+			Names:             names,
 			NodeID:            cfg.NodeID,
 			NoSource:          cfg.WinCCOaNative.EchoPolicy == config.WinCCOaEchoNoSource,
 			ReconcileInterval: opts.NativeReconcile,
@@ -384,8 +391,8 @@ func build(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus, opts Optio
 	var winCCOa *winccoa.Manager
 	if cfg.Features.WinCCOa {
 		winCCOa = winccoa.NewManager(storage.DeviceConfig, publishFn, cfg.NodeID, logger)
-		if nativeOn && cfg.WinCCOaNative.Transport == config.WinCCOaTransportNative {
-			winCCOa.SetNative(oahost.API{C: opts.OA})
+		if nativeOn {
+			winCCOa.SetReservedRoot(names.Root)
 		}
 	}
 
@@ -511,10 +518,11 @@ func configureVolatileStores(ctx context.Context, cfg *config.Config, storage *s
 // The datapoint types are checked and every record is loaded here, so a
 // missing DPT or an unreachable OA stops startup instead of running with
 // an incompatible or empty configuration.
-func useOAStores(ctx context.Context, cfg *config.Config, storage *stores.Storage, api oahost.API, logger *slog.Logger) error {
+func useOAStores(ctx context.Context, cfg *config.Config, storage *stores.Storage, api oahost.API, nativeRoot string, logger *slog.Logger) error {
 	needCfg := cfg.ConfigStore() == config.StoreWinCCOA
 	needSes := cfg.SessionStore() == config.StoreWinCCOA
-	if err := oastore.CheckTypes(ctx, api, needCfg, needSes); err != nil {
+	needRet := cfg.RetainedStore() == config.StoreWinCCOA
+	if err := oastore.EnsureTypes(ctx, api, needCfg, needSes, needRet); err != nil {
 		return fmt.Errorf("winccoa stores: %w", err)
 	}
 	st := oastore.New(api, 10*time.Second, logger)
@@ -536,7 +544,15 @@ func useOAStores(ctx context.Context, cfg *config.Config, storage *stores.Storag
 		storage.Sessions = st.Sessions
 		storage.Subscriptions = st.Sessions
 	}
-	logger.Info("winccoa datapoint stores active", "config", needCfg, "sessions", needSes)
+	if needRet {
+		// The native namespace (status topics) never gets datapoints.
+		st.Retained.KeepInMemory(nativeRoot)
+		if err := st.Retained.Load(ctx); err != nil {
+			return fmt.Errorf("winccoa stores: %w", err)
+		}
+		storage.Retained = st.Retained
+	}
+	logger.Info("winccoa datapoint stores active", "config", needCfg, "sessions", needSes, "retained", needRet)
 	return nil
 }
 

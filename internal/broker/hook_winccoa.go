@@ -113,7 +113,7 @@ func (h *WinCCOaNativeHook) OnPublish(cl *mqtt.Client, pk packets.Packet) (packe
 	if cl.Net.Inline {
 		return pk, nil
 	}
-	switch kind := winccoanative.Classify(pk.TopicName); kind {
+	switch kind := h.svc.Names().Classify(pk.TopicName); kind {
 	case winccoanative.KindOther:
 		return pk, nil
 	case winccoanative.KindNative:
@@ -161,7 +161,7 @@ func (h *WinCCOaNativeHook) rejectReply(pk packets.Packet, reply winccoanative.R
 }
 
 func (h *WinCCOaNativeHook) sendReply(r winccoanative.Reply, payload []byte) {
-	if winccoanative.Classify(r.Topic) != winccoanative.KindOther {
+	if h.svc.Names().Classify(r.Topic) != winccoanative.KindOther {
 		return
 	}
 	pk := packets.Packet{

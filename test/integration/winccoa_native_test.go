@@ -75,6 +75,8 @@ func addStoreTypes(sim *simhost.Host) {
 	str, tim := uint32(oahost.KindString), uint32(oahost.KindTime)
 	sim.AddType(simhost.Type{Name: "MMQConfigs", Elements: map[string]uint32{"": simhost.ElemStruct, "config": str, "type": str, "updated": tim}})
 	sim.AddType(simhost.Type{Name: "MMQSessions", Elements: map[string]uint32{"": simhost.ElemStruct, "session": str, "subs": str, "connected": uint32(oahost.KindBool), "nodeId": str, "updated": tim}})
+	u := uint32(oahost.KindUint)
+	sim.AddType(simhost.Type{Name: "MMQRetained", Elements: map[string]uint32{"": simhost.ElemStruct, "value": uint32(oahost.KindBytes), "topic": str, "user": str, "qos": u, "expiry": u, "updated": tim}})
 }
 
 func startNative(t *testing.T, port int, dbPath string, sim *simhost.Host, client *oahost.Client, cfgFn func(*config.Config), opts broker.Options) *nativeEnv {
@@ -752,6 +754,50 @@ func TestNativeStaleStatusClear(t *testing.T) {
 	}
 	if _, ok := got[own]; !ok {
 		t.Fatal("own status missing")
+	}
+}
+
+// Configured topic names replace winccoa, tags and types everywhere.
+func TestNativeCustomTopicNames(t *testing.T) {
+	sim, client := newSim(0)
+	defer sim.Close()
+	env := startNative(t, 27111, filepath.Join(t.TempDir(), "n.db"), sim, client, func(c *config.Config) {
+		c.WinCCOaNative.TopicRoot = "plant/oa"
+		c.WinCCOaNative.TagsName = "t"
+		c.WinCCOaNative.TypesName = "dpt"
+	}, broker.Options{})
+	defer env.srv.Close()
+	_ = sim.Set("System1:Pump1.speed", oahost.Value{Kind: oahost.KindFloat, Float: 5})
+	c, _ := dialRaw(t, env.port, rawConnect{ClientID: "names", Version: 5, Clean: true})
+	defer c.Close()
+
+	const exact, typed, status = "plant/oa/System1/t/Pump1/speed", "plant/oa/System1/dpt/AnalogDrive/Pump1/speed", "plant/oa/System1"
+	queries := sim.Queries()
+	got := c.Subscribe(sub(exact, 1), sub(typed, 1), sub(status, 1), sub("plant/oa/System1/t/+/speed", 1),
+		sub("winccoa/System1/tags/Pump1/speed", 1)) // default names: an ordinary topic now
+	if string(got) != "\x01\x01\x01\x01\x01" {
+		t.Fatalf("SUBACK % x", got)
+	}
+	init := c.NextOnAll(2*time.Second, exact, typed, status)
+	if len(init) != 3 {
+		t.Fatalf("initial publications %v", len(init))
+	}
+	if sim.Queries() != queries+1 {
+		t.Fatalf("wildcard queries %d, want %d", sim.Queries(), queries+1)
+	}
+	if code := c.Publish(rawPub{Topic: exact + "/set", Payload: []byte(`{"value":42}`), QoS: 1}); code != 0 {
+		t.Fatalf("write PUBACK 0x%02x", code)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if v, _ := sim.Get("System1:Pump1.speed"); v.Float != 42 {
+		t.Fatalf("write not applied: %v", v.Float)
+	}
+	// The configured root is reserved; the default one is not any more.
+	if code := c.Publish(rawPub{Topic: "plant/oa/System1/t/Pump1/speed", Payload: []byte(`1`), QoS: 1}); code != 0x87 {
+		t.Errorf("publish to value topic PUBACK 0x%02x", code)
+	}
+	if code := c.Publish(rawPub{Topic: "winccoa/System1/tags/Pump1/speed", Payload: []byte(`1`), QoS: 1}); code != 0 {
+		t.Errorf("publish under the default root PUBACK 0x%02x", code)
 	}
 }
 

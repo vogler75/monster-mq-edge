@@ -9,9 +9,6 @@ import (
 )
 
 const (
-	Root        = "winccoa"
-	SegTags     = "tags"
-	SegTypes    = "types"
 	SegCNS      = "cns"
 	SegSet      = "set"
 	DefaultAttr = "_online.._value"
@@ -26,13 +23,65 @@ var ReadAttrs = map[string]bool{
 	"_online.._invalid": true,
 }
 
+// Names are the configurable topic levels of the namespace:
+// <Root>/<system>/<Tags>/... and <Root>/<system>/<Types>/<dpt>/....
+type Names struct {
+	Root  string // one or more topic levels, e.g. "winccoa" or "plant/oa"
+	Tags  string // one level
+	Types string // one level
+}
+
+// DefaultNames is winccoa/<system>/tags|types.
+var DefaultNames = Names{Root: "winccoa", Tags: "tags", Types: "types"}
+
+// Validate checks that the names are usable topic levels.
+func (n Names) Validate() error {
+	if n.Root == "" {
+		return errors.New("topic root is empty")
+	}
+	for _, l := range strings.Split(n.Root, "/") {
+		if l == "" || strings.ContainsAny(l, "+#") || strings.ContainsRune(l, 0) {
+			return fmt.Errorf("topic root %q: every level must be non-empty without + or #", n.Root)
+		}
+	}
+	if strings.HasPrefix(n.Root, "$") {
+		return fmt.Errorf("topic root %q must not start with $", n.Root)
+	}
+	for _, v := range []struct{ what, name string }{{"tags", n.Tags}, {"types", n.Types}} {
+		if v.name == "" || strings.ContainsAny(v.name, "/+#%") || strings.ContainsRune(v.name, 0) {
+			return fmt.Errorf("%s name %q must be one non-empty topic level without / + # %%", v.what, v.name)
+		}
+		if v.name == SegCNS {
+			return fmt.Errorf("%s name %q is reserved", v.what, v.name)
+		}
+	}
+	if n.Tags == n.Types {
+		return fmt.Errorf("tags and types names must differ (both %q)", n.Tags)
+	}
+	return nil
+}
+
+// WithDefaults fills empty names from DefaultNames.
+func (n Names) WithDefaults() Names {
+	if n.Root == "" {
+		n.Root = DefaultNames.Root
+	}
+	if n.Tags == "" {
+		n.Tags = DefaultNames.Tags
+	}
+	if n.Types == "" {
+		n.Types = DefaultNames.Types
+	}
+	return n
+}
+
 type Kind int
 
 const (
 	KindOther  Kind = iota // not in the native namespace
-	KindNative             // winccoa/<system>/...
-	KindStatus             // winccoa/<system>: broker status (retained JSON)
-	KindCNS                // winccoa/<system>/cns/... (reserved, disabled)
+	KindNative             // <root>/<system>/...
+	KindStatus             // <root>/<system>: broker status (retained JSON)
+	KindCNS                // <root>/<system>/cns/... (reserved, disabled)
 )
 
 var (
@@ -50,20 +99,22 @@ type Target struct {
 	Attr     string // explicit attribute or DefaultAttr
 	Explicit bool   // attribute segment was present
 	Command  bool   // terminal set
+
+	names Names // names the topic was parsed with; used by Topic
 }
 
 // Classify reports which reserved branch a topic name or filter belongs to.
 // Shared-subscription prefixes must be stripped by the caller.
-func Classify(topic string) Kind {
-	if topic != Root && !strings.HasPrefix(topic, Root+"/") {
+func (n Names) Classify(topic string) Kind {
+	if topic != n.Root && !strings.HasPrefix(topic, n.Root+"/") {
 		return KindOther
 	}
-	rest := strings.TrimPrefix(topic, Root)
+	rest := strings.TrimPrefix(topic, n.Root)
 	rest = strings.TrimPrefix(rest, "/")
 	system, after, more := strings.Cut(rest, "/")
 	switch {
 	case system == "" || system == "+" || system == "#":
-		// "winccoa", "winccoa/#", "winccoa/+/...": ordinary MQTT filters.
+		// "<root>", "<root>/#", "<root>/+/...": ordinary MQTT filters.
 		return KindOther
 	case !more:
 		return KindStatus
@@ -90,15 +141,15 @@ func SplitShared(filter string) (string, bool) {
 }
 
 // Parse parses an exact native topic (no wildcards).
-func Parse(topic string) (Target, error) {
-	var t Target
-	if Classify(topic) != KindNative {
+func (n Names) Parse(topic string) (Target, error) {
+	t := Target{names: n}
+	if n.Classify(topic) != KindNative {
 		return t, fmt.Errorf("%w: not a native topic", ErrMalformed)
 	}
 	if HasWildcard(topic) {
 		return t, fmt.Errorf("%w: wildcard", ErrMalformed)
 	}
-	segs := strings.Split(topic, "/")[1:]
+	segs := strings.Split(strings.TrimPrefix(topic, n.Root+"/"), "/")
 	sys, err := decodeSegment(segs[0], false)
 	if err != nil {
 		return t, err
@@ -109,12 +160,12 @@ func Parse(topic string) (Target, error) {
 	t.System = sys
 	i := 1
 	if i >= len(segs) {
-		return t, fmt.Errorf("%w: missing tags/types", ErrMalformed)
+		return t, fmt.Errorf("%w: missing %s/%s", ErrMalformed, n.Tags, n.Types)
 	}
 	switch segs[i] {
-	case SegTags:
+	case n.Tags:
 		i++
-	case SegTypes:
+	case n.Types:
 		i++
 		if i >= len(segs) {
 			return t, fmt.Errorf("%w: missing type name", ErrMalformed)
@@ -126,7 +177,7 @@ func Parse(topic string) (Target, error) {
 		t.TypeName = tn
 		i++
 	default:
-		return t, fmt.Errorf("%w: expected tags or types, got %q", ErrMalformed, segs[i])
+		return t, fmt.Errorf("%w: expected %s or %s, got %q", ErrMalformed, n.Tags, n.Types, segs[i])
 	}
 	rest := segs[i:]
 	if len(rest) == 0 {
@@ -194,11 +245,12 @@ func (t Target) IsRoot() bool { return len(t.Elements) == 0 }
 
 // Topic renders the canonical topic for the target in the given form.
 func (t Target) Topic() string {
-	segs := []string{Root, encodeSegment(t.System, false)}
+	n := t.names.WithDefaults()
+	segs := []string{n.Root, encodeSegment(t.System, false)}
 	if t.TypeName != "" {
-		segs = append(segs, SegTypes, encodeSegment(t.TypeName, false))
+		segs = append(segs, n.Types, encodeSegment(t.TypeName, false))
 	} else {
-		segs = append(segs, SegTags)
+		segs = append(segs, n.Tags)
 	}
 	path := append([]string{t.DP}, t.Elements...)
 	for j, s := range path {
