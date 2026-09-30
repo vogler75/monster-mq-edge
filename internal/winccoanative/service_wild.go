@@ -24,9 +24,16 @@ type wildQuery struct {
 	cache      map[string][]byte // topic -> last payload (current values)
 }
 
+// parseWild parses a wildcard filter and binds it to the local system.
+func (s *Service) parseWild(filter string) (WildTarget, error) {
+	w, err := ParseWildcard(filter)
+	w.Remote = err == nil && w.System != s.localSystem
+	return w, err
+}
+
 // validateWild decides a native wildcard filter.
 func (s *Service) validateWild(f string) (Verdict, string) {
-	w, err := ParseWildcard(f)
+	w, err := s.parseWild(f)
 	if err != nil {
 		return Invalid, err.Error()
 	}
@@ -37,9 +44,6 @@ func (s *Service) validateWild(f string) (Verdict, string) {
 		return Unavailable, "WinCC OA not ready"
 	}
 	if w.Remote {
-		if w.System == s.localSystem {
-			return Invalid, ErrLocalAsRemote.Error()
-		}
 		// A lookup on the remote system reports an unknown or
 		// disconnected system as unavailable before any name check.
 		if _, err := s.lookup(w.System + ":" + "MMQ_system_probe."); err != nil {
@@ -69,8 +73,10 @@ func (s *Service) validateWild(f string) (Verdict, string) {
 }
 
 // subscribedWild registers an accepted wildcard filter.
-func (s *Service) subscribedWild(clientID, filter string, existed, restored bool) {
-	w, err := ParseWildcard(filter)
+// dormant keeps a remote query unregistered until its system connects
+// (wildOnSystem starts it); used for restored filters of an unavailable system.
+func (s *Service) subscribedWild(clientID, filter string, existed, restored, dormant bool) {
+	w, err := s.parseWild(filter)
 	if err != nil {
 		return
 	}
@@ -101,7 +107,7 @@ func (s *Service) subscribedWild(clientID, filter string, existed, restored bool
 		// Rows of the initial answer still to come go to this subscriber too.
 		q.pending[sk] = true
 	}
-	start := !q.registered && !q.inflight
+	start := !q.registered && !q.inflight && !(dormant && w.Remote)
 	if start {
 		q.inflight = true
 	}

@@ -66,7 +66,7 @@ func (e liveEnv) woa(t *testing.T, args ...string) string {
 func (e liveEnv) set(t *testing.T, dpe, value, typ string) {
 	t.Helper()
 	dp, el, _ := strings.Cut(dpe, ".")
-	topic := "winccoa/this/tags/" + dp
+	topic := "winccoa/System1/tags/" + dp
 	if el != "" {
 		topic += "/" + strings.ReplaceAll(el, ".", "/")
 	}
@@ -109,8 +109,8 @@ func TestLiveStatus(t *testing.T) {
 	e := live(t)
 	c := e.client(t, "live-status", 5)
 	defer c.Close()
-	c.Subscribe(sub("winccoa/node/this/status", 1))
-	pk, ok := c.NextOn("winccoa/node/this/status", 3*time.Second)
+	c.Subscribe(sub("winccoa/System1", 1))
+	pk, ok := c.NextOn("winccoa/System1", 3*time.Second)
 	if !ok {
 		t.Fatal("no status")
 	}
@@ -126,19 +126,19 @@ func TestLiveStatus(t *testing.T) {
 func TestLiveSubackMatrix(t *testing.T) {
 	e := live(t)
 	filters := []packets.Subscription{
-		sub("winccoa/this/tags/MMQLive1/speed", 1),
-		sub("winccoa/this/tags/MMQLiveNope/speed", 1),
-		sub("winccoa/this/tags/_Users", 1),
-		sub("winccoa/remote/NoSuchSystem/tags/X/y", 1),
-		sub("winccoa/this/tags/MMQLive1/+", 1),
-		sub("$share/g/winccoa/this/tags/MMQLive1/speed", 1),
-		sub("winccoa/node/this/status", 1),
-		sub("winccoa/cns/View/node", 1),
-		sub("winccoa/this/tags/MMQLive1", 1),
-		sub("winccoa/this/types/Wrong/MMQLive1/speed", 1),
-		sub("winccoa/this/types/MMQLiveTest/MMQLive1/nested/a", 1),
-		sub("winccoa/this/tags/MMQLiveScalar", 0),
-		sub("winccoa/this/tags/MMQLive1/speed/_online.._stime", 0),
+		sub("winccoa/System1/tags/MMQLive1/speed", 1),
+		sub("winccoa/System1/tags/MMQLiveNope/speed", 1),
+		sub("winccoa/System1/tags/_Users", 1),
+		sub("winccoa/NoSuchSystem/tags/X/y", 1),
+		sub("winccoa/System1/tags/MMQLive1/+", 1),
+		sub("$share/g/winccoa/System1/tags/MMQLive1/speed", 1),
+		sub("winccoa/System1", 1),
+		sub("winccoa/System1/cns/View/node", 1),
+		sub("winccoa/System1/tags/MMQLive1", 1),
+		sub("winccoa/System1/types/Wrong/MMQLive1/speed", 1),
+		sub("winccoa/System1/types/MMQLiveTest/MMQLive1/nested/a", 1),
+		sub("winccoa/System1/tags/MMQLiveScalar", 0),
+		sub("winccoa/System1/tags/MMQLive1/speed/_online.._stime", 0),
 	}
 	want := []byte{0x01, 0x8F, 0x87, 0x83, 0x01, 0x9E, 0x01, 0x83, 0x8F, 0x8F, 0x01, 0x00, 0x00}
 	for _, v := range []byte{5, 4} {
@@ -165,9 +165,9 @@ func TestLiveValues(t *testing.T) {
 	e.set(t, "MMQLive1.speed", "12.5", "float")
 	c := e.client(t, "live-values", 5)
 	defer c.Close()
-	tags, types := "winccoa/this/tags/MMQLive1/speed", "winccoa/this/types/MMQLiveTest/MMQLive1/speed"
-	c.Subscribe(sub(tags, 1), sub(types, 1), sub("winccoa/this/tags/MMQLiveScalar", 1))
-	init := c.NextOnAll(5*time.Second, tags, types, "winccoa/this/tags/MMQLiveScalar")
+	tags, types := "winccoa/System1/tags/MMQLive1/speed", "winccoa/System1/types/MMQLiveTest/MMQLive1/speed"
+	c.Subscribe(sub(tags, 1), sub(types, 1), sub("winccoa/System1/tags/MMQLiveScalar", 1))
+	init := c.NextOnAll(5*time.Second, tags, types, "winccoa/System1/tags/MMQLiveScalar")
 	if len(init) != 3 {
 		t.Fatalf("initial values %v", init)
 	}
@@ -191,7 +191,7 @@ func TestLiveWrites(t *testing.T) {
 	c.Subscribe(sub("live/res", 1))
 	// Command ids are deduplicated per client for 10 minutes.
 	runID := strconv.FormatInt(time.Now().UnixNano(), 36)
-	base := "winccoa/this/tags/MMQLive2/"
+	base := "winccoa/System1/tags/MMQLive2/"
 	cases := []struct {
 		elem, payload string
 		code          byte
@@ -347,8 +347,8 @@ func TestLiveNoGrowth(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		a := e.client(t, fmt.Sprintf("grow-a-%d", i%3), 5)
 		b := e.client(t, fmt.Sprintf("grow-b-%d", i%3), 4)
-		a.Subscribe(sub("winccoa/this/tags/MMQLive1/speed", 1), sub("winccoa/this/types/MMQLiveTest/MMQLive1/count", 0))
-		b.Subscribe(sub("winccoa/this/tags/MMQLive1/speed", 0), sub("winccoa/this/tags/MMQLive1/speed/_online.._value", 0))
+		a.Subscribe(sub("winccoa/System1/tags/MMQLive1/speed", 1), sub("winccoa/System1/types/MMQLiveTest/MMQLive1/count", 0))
+		b.Subscribe(sub("winccoa/System1/tags/MMQLive1/speed", 0), sub("winccoa/System1/tags/MMQLive1/speed/_online.._value", 0))
 		if i == 50 {
 			time.Sleep(6 * time.Second)
 			st := e.lastStats(t, time.Now().Add(-4*time.Second))
@@ -357,7 +357,7 @@ func TestLiveNoGrowth(t *testing.T) {
 				t.Errorf("expected shared registrations for 2 elements, got %v", st)
 			}
 		}
-		a.Unsubscribe("winccoa/this/tags/MMQLive1/speed")
+		a.Unsubscribe("winccoa/System1/tags/MMQLive1/speed")
 		a.Close()
 		b.Close()
 	}
@@ -393,7 +393,7 @@ func TestLiveInvalidQuery(t *testing.T) {
 // restores the interest.
 func TestLiveDeleteRecreate(t *testing.T) {
 	e := live(t)
-	topic := "winccoa/this/tags/MMQLive2/speed"
+	topic := "winccoa/System1/tags/MMQLive2/speed"
 	c := e.client(t, "live-del", 5)
 	defer c.Close()
 	c.Subscribe(sub(topic, 1))
@@ -435,7 +435,7 @@ func TestLiveStoresRestart(t *testing.T) {
 	e.graphql(t, fmt.Sprintf(`mutation { winCCOaDevice { create(input: {name: "keep", namespace: "keep", nodeId: %q, config: {addresses: [{query: "SELECT '_online.._value' FROM 'MMQLive1.speed'", topic: "k", answer: true}]}}) { success errors } } }`, e.node))
 	defer e.graphql(t, `mutation { winCCOaDevice { delete(name: "keep") } }`)
 
-	topic := "winccoa/this/tags/MMQLive1/count"
+	topic := "winccoa/System1/tags/MMQLive1/count"
 	c, _ := dialRaw(t, e.port, rawConnect{ClientID: "keep-sess", Version: 5, Clean: true, SessionExpiry: 3600})
 	c.Subscribe(sub(topic, 1), sub("keep/plain", 1))
 	c.NextOn(topic, 5*time.Second)
@@ -500,7 +500,7 @@ func TestLiveBackupRestore(t *testing.T) {
 	}
 	e.graphql(t, `mutation { winCCOaDevice { delete(name: "bk2") } }`)
 	e.graphql(t, fmt.Sprintf(`mutation { winCCOaDevice { create(input: {name: "bk2", namespace: "bk2", nodeId: %q, config: {messageFormat: JSON_MS, addresses: [{query: "SELECT '_online.._value' FROM 'MMQLive1.count'", topic: "b", answer: true, retained: true}]}}) { success } } }`, e.node))
-	topic := "winccoa/this/types/MMQLiveTest/MMQLive1/speed"
+	topic := "winccoa/System1/types/MMQLiveTest/MMQLive1/speed"
 	c, _ := dialRaw(t, e.port, rawConnect{ClientID: "bk-sess", Version: 5, Clean: true, SessionExpiry: 7200})
 	c.Subscribe(packets.Subscription{Filter: topic, Qos: 1, RetainHandling: 1}, sub("bk/plain", 0))
 	c.Close()
@@ -557,7 +557,7 @@ func TestLiveOverload(t *testing.T) {
 	c.Subscribe(sub("ovl/res", 1))
 	const n = 1000
 	for i := 0; i < n; i++ {
-		c.Publish(rawPub{Topic: "winccoa/this/tags/MMQLive2/count/set", Payload: []byte(fmt.Sprintf(`{"value":%d,"id":"o%d-%d","replyTo":"ovl/res"}`, i, time.Now().UnixNano(), i)), QoS: 0})
+		c.Publish(rawPub{Topic: "winccoa/System1/tags/MMQLive2/count/set", Payload: []byte(fmt.Sprintf(`{"value":%d,"id":"o%d-%d","replyTo":"ovl/res"}`, i, time.Now().UnixNano(), i)), QoS: 0})
 	}
 	status := map[string]int{}
 	deadline := time.Now().Add(30 * time.Second)
@@ -585,7 +585,7 @@ func TestLiveOverload(t *testing.T) {
 	if st["overloads"] == 0 && status["failed"] == 0 {
 		t.Log("burst did not reach the queue limit")
 	}
-	if code := c.Publish(rawPub{Topic: "winccoa/this/tags/MMQLive2/count/set", Payload: []byte(`77`), QoS: 1}); code != 0 {
+	if code := c.Publish(rawPub{Topic: "winccoa/System1/tags/MMQLive2/count/set", Payload: []byte(`77`), QoS: 1}); code != 0 {
 		t.Fatalf("after burst: PUBACK 0x%02x", code)
 	}
 	time.Sleep(500 * time.Millisecond)
@@ -599,13 +599,13 @@ func TestLiveWildcards(t *testing.T) {
 	e := live(t)
 	c := e.client(t, "live-wild", 5)
 	defer c.Close()
-	c.Subscribe(sub("winccoa/this/tags/MMQLive1/#", 1))
+	c.Subscribe(sub("winccoa/System1/tags/MMQLive1/#", 1))
 	got := topicList(collectTopics(c, 2*time.Second))
 	t.Logf("tags/MMQLive1/#: %v", got)
 	for _, want := range []string{"speed", "running", "name", "count", "unsigned", "ts", "nested/a"} {
 		found := false
 		for _, g := range got {
-			if g == "winccoa/this/tags/MMQLive1/"+want {
+			if g == "winccoa/System1/tags/MMQLive1/"+want {
 				found = true
 			}
 		}
@@ -615,17 +615,17 @@ func TestLiveWildcards(t *testing.T) {
 	}
 	d := e.client(t, "live-wild-d", 5)
 	defer d.Close()
-	d.Subscribe(sub("winccoa/this/types/MMQLiveTest/+/nested/#", 1), sub("winccoa/this/tags/+/speed", 1))
+	d.Subscribe(sub("winccoa/System1/types/MMQLiveTest/+/nested/#", 1), sub("winccoa/System1/tags/+/speed", 1))
 	got = topicList(collectTopics(d, 2*time.Second))
 	t.Logf("types/+/nested/# and +/speed: %v", got)
-	if strings.Join(got, ",") != "winccoa/this/tags/MMQLive1/speed,winccoa/this/tags/MMQLive2/speed,winccoa/this/types/MMQLiveTest/MMQLive1/nested/a,winccoa/this/types/MMQLiveTest/MMQLive2/nested/a" {
+	if strings.Join(got, ",") != "winccoa/System1/tags/MMQLive1/speed,winccoa/System1/tags/MMQLive2/speed,winccoa/System1/types/MMQLiveTest/MMQLive1/nested/a,winccoa/System1/types/MMQLiveTest/MMQLive2/nested/a" {
 		t.Errorf("unexpected topics %v", got)
 	}
 
 	start := time.Now()
 	e.set(t, "MMQLive1.speed", "44.5", "float")
 	for name, cl := range map[string]*rawClient{"tags/MMQLive1/#": c, "tags/+/speed": d} {
-		msgs := collectTopics(cl, time.Second)["winccoa/this/tags/MMQLive1/speed"]
+		msgs := collectTopics(cl, time.Second)["winccoa/System1/tags/MMQLive1/speed"]
 		if len(msgs) != 1 || !strings.Contains(msgs[0], "44.5") {
 			t.Errorf("%s: %v", name, msgs)
 		}
@@ -635,7 +635,7 @@ func TestLiveWildcards(t *testing.T) {
 	big := e.client(t, "live-wild-big", 5)
 	defer big.Close()
 	t0 := time.Now()
-	big.Subscribe(sub("winccoa/this/types/MMQLoad/#", 0))
+	big.Subscribe(sub("winccoa/System1/types/MMQLoad/#", 0))
 	n := len(collectTopics(big, 5*time.Second))
 	t.Logf("types/MMQLoad/#: %d elements (subscribe to last value %s)", n, time.Since(t0))
 	if n != 5000 {
@@ -644,7 +644,7 @@ func TestLiveWildcards(t *testing.T) {
 
 	root := e.client(t, "live-wild-root", 5)
 	defer root.Close()
-	root.Subscribe(sub("winccoa/this/tags/#", 0))
+	root.Subscribe(sub("winccoa/System1/tags/#", 0))
 	all := collectTopics(root, 6*time.Second)
 	t.Logf("tags/#: %d elements", len(all))
 	for tp := range all {
@@ -652,7 +652,7 @@ func TestLiveWildcards(t *testing.T) {
 			t.Fatalf("protected datapoint in tags/#: %s", tp)
 		}
 	}
-	if _, ok := all["winccoa/this/tags/MMQLiveScalar"]; !ok {
+	if _, ok := all["winccoa/System1/tags/MMQLiveScalar"]; !ok {
 		t.Error("scalar root missing from tags/#")
 	}
 
@@ -663,6 +663,6 @@ func TestLiveWildcards(t *testing.T) {
 	time.Sleep(time.Second)
 	d.Drain(300 * time.Millisecond)
 	e.set(t, "MMQLive2.speed", "5.5", "float")
-	msgs := collectTopics(d, 2*time.Second)["winccoa/this/tags/MMQLive2/speed"]
+	msgs := collectTopics(d, 2*time.Second)["winccoa/System1/tags/MMQLive2/speed"]
 	t.Logf("recreated DP through tags/+/speed: %v", msgs)
 }

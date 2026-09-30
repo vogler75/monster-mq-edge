@@ -150,22 +150,22 @@ func TestNativeSubackPerFilter(t *testing.T) {
 	defer env.srv.Close()
 
 	filters := []packets.Subscription{
-		sub("winccoa/this/tags/Pump101/speed", 1),                 // valid
-		sub("winccoa/this/tags/Nope/speed", 1),                    // missing DP
-		sub("winccoa/this/tags/_Users", 1),                        // internal DP: denied
-		sub("winccoa/remote/SubstationB/tags/Feeder1/voltage", 1), // unavailable remote system
-		sub("winccoa/this/tags/Pump101/+/x", 1),                   // wildcard below a leaf: accepted, matches nothing
-		sub("$share/g/winccoa/this/tags/Pump101/speed", 1),        // shared
-		sub("winccoa/node/this/status", 1),                        // status topic
-		sub("winccoa/cns/View/node", 1),                           // reserved CNS
-		sub("winccoa/this/tags/Pump101", 1),                       // struct root: not a value element
-		sub("winccoa/this/types/Feeder/Pump101/speed", 1),         // DPT mismatch
-		sub("winccoa/remote/System1/tags/Pump101/speed", 1),       // remote name is the local system
-		sub("winccoa/tags/Pump101/speed", 1),                      // former unscoped form: ordinary topic
-		sub("winccoa/this/tags/ScalarTag", 0),                     // scalar root
-		sub("winccoa/this/tags/MMQConfigs_k1/config", 1),          // native store DP: denied
+		sub("winccoa/System1/tags/Pump101/speed", 1),          // valid
+		sub("winccoa/System1/tags/Nope/speed", 1),             // missing DP
+		sub("winccoa/System1/tags/_Users", 1),                 // internal DP: denied
+		sub("winccoa/SubstationB/tags/Feeder1/voltage", 1),    // unavailable remote system
+		sub("winccoa/System1/tags/Pump101/+/x", 1),            // wildcard below a leaf: accepted, matches nothing
+		sub("$share/g/winccoa/System1/tags/Pump101/speed", 1), // shared
+		sub("winccoa/System1", 1),                             // status topic
+		sub("winccoa/System1/cns/View/node", 1),               // reserved CNS
+		sub("winccoa/System1/tags/Pump101", 1),                // struct root: not a value element
+		sub("winccoa/System1/types/Feeder/Pump101/speed", 1),  // DPT mismatch
+		sub("winccoa/Unknown/tags/Pump101/speed", 1),          // unknown system
+		sub("winccoa/tags/Pump101/speed", 1),                  // no tags/types after the system
+		sub("winccoa/System1/tags/ScalarTag", 0),              // scalar root
+		sub("winccoa/System1/tags/MMQConfigs_k1/config", 1),   // native store DP: denied
 	}
-	want5 := []byte{0x01, 0x8F, 0x87, 0x83, 0x01, 0x9E, 0x01, 0x83, 0x8F, 0x8F, 0x8F, 0x01, 0x00, 0x87}
+	want5 := []byte{0x01, 0x8F, 0x87, 0x83, 0x01, 0x9E, 0x01, 0x83, 0x8F, 0x8F, 0x83, 0x8F, 0x00, 0x87}
 	want3 := make([]byte, len(want5))
 	for i, c := range want5 {
 		if c > 2 {
@@ -221,9 +221,9 @@ func TestNativeInterestsAndInitialValue(t *testing.T) {
 	if err := sim.Set("System1:Pump101.speed", oahost.Value{Kind: oahost.KindFloat, Float: 42.5}); err != nil {
 		t.Fatal(err)
 	}
-	tags := "winccoa/this/tags/Pump101/speed"
-	types := "winccoa/this/types/AnalogDrive/Pump101/speed"
-	explicit := "winccoa/this/tags/Pump101/speed/_online.._value"
+	tags := "winccoa/System1/tags/Pump101/speed"
+	types := "winccoa/System1/types/AnalogDrive/Pump101/speed"
+	explicit := "winccoa/System1/tags/Pump101/speed/_online.._value"
 
 	a, _ := dialRaw(t, env.port, rawConnect{ClientID: "ia", Version: 5, Clean: true})
 	defer a.Close()
@@ -306,7 +306,7 @@ func TestNativeOfflinePersistentSubscriber(t *testing.T) {
 	}, broker.Options{})
 	defer env.srv.Close()
 
-	topic := "winccoa/this/tags/Pump1/count"
+	topic := "winccoa/System1/tags/Pump1/count"
 	a, _ := dialRaw(t, env.port, rawConnect{ClientID: "off", Version: 5, Clean: true, SessionExpiry: 3600})
 	a.Subscribe(sub(topic, 1))
 	a.NextOn(topic, 2*time.Second)
@@ -351,7 +351,7 @@ func TestNativeTypedWrites(t *testing.T) {
 	defer c.Close()
 	c.Subscribe(sub("results/#", 1))
 
-	base := "winccoa/this/tags/Pump1/"
+	base := "winccoa/System1/tags/Pump1/"
 	cases := []struct {
 		elem    string
 		payload string
@@ -410,10 +410,10 @@ func TestNativeTypedWrites(t *testing.T) {
 	if code := c.Publish(rawPub{Topic: base + "speed", Payload: []byte(`1`), QoS: 1}); code != 0x87 {
 		t.Errorf("publish to value topic PUBACK 0x%02x", code)
 	}
-	if code := c.Publish(rawPub{Topic: "winccoa/node/this/status", Payload: []byte(`{}`), QoS: 1}); code != 0x87 {
+	if code := c.Publish(rawPub{Topic: "winccoa/System1", Payload: []byte(`{}`), QoS: 1}); code != 0x87 {
 		t.Errorf("forged status PUBACK 0x%02x", code)
 	}
-	if code := c.Publish(rawPub{Topic: "winccoa/cns/x", Payload: []byte(`1`), QoS: 1}); code != 0x87 {
+	if code := c.Publish(rawPub{Topic: "winccoa/System1/cns/x", Payload: []byte(`1`), QoS: 1}); code != 0x87 {
 		t.Errorf("publish into CNS PUBACK 0x%02x", code)
 	}
 
@@ -472,8 +472,8 @@ func TestNativeRemoteSystems(t *testing.T) {
 
 	_ = sim.Set("System1:Pump101.speed", oahost.Value{Kind: oahost.KindFloat, Float: 1})
 	_ = sim.Set("SubstationA:Pump101.speed", oahost.Value{Kind: oahost.KindFloat, Float: 2})
-	local := "winccoa/this/tags/Pump101/speed"
-	remote := "winccoa/remote/SubstationA/tags/Pump101/speed"
+	local := "winccoa/System1/tags/Pump101/speed"
+	remote := "winccoa/SubstationA/tags/Pump101/speed"
 
 	c, _ := dialRaw(t, env.port, rawConnect{ClientID: "rs", Version: 5, Clean: true})
 	defer c.Close()
@@ -500,10 +500,10 @@ func TestNativeRemoteSystems(t *testing.T) {
 	}
 	d, _ := dialRaw(t, env.port, rawConnect{ClientID: "rs2", Version: 5, Clean: true})
 	defer d.Close()
-	if got := d.Subscribe(sub("winccoa/remote/SubstationA/tags/Feeder1/voltage", 1)); got[0] != 0x83 {
+	if got := d.Subscribe(sub("winccoa/SubstationA/tags/Feeder1/voltage", 1)); got[0] != 0x83 {
 		t.Fatalf("subscribe during outage: 0x%02x", got[0])
 	}
-	if code := d.Publish(rawPub{Topic: "winccoa/remote/SubstationA/tags/Pump101/speed/set", Payload: []byte(`5`), QoS: 1}); code != 0x83 {
+	if code := d.Publish(rawPub{Topic: "winccoa/SubstationA/tags/Pump101/speed/set", Payload: []byte(`5`), QoS: 1}); code != 0x83 {
 		t.Fatalf("write during outage: 0x%02x", code)
 	}
 
@@ -530,7 +530,7 @@ func TestNativeDeletedDatapoint(t *testing.T) {
 	defer env.srv.Close()
 
 	_ = sim.Set("System1:Pump1.speed", oahost.Value{Kind: oahost.KindFloat, Float: 5})
-	topic := "winccoa/this/tags/Pump1/speed"
+	topic := "winccoa/System1/tags/Pump1/speed"
 	c, _ := dialRaw(t, env.port, rawConnect{ClientID: "del", Version: 5, Clean: true})
 	defer c.Close()
 	c.Subscribe(sub(topic, 1))
@@ -577,7 +577,7 @@ func TestNativeRestoreBatches(t *testing.T) {
 	c, _ := dialRaw(t, env.port, rawConnect{ClientID: "bulk", Version: 4, Clean: false})
 	var subs []packets.Subscription
 	for i := 0; i < 250; i++ {
-		subs = append(subs, sub(fmt.Sprintf("winccoa/this/tags/Bulk%03d", i), 0))
+		subs = append(subs, sub(fmt.Sprintf("winccoa/System1/tags/Bulk%03d", i), 0))
 	}
 	for i := 0; i < len(subs); i += 50 {
 		for _, code := range c.Subscribe(subs[i : i+50]...) {
@@ -624,7 +624,7 @@ func TestNativeOverload(t *testing.T) {
 	c, _ := dialRaw(t, env.port, rawConnect{ClientID: "ov", Version: 5, Clean: true})
 	defer c.Close()
 	// Warm the catalog so writes only need the DP_SET round trip.
-	if code := c.Publish(rawPub{Topic: "winccoa/this/tags/Pump1/count/set", Payload: []byte(`0`), QoS: 1}); code != 0 {
+	if code := c.Publish(rawPub{Topic: "winccoa/System1/tags/Pump1/count/set", Payload: []byte(`0`), QoS: 1}); code != 0 {
 		t.Fatalf("warm-up PUBACK 0x%02x", code)
 	}
 	time.Sleep(100 * time.Millisecond)
@@ -634,7 +634,7 @@ func TestNativeOverload(t *testing.T) {
 	sim.Pause()
 	var accepted int
 	for i := 1; i <= 40; i++ {
-		code := c.Publish(rawPub{Topic: "winccoa/this/tags/Pump1/count/set", Payload: []byte(fmt.Sprintf(`{"value":%d,"id":"o%d","replyTo":"ov/res"}`, i, i)), QoS: 1})
+		code := c.Publish(rawPub{Topic: "winccoa/System1/tags/Pump1/count/set", Payload: []byte(fmt.Sprintf(`{"value":%d,"id":"o%d","replyTo":"ov/res"}`, i, i)), QoS: 1})
 		if code == 0 {
 			accepted++
 		}
@@ -675,7 +675,7 @@ func TestNativeOverload(t *testing.T) {
 		t.Fatal("operations ran off the manager goroutine")
 	}
 	// Processing resumes normally.
-	if code := c.Publish(rawPub{Topic: "winccoa/this/tags/Pump1/count/set", Payload: []byte(`77`), QoS: 1}); code != 0 {
+	if code := c.Publish(rawPub{Topic: "winccoa/System1/tags/Pump1/count/set", Payload: []byte(`77`), QoS: 1}); code != 0 {
 		t.Fatalf("after resume PUBACK 0x%02x", code)
 	}
 	time.Sleep(200 * time.Millisecond)
@@ -693,49 +693,45 @@ func TestNativeStatusTopic(t *testing.T) {
 	resolves := sim.Calls(oahost.OpResolve)
 	c, _ := dialRaw(t, env.port, rawConnect{ClientID: "st", Version: 5, Clean: true})
 	defer c.Close()
-	c.Subscribe(sub("winccoa/node/this/status", 1), sub("winccoa/node/n-27109/status", 1))
-	for _, topic := range []string{"winccoa/node/this/status", "winccoa/node/n-27109/status"} {
-		pk, ok := c.NextOn(topic, 2*time.Second)
-		if !ok || !pk.FixedHeader.Retain {
-			t.Fatalf("retained status on %s missing", topic)
-		}
-		var st map[string]any
-		_ = json.Unmarshal(pk.Payload, &st)
-		if st["ready"] != true || st["system"] != "System1" {
-			t.Fatalf("status %s", pk.Payload)
-		}
+	c.Subscribe(sub("winccoa/System1", 1))
+	pk, ok := c.NextOn("winccoa/System1", 2*time.Second)
+	if !ok || !pk.FixedHeader.Retain {
+		t.Fatal("retained status missing")
+	}
+	var st map[string]any
+	_ = json.Unmarshal(pk.Payload, &st)
+	if st["ready"] != true || st["system"] != "System1" || st["nodeId"] != "n-27109" {
+		t.Fatalf("status %s", pk.Payload)
 	}
 	if sim.Calls(oahost.OpResolve) != resolves {
 		t.Fatal("status subscription caused a DPE lookup")
 	}
 	sim.SetSystemAvailable("System1", false)
-	pk, ok := c.NextOn("winccoa/node/this/status", 2*time.Second)
+	pk, ok = c.NextOn("winccoa/System1", 2*time.Second)
 	if !ok || !strings.Contains(string(pk.Payload), `"disconnected"`) {
 		t.Fatal("status transition not published")
 	}
 }
 
-// A stale status of an earlier NodeId can be cleared with a retained empty
-// publish; the broker's own status topics stay protected.
+// A stale status of another system (e.g. after the project's system name
+// changed) can be cleared with a retained empty publish; the broker's own
+// status topic stays protected.
 func TestNativeStaleStatusClear(t *testing.T) {
 	sim, client := newSim(0)
 	defer sim.Close()
 	env := startNative(t, 27110, filepath.Join(t.TempDir(), "n.db"), sim, client, nil, broker.Options{})
 	defer env.srv.Close()
-	const stale = "winccoa/node/old-node/status"
-	if err := env.srv.MQTT().Publish(stale, []byte(`{"nodeId":"old-node"}`), true, 1); err != nil {
+	const own, stale = "winccoa/System1", "winccoa/OldSystem"
+	if err := env.srv.MQTT().Publish(stale, []byte(`{"system":"OldSystem"}`), true, 1); err != nil {
 		t.Fatal(err)
 	}
 	c, _ := dialRaw(t, env.port, rawConnect{ClientID: "clr", Version: 5, Clean: true})
 	defer c.Close()
 
-	// Own status topics: neither a forged value nor a clear is accepted.
-	for _, topic := range []string{"winccoa/node/this/status", "winccoa/node/n-27110/status"} {
-		if code := c.Publish(rawPub{Topic: topic, QoS: 1, Retain: true}); code != 0x87 {
-			t.Errorf("clear of own %s PUBACK 0x%02x", topic, code)
-		}
+	if code := c.Publish(rawPub{Topic: own, QoS: 1, Retain: true}); code != 0x87 {
+		t.Errorf("clear of own status PUBACK 0x%02x", code)
 	}
-	// Another node: only a retained empty payload is accepted.
+	// Another system: only a retained empty payload is accepted.
 	if code := c.Publish(rawPub{Topic: stale, Payload: []byte(`{}`), QoS: 1, Retain: true}); code != 0x87 {
 		t.Errorf("forged stale status PUBACK 0x%02x", code)
 	}
@@ -749,13 +745,13 @@ func TestNativeStaleStatusClear(t *testing.T) {
 
 	s, _ := dialRaw(t, env.port, rawConnect{ClientID: "clr-sub", Version: 5, Clean: true})
 	defer s.Close()
-	s.Subscribe(sub("winccoa/node/this/status", 1), sub("winccoa/node/n-27110/status", 1), sub(stale, 1))
-	got := s.NextOnAll(time.Second, "winccoa/node/this/status", "winccoa/node/n-27110/status", stale)
+	s.Subscribe(sub(own, 1), sub(stale, 1))
+	got := s.NextOnAll(time.Second, own, stale)
 	if _, ok := got[stale]; ok {
 		t.Fatal("stale status still retained")
 	}
-	if len(got) != 2 {
-		t.Fatalf("own status topics missing: %v", len(got))
+	if _, ok := got[own]; !ok {
+		t.Fatal("own status missing")
 	}
 }
 

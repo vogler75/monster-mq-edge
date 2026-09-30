@@ -50,7 +50,7 @@ func TestExampleConfigsValidate(t *testing.T) {
 			t.Errorf("%s does not load: %v", f, err)
 			continue
 		}
-		if f == "winccoa/monstermq.yaml.example" && (!cfg.WinCCOaNative.Enabled || len(cfg.WinCCOaNative.Stores) != 3) {
+		if f == "winccoa/monstermq.yaml.example" && (!cfg.WinCCOaNative.Enabled || cfg.ConfigStore() != config.StoreWinCCOA || cfg.SessionStore() != config.StoreWinCCOA) {
 			t.Errorf("%s: WinCCOaNative not parsed: %+v", f, cfg.WinCCOaNative)
 		}
 	}

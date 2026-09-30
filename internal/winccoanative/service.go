@@ -270,8 +270,6 @@ func (s *Service) Validate(filter string) (Verdict, string) {
 			return SharedDeny, "shared subscription on status topic"
 		}
 		return Accept, ""
-	case KindNode:
-		return Invalid, "unknown broker-owned node topic"
 	}
 	if shared {
 		return SharedDeny, "shared subscriptions are not supported for native topics"
@@ -334,13 +332,7 @@ func (s *Service) resolveTarget(t Target) (string, oahost.Resolution, Verdict, s
 	if !s.ready.Load() || !s.oaUp.Load() {
 		return "", oahost.Resolution{}, Unavailable, "WinCC OA not ready"
 	}
-	sys := s.localSystem
-	if t.Remote {
-		if t.System == s.localSystem {
-			return "", oahost.Resolution{}, Invalid, ErrLocalAsRemote.Error()
-		}
-		sys = t.System
-	}
+	sys := t.System
 	name := t.DPE(sys)
 	res, err := s.lookup(name)
 	if err != nil {
@@ -400,18 +392,14 @@ func (s *Service) Subscribed(clientID, filter string, existed bool) {
 		return
 	}
 	if HasWildcard(f) {
-		s.subscribedWild(clientID, f, existed, false)
+		s.subscribedWild(clientID, f, existed, false, false)
 		return
 	}
 	t, err := Parse(f)
 	if err != nil || t.Command {
 		return
 	}
-	sys := s.localSystem
-	if t.Remote {
-		sys = t.System
-	}
-	key := t.Key(sys)
+	key := t.Key(t.System)
 	sk := subKey{clientID, filter}
 
 	s.mu.Lock()
@@ -436,7 +424,7 @@ func (s *Service) Subscribed(clientID, filter string, existed bool) {
 			s.logger.Warn("native interest limit reached", "limit", s.opts.MaxInterests, "filter", filter)
 			return
 		}
-		d = &dpeEntry{key: key, system: sys, dp: t.DP, subs: map[subKey]*subEntry{}}
+		d = &dpeEntry{key: key, system: t.System, dp: t.DP, subs: map[subKey]*subEntry{}}
 		s.dpes[key] = d
 	}
 	e := &subEntry{key: key, topic: f, waiting: true}
@@ -538,7 +526,7 @@ func (s *Service) Restore(subs map[string][]string) (invalid map[string][]string
 				switch {
 				case Classify(f) != KindNative:
 				case HasWildcard(f):
-					s.subscribedWild(client, f, false, true)
+					s.subscribedWild(client, f, false, true, v == Unavailable)
 				default:
 					s.addRestored(client, filter)
 				}
@@ -557,11 +545,7 @@ func (s *Service) addRestored(clientID, filter string) {
 	if err != nil {
 		return
 	}
-	sys := s.localSystem
-	if t.Remote {
-		sys = t.System
-	}
-	key := t.Key(sys)
+	key := t.Key(t.System)
 	sk := subKey{clientID, filter}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -570,7 +554,7 @@ func (s *Service) addRestored(clientID, filter string) {
 	}
 	d := s.dpes[key]
 	if d == nil {
-		d = &dpeEntry{key: key, system: sys, dp: t.DP, subs: map[subKey]*subEntry{}}
+		d = &dpeEntry{key: key, system: t.System, dp: t.DP, subs: map[subKey]*subEntry{}}
 		s.dpes[key] = d
 	}
 	e := &subEntry{key: key, topic: filter}
@@ -1061,22 +1045,23 @@ func (s *Service) PublishStatus() {
 		"timestamp": time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
 	}
 	b, _ := json.Marshal(st)
-	_ = s.broker.Publish(Root+"/"+SegNode+"/this/status", b, true, 1)
-	if s.opts.NodeID != "" && s.opts.NodeID != "this" {
-		_ = s.broker.Publish(Root+"/"+SegNode+"/"+s.opts.NodeID+"/status", b, true, 1)
+	if s.localSystem != "" {
+		_ = s.broker.Publish(StatusTopic(s.localSystem), b, true, 1)
 	}
 }
 
-// StaleStatusClear reports whether a publish removes the retained status
-// of another node: a retained empty payload on winccoa/node/<id>/status
-// where <id> is neither "this" nor this broker's NodeId (e.g. a status
-// left behind by an earlier NodeId).
+// StatusTopic is the retained status topic of a system: winccoa/<system>.
+func StatusTopic(system string) string { return Root + "/" + encodeSegment(system, false) }
+
+// StaleStatusClear reports whether a publish removes a retained status
+// this broker does not own: a retained empty payload on winccoa/<system>
+// for a system other than the local one (e.g. left behind after the
+// project's system name changed).
 func (s *Service) StaleStatusClear(topic string, retain bool, payload []byte) bool {
 	if !retain || len(payload) != 0 || Classify(topic) != KindStatus {
 		return false
 	}
-	id := strings.TrimSuffix(strings.TrimPrefix(topic, Root+"/"+SegNode+"/"), "/status")
-	return id != "this" && id != s.opts.NodeID
+	return topic != StatusTopic(s.localSystem)
 }
 
 func (s *Service) Stats() Stats {

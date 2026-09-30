@@ -117,9 +117,9 @@
       "default": 1048576
     },
     "DefaultStoreType":  { "$ref": "#/$defs/StoreBackend", "description": "Backend used by every store unless overridden below." },
-    "SessionStoreType":  { "$ref": "#/$defs/VolatileStoreBackend", "description": "Override for the session/subscription store; falls back to DefaultStoreType. MEMORY uses an in-memory SQLite database." },
+    "SessionStoreType":  { "type": "string", "enum": ["SQLITE", "POSTGRES", "MONGODB", "MEMORY", "WINCCOA"], "description": "Override for the session/subscription store; falls back to DefaultStoreType. MEMORY uses an in-memory SQLite database. WINCCOA keeps them in MMQSessions datapoints (WinCC OA manager only)." },
     "RetainedStoreType": { "$ref": "#/$defs/RetainedStoreBackend", "description": "Override for the retained-message store; falls back to DefaultStoreType. MEMORY = built-in in-memory map only, no DB persistence and no startup load." },
-    "ConfigStoreType":   { "$ref": "#/$defs/StoreBackend", "description": "Override for the device-config store; falls back to DefaultStoreType." },
+    "ConfigStoreType":   { "type": "string", "enum": ["SQLITE", "POSTGRES", "MONGODB", "WINCCOA"], "description": "Override for the device-config and archive-config store; falls back to DefaultStoreType. WINCCOA keeps them in MMQConfigs datapoints (WinCC OA manager only)." },
     "QueueStoreType":    { "$ref": "#/$defs/VolatileStoreBackend", "description": "Override for the queued-message store; falls back to DefaultStoreType. MEMORY uses an in-memory SQLite database and does not survive restart." },
     "SQLite": {
       "type": "object",
@@ -287,8 +287,7 @@
       "properties": {
         "Enabled":    { "type": "boolean", "default": false, "description": "Enable the native WinCC OA embedding features." },
         "Transport":  { "type": "string", "enum": ["NATIVE", "GRAPHQL"], "default": "NATIVE", "description": "Transport for existing WinCCOA-Client devices on this node." },
-        "Namespace":  { "type": "boolean", "default": false, "description": "Expose winccoa/this and winccoa/remote tag/type topics, validated subscriptions and typed writes." },
-        "Stores":     { "type": "array", "items": { "type": "string", "enum": ["DeviceConfig", "ArchiveConfig", "Sessions"] }, "uniqueItems": true, "description": "Stores kept in WinCC OA datapoints (MMQConfigs/MMQSessions) instead of DefaultStoreType." },
+        "Namespace":  { "type": "boolean", "default": false, "description": "Expose winccoa/<system>/tags|types topics, validated subscriptions and typed writes." },
         "EchoPolicy": { "type": "string", "enum": ["BROKER_TAG", "NO_SOURCE"], "default": "BROKER_TAG", "description": "How values written through MQTT are echoed to native subscribers." }
       }
     },

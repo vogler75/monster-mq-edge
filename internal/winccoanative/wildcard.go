@@ -9,16 +9,17 @@ import (
 // WildTarget is a native filter with MQTT wildcards. It is served by one
 // dpQueryConnectSingle (spec-winccoa-native.md section 4.2):
 //
-//	winccoa/this/tags/#                 -> '*.**'
-//	winccoa/this/tags/Pump1/#           -> 'Pump1.**'
-//	winccoa/this/tags/Pump1/value/#     -> '{Pump1.value,Pump1.value.**}'
-//	winccoa/this/tags/+/speed           -> '*.speed'
-//	winccoa/this/types/Pump/#           -> '*.**' WHERE _DPT = "Pump"
-//	winccoa/this/types/Pump/+/value/#   -> '{*.value,*.value.**}' WHERE _DPT = "Pump"
-//	winccoa/remote/Sys/tags/...          -> ... REMOTE 'Sys'
+//	winccoa/<sys>/tags/#                 -> '*.**'
+//	winccoa/<sys>/tags/<dp>/#            -> '<dp>.**'
+//	winccoa/<sys>/tags/<dp>/<el>/#       -> '{<dp>.<el>,<dp>.<el>.**}'
+//	winccoa/<sys>/tags/+/<el>            -> '*.<el>'
+//	winccoa/<sys>/types/<dpt>/#          -> '*.**' WHERE _DPT = "<dpt>"
+//	winccoa/<sys>/types/<dpt>/+/<el>/#   -> '{*.<el>,*.<el>.**}' WHERE _DPT = "<dpt>"
+//
+// A system other than the local one adds REMOTE '<sys>'.
 type WildTarget struct {
-	Remote   bool
-	System   string   // remote system; empty for local
+	Remote   bool     // System is not the local system (set by the service)
+	System   string   // WinCC OA system name
 	Types    bool     // types/ form: publish to .../types/<DPT>/...
 	TypeName string   // fixed DPT; empty = any type
 	Path     []string // DP then elements; "+" = one level
@@ -37,23 +38,12 @@ func ParseWildcard(filter string) (WildTarget, error) {
 		return w, fmt.Errorf("%w: not a native wildcard filter", ErrWildcard)
 	}
 	segs := strings.Split(filter, "/")[1:]
-	i := 0
-	switch segs[i] {
-	case SegThis:
-		i++
-	case SegRemote:
-		w.Remote = true
-		i++
-		if i >= len(segs) || segs[i] == "+" || segs[i] == "#" {
-			return w, fmt.Errorf("%w: the remote system must be named", ErrWildcard)
-		}
-		sys, err := decodeSegment(segs[i], false)
-		if err != nil || sys == "" {
-			return w, fmt.Errorf("%w: bad remote system", ErrWildcard)
-		}
-		w.System = sys
-		i++
+	sys, err := decodeSegment(segs[0], false)
+	if err != nil || sys == "" {
+		return w, fmt.Errorf("%w: bad system", ErrWildcard)
 	}
+	w.System = sys
+	i := 1
 	if i >= len(segs) {
 		return w, fmt.Errorf("%w: missing tags/types", ErrWildcard)
 	}
@@ -83,7 +73,7 @@ func ParseWildcard(filter string) (WildTarget, error) {
 		}
 		i++
 	default:
-		return w, fmt.Errorf("%w: expected tags or types after the scope", ErrWildcard)
+		return w, fmt.Errorf("%w: expected tags or types after the system", ErrWildcard)
 	}
 	rest := segs[i:]
 	for j, s := range rest {
@@ -193,10 +183,7 @@ func (w WildTarget) RowTarget(row, typeName string) (Target, bool) {
 	if dp == "" || Protected(dp) {
 		return Target{}, false
 	}
-	t := Target{Remote: w.Remote, DP: dp, Attr: DefaultAttr}
-	if w.Remote {
-		t.System = sys
-	}
+	t := Target{System: sys, DP: dp, Attr: DefaultAttr}
 	if w.Types {
 		t.TypeName = typeName
 	}

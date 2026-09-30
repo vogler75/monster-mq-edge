@@ -155,7 +155,11 @@ func build(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus, opts Optio
 		return nil, err
 	}
 	nativeOn := opts.OA != nil && cfg.WinCCOaNative.Enabled
-	if nativeOn && len(cfg.WinCCOaNative.Stores) > 0 {
+	if cfg.UsesWinCCOaStores() && !nativeOn {
+		_ = storage.Close()
+		return nil, fmt.Errorf("ConfigStoreType/SessionStoreType WINCCOA needs the WinCC OA manager (WCCOAmmq) with WinCCOaNative enabled")
+	}
+	if nativeOn && cfg.UsesWinCCOaStores() {
 		if err := useOAStores(ctx, cfg, storage, oahost.API{C: opts.OA}, logger); err != nil {
 			_ = storage.Close()
 			return nil, err
@@ -508,9 +512,8 @@ func configureVolatileStores(ctx context.Context, cfg *config.Config, storage *s
 // missing DPT or an unreachable OA stops startup instead of running with
 // an incompatible or empty configuration.
 func useOAStores(ctx context.Context, cfg *config.Config, storage *stores.Storage, api oahost.API, logger *slog.Logger) error {
-	w := cfg.WinCCOaNative
-	needCfg := w.HasStore(config.WinCCOaStoreDevice) || w.HasStore(config.WinCCOaStoreArchive)
-	needSes := w.HasStore(config.WinCCOaStoreSessions)
+	needCfg := cfg.ConfigStore() == config.StoreWinCCOA
+	needSes := cfg.SessionStore() == config.StoreWinCCOA
 	if err := oastore.CheckTypes(ctx, api, needCfg, needSes); err != nil {
 		return fmt.Errorf("winccoa stores: %w", err)
 	}
@@ -525,17 +528,15 @@ func useOAStores(ctx context.Context, cfg *config.Config, storage *stores.Storag
 			return fmt.Errorf("winccoa stores: %w", err)
 		}
 	}
-	if w.HasStore(config.WinCCOaStoreDevice) {
+	if needCfg {
 		storage.DeviceConfig = st.Device
-	}
-	if w.HasStore(config.WinCCOaStoreArchive) {
 		storage.ArchiveConfig = st.Archive
 	}
 	if needSes {
 		storage.Sessions = st.Sessions
 		storage.Subscriptions = st.Sessions
 	}
-	logger.Info("winccoa datapoint stores active", "stores", w.Stores)
+	logger.Info("winccoa datapoint stores active", "config", needCfg, "sessions", needSes)
 	return nil
 }
 

@@ -43,7 +43,8 @@ The standalone broker is unaffected: `make build`, `build-arm64` and
 ## Project setup
 
 1. Copy `WCCOAmmq` to `<project>/bin`.
-2. Create the store datapoint types once (needed only when `WinCCOaNative.Stores` is used):
+2. Create the store datapoint types once (needed only with `ConfigStoreType: WINCCOA`
+   or `SessionStoreType: WINCCOA`):
    `WCCOActrl -proj <project> <repo>/winccoa/scripts/mmqCreateTypes.ctl`
    (or copy the script to `<project>/scripts`). The broker checks the
    layout at startup and refuses to start with a missing or different type.
@@ -74,15 +75,18 @@ The standalone broker is unaffected: `make build`, `build-arm64` and
 
 ## Readiness and diagnostics
 
-- `winccoa/node/this/status` and `winccoa/node/<NodeId>/status` (retained):
-  `ready`, `oa` connection, local `system`, `role` (`STANDALONE`).
+- `winccoa/<System>` (retained JSON, `<System>` = the project's system
+  name): `nodeId`, `ready`, `oa` connection, `system`, `role`
+  (`STANDALONE`), `timestamp`. A retained empty publish clears a stale
+  status of another system name; the own status cannot be written.
 - Broker log lines go to the WinCC OA log (`PVSS_II.log` / log viewer)
   with the `MonsterMQ` catalog prefix. A start failure (bad config, occupied
   port, missing DPT, unreachable store) is logged as `broker failed: ...` and
   the manager exits with code 1.
-- Namespace: `winccoa/this/tags/<DP>/<element...>`,
-  `winccoa/this/types/<DPT>/<DP>/<element...>`, the same under
-  `winccoa/remote/<System>/`, optional read attribute suffix
+- Namespace: `winccoa/<System>/tags/<DP>/<element...>` and
+  `winccoa/<System>/types/<DPT>/<DP>/<element...>`, where `<System>` is the
+  local system or a connected remote system (same form for both), optional
+  read attribute suffix
   (`_online.._value`, `_online.._stime`, `_online.._status`,
   `_online.._invalid`), writes via `.../set` with `{"value": ..}`. See the
   spec for encoding, reason codes and command results.
@@ -124,15 +128,15 @@ go to the WinCC OA log with the `MonsterMQ` prefix.
 
 ## Wildcard subscriptions
 
-Wildcards inside `winccoa/<scope>/tags/` and `winccoa/<scope>/types/` are
+Wildcards inside `winccoa/<System>/tags/` and `winccoa/<System>/types/` are
 served by WinCC OA queries:
 
-- `winccoa/this/tags/Pump1/#`: every value element of `Pump1`
-- `winccoa/this/tags/Pump1/value/#`: `Pump1.value` and everything below
-- `winccoa/this/tags/+/speed`: the `speed` element of every datapoint
-- `winccoa/this/types/Pump/#`: every element of every datapoint of type `Pump`
-- `winccoa/this/types/Pump/+/value/#`: the `value` subtree of all `Pump`s
-- `winccoa/this/tags/#`: the whole system (internal and store datapoints excluded)
+- `winccoa/System1/tags/Pump1/#`: every value element of `Pump1`
+- `winccoa/System1/tags/Pump1/value/#`: `Pump1.value` and everything below
+- `winccoa/System1/tags/+/speed`: the `speed` element of every datapoint
+- `winccoa/System1/types/Pump/#`: every element of every datapoint of type `Pump`
+- `winccoa/System1/types/Pump/+/value/#`: the `value` subtree of all `Pump`s
+- `winccoa/System1/tags/#`: the whole system (internal and store datapoints excluded)
 
 Each element is published to its own topic, so a client can mix wildcard and
 exact subscriptions; a change is delivered once. Filters that cover every

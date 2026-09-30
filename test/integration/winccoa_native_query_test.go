@@ -295,7 +295,7 @@ func TestNativeQueryLifecycle(t *testing.T) {
 	}
 
 	// Output colliding with a reserved native branch is refused.
-	bad := `{"addresses":[{"query":"SELECT '_online.._value' FROM 'Pump1.speed'","topic":"this/tags"}]}`
+	bad := `{"addresses":[{"query":"SELECT '_online.._value' FROM 'Pump1.speed'","topic":"q1"}]}`
 	if err := srv.Storage().DeviceConfig.Save(ctx, stores.DeviceConfig{Name: "oa2", Namespace: "winccoa", NodeID: "qnode", Type: "WinCCOA-Client", Enabled: true, Config: bad}); err != nil {
 		t.Fatal(err)
 	}
@@ -304,6 +304,6 @@ func TestNativeQueryLifecycle(t *testing.T) {
 	}
 	time.Sleep(300 * time.Millisecond)
 	if mgr.Connector("oa2") != nil || sim.Queries() != 0 {
-		t.Fatal("connector publishing into winccoa/this was started")
+		t.Fatal("connector publishing into winccoa/ was started")
 	}
 }

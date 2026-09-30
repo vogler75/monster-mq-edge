@@ -12,9 +12,10 @@ import (
 	"monstermq.io/edge/internal/oahost"
 )
 
-// reservedNativeBranches are owned by the native namespace; configured query
-// output must never publish into them.
-var reservedNativeBranches = []string{"winccoa/this", "winccoa/remote", "winccoa/node", "winccoa/cns"}
+// reservedNativeBranches are owned by the native namespace (winccoa/<system>
+// status and everything below it); configured query output must never
+// publish into them.
+var reservedNativeBranches = []string{"winccoa"}
 
 // CheckReservedOutput reports an error when an address's output topic prefix
 // falls into a reserved native branch.

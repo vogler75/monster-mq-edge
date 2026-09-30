@@ -14,6 +14,7 @@ import (
 
 func main() {
 	var cfg loadgen.Config
+	system := flag.String("system", "System1", "WinCC OA system name of the datapoints")
 	prefix := flag.String("prefix", "MMQLoad", "datapoint name prefix (DPs are <prefix>00000..)")
 	element := flag.String("element", "value", "float element written and read")
 	flag.StringVar(&cfg.Broker, "broker", "tcp://127.0.0.1:1883", "broker URL")
@@ -28,7 +29,7 @@ func main() {
 	flag.StringVar(&cfg.SubBroker, "sub-broker", "", "subscribe on this broker instead (e.g. a query bridge output)")
 	flag.StringVar(&cfg.SubFilter, "sub-filter", "", "single filter every subscriber uses (e.g. ns/q/#)")
 	flag.Parse()
-	cfg.TopicFmt = loadgen.TopicFmtFor(*prefix, *element)
+	cfg.TopicFmt = loadgen.TopicFmtFor(*system, *prefix, *element)
 	res, err := loadgen.Run(cfg)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "mmqload:", err)

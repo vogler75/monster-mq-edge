@@ -33,7 +33,7 @@ func TestNativeLoadSimulated(t *testing.T) {
 	defer env.srv.Close()
 	base := loadgen.Config{
 		Broker: "tcp://127.0.0.1:27170", Subscribers: 50, Writers: 4, DPEs: dpes,
-		TopicFmt: loadgen.TopicFmtFor("MMQLoad", "value"), Rate: 2000, Duration: 30 * time.Second,
+		TopicFmt: loadgen.TopicFmtFor("System1", "MMQLoad", "value"), Rate: 2000, Duration: 30 * time.Second,
 	}
 	// Leg 1: OA value change -> MQTT subscriber (budget p99 <= 50 ms).
 	leg := base

@@ -174,3 +174,24 @@ func TestDebAndExampleConfigsValidate(t *testing.T) {
 		}
 	}
 }
+
+func TestWinCCOaStoresLegacyKeyRejected(t *testing.T) {
+	tmp := filepath.Join(t.TempDir(), "config.yaml")
+	yaml := []byte("WinCCOaNative:\n  Enabled: true\n  Stores: [DeviceConfig]\n")
+	if err := os.WriteFile(tmp, yaml, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(tmp); err == nil || !strings.Contains(err.Error(), "ConfigStoreType: WINCCOA") {
+		t.Fatalf("expected the removed Stores key to be rejected, got %v", err)
+	}
+	cfg := Default()
+	cfg.ConfigStoreType = StoreWinCCOA
+	cfg.SessionStoreType = StoreWinCCOA
+	if err := cfg.Validate(); err != nil || !cfg.UsesWinCCOaStores() {
+		t.Fatalf("WINCCOA store types: %v", err)
+	}
+	cfg.RetainedStoreType = StoreWinCCOA
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("RetainedStoreType WINCCOA must be rejected")
+	}
+}

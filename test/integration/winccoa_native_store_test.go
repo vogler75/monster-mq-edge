@@ -21,7 +21,8 @@ import (
 )
 
 func withOAStores(c *config.Config) {
-	c.WinCCOaNative.Stores = []string{config.WinCCOaStoreDevice, config.WinCCOaStoreArchive, config.WinCCOaStoreSessions}
+	c.ConfigStoreType = config.StoreWinCCOA
+	c.SessionStoreType = config.StoreWinCCOA
 }
 
 // AC-14: every OA-backed store operation, and survival across restart.
@@ -269,7 +270,7 @@ func TestNativeStoreSessions(t *testing.T) {
 	if ack.SessionPresent {
 		t.Fatal("unexpected session present")
 	}
-	c.Subscribe(sub("winccoa/this/tags/Pump1/count", 1), sub("plain/topic", 1))
+	c.Subscribe(sub("winccoa/System1/tags/Pump1/count", 1), sub("plain/topic", 1))
 	c.Close()
 	// MQTT 3.1.1 clean session: purged, not restored.
 	c3, _ := dialRaw(t, env.port, rawConnect{ClientID: "c3", Version: 4, Clean: true})
@@ -277,7 +278,7 @@ func TestNativeStoreSessions(t *testing.T) {
 	c3.Close()
 	// MQTT 5 with zero expiry: gone at disconnect.
 	c0, _ := dialRaw(t, env.port, rawConnect{ClientID: "p0", Version: 5, Clean: true})
-	c0.Subscribe(sub("winccoa/this/tags/Pump1/speed", 1))
+	c0.Subscribe(sub("winccoa/System1/tags/Pump1/speed", 1))
 	c0.Close()
 	time.Sleep(300 * time.Millisecond)
 	ctx := context.Background()
@@ -301,7 +302,7 @@ func TestNativeStoreSessions(t *testing.T) {
 	if !ack.SessionPresent {
 		t.Fatal("CONNACK session present must reflect the restored OA session")
 	}
-	if pk, ok := r.NextOn("winccoa/this/tags/Pump1/count", 3*time.Second); !ok || payloadValue(t, pk) != float64(5) {
+	if pk, ok := r.NextOn("winccoa/System1/tags/Pump1/count", 3*time.Second); !ok || payloadValue(t, pk) != float64(5) {
 		t.Fatal("queued native change not delivered after restart")
 	}
 	pub, _ := dialRaw(t, env2.port, rawConnect{ClientID: "pub", Version: 5, Clean: true})
@@ -336,15 +337,21 @@ func TestNativeStoreMissingType(t *testing.T) {
 	cfg.GraphQL.Enabled = false
 	cfg.Metrics.Enabled = false
 	cfg.SQLite.Path = filepath.Join(t.TempDir(), "n.db")
-	cfg.WinCCOaNative = config.WinCCOaNativeConfig{Enabled: true, Stores: []string{config.WinCCOaStoreDevice}}
+	cfg.WinCCOaNative = config.WinCCOaNativeConfig{Enabled: true}
+	cfg.ConfigStoreType = config.StoreWinCCOA
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
+	}
+	// WINCCOA stores need the WinCC OA manager.
+	if _, err := broker.NewWithOptions(cfg, slog.New(slog.DiscardHandler), nil, broker.Options{}); err == nil || !strings.Contains(err.Error(), "WinCC OA manager") {
+		t.Fatalf("expected an error without OA, got %v", err)
 	}
 	_, err := broker.NewWithOptions(cfg, slog.New(slog.DiscardHandler), nil, broker.Options{OA: client})
 	if err == nil || !strings.Contains(err.Error(), "MMQConfigs") {
 		t.Fatalf("expected a DPT error, got %v", err)
 	}
-	cfg.WinCCOaNative.Stores = []string{config.WinCCOaStoreSessions}
+	cfg.ConfigStoreType = config.StoreSQLite
+	cfg.SessionStoreType = config.StoreWinCCOA
 	if _, err := broker.NewWithOptions(cfg, slog.New(slog.DiscardHandler), nil, broker.Options{OA: client}); err == nil || !strings.Contains(err.Error(), "MMQSessions") {
 		t.Fatalf("expected a missing DPT error, got %v", err)
 	}

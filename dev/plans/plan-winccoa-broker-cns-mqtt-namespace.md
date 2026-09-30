@@ -4,16 +4,16 @@
 
 **Status: planned for a later release; no implementation in the initial embedded-manager scope.**
 
-Expose WinCC OA Common Name Service (CNS) views and their linked values under `winccoa/cns/...`. Build on the lifecycle, C ABI queues, canonical DPE subscriptions, authorization, and typed-write handling in the [embedded broker plan](plan-winccoa-broker-embedded-manager.md). CNS provides another way to find the same underlying data; it does not require a separate broker or storage backend.
+Expose WinCC OA Common Name Service (CNS) views and their linked values under `winccoa/<systemname>/cns/...`. Build on the lifecycle, C ABI queues, canonical DPE subscriptions, authorization, and typed-write handling in the [embedded broker plan](plan-winccoa-broker-embedded-manager.md). CNS provides another way to find the same underlying data; it does not require a separate broker or storage backend.
 
-The initial embedded release reserves this prefix and rejects explicit CNS access while the feature is disabled. It does not enumerate CNS, install observers, or open CNS-derived subscriptions. CNS acceptance is independent of the initial release's M0–M7 criteria.
+The initial embedded release reserves the `cns` branch in both scopes and rejects explicit CNS access while the feature is disabled. It does not enumerate CNS, install observers, or open CNS-derived subscriptions. CNS acceptance is independent of the initial release's M0–M7 criteria.
 
-The user has selected the `winccoa/cns/` prefix and deferred implementation. Detailed grammar and rollout below are proposals to finalize before implementation. The OA SDK version/patch and C++ target remain unconfirmed; this document does not claim a tested SDK implementation or approve GraphQL/storage/CGO/clustering exceptions.
+The user has placed CNS inside the system level, next to `tags` and `types` (`winccoa/<systemname>/cns/`), and deferred implementation. This replaces the earlier top-level `winccoa/cns/` prefix and the `this`/`remote` scopes. Detailed grammar and rollout below are proposals to finalize before implementation. The OA SDK version/patch and C++ target remain unconfirmed; this document does not claim a tested SDK implementation or approve GraphQL/storage/CGO/clustering exceptions.
 
 ## 2. Goals and Scope
 
 1. Let MQTT clients address plant-model nodes without knowing physical datapoint names.
-2. Support the same explicit local/remote distinction as native tag/type access, inside the CNS prefix.
+2. Use the same system level as native tag/type access (`winccoa/<systemname>/`), with `cns` as a sibling of `tags` and `types`.
 3. Reuse one underlying DPE subscription where several CNS nodes or tag/type paths refer to the same value.
 4. Keep subscriptions correct when a view/node is renamed, moved, deleted, or linked to a different DPE.
 5. Add bounded discovery and wildcard subscriptions after exact value access works; optionally add writes after safe relinking/command semantics are demonstrated.
@@ -40,21 +40,20 @@ CTRL functions such as `cnsGetId` and `cnsAddObserver` describe required behavio
 ### 4.1 Value topics
 
 ```text
-winccoa/cns/local/<view>/<root-node>/<child-node>/...
-winccoa/cns/remote/<systemname>/<view>/<root-node>/<child-node>/...
+winccoa/<systemname>/cns/<view>/<root-node>/<child-node>/...
 ```
 
 Assume the manager's local system is `System1` and the example CNS links already exist:
 
 | MQTT topic | CNS node | Linked read target |
 |---|---|---|
-| `winccoa/cns/local/Plant/Line1/Pump101/Speed` | `System1.Plant:Line1.Pump101.Speed` | `System1:Pump101.speed:_online.._value` |
-| `winccoa/cns/local/Plant/Line1/Temperature` | `System1.Plant:Line1.Temperature` | `System1:Temperature.:_online.._value` for a scalar-root link |
-| `winccoa/cns/remote/SubstationA/Electrical/Feeders/Feeder1/Voltage` | `SubstationA.Electrical:Feeders.Feeder1.Voltage` | `SubstationA:Feeder1.voltage:_online.._value` |
+| `winccoa/System1/cns/Plant/Line1/Pump101/Speed` | `System1.Plant:Line1.Pump101.Speed` | `System1:Pump101.speed:_online.._value` |
+| `winccoa/System1/cns/Plant/Line1/Temperature` | `System1.Plant:Line1.Temperature` | `System1:Temperature.:_online.._value` for a scalar-root link |
+| `winccoa/SubstationA/cns/Electrical/Feeders/Feeder1/Voltage` | `SubstationA.Electrical:Feeders.Feeder1.Voltage` | `SubstationA:Feeder1.voltage:_online.._value` |
 
 `Plant` and `Electrical` are view IDs; `Line1` and `Feeders` are root-node IDs. Remaining levels are actual CNS child IDs. Every node level is resolved through CNS; never infer `Pump101.speed` by replacing slashes in the MQTT path with dots.
 
-`this` selects the manager's system for CNS lookup. `remote/<systemname>` selects another system and never falls back to local. Reject the local system's name in the remote branch, consistent with native tag/type access. The system containing the CNS node and the system containing its linked DPE are separate facts; if cross-system links are supported by the selected SDK, validate and authorize both.
+The system level selects the system for CNS lookup: the manager's own system is looked up locally, any other system remotely, and an unavailable system never falls back to local, consistent with native tag/type access. The system containing the CNS node and the system containing its linked DPE are separate facts; if cross-system links are supported by the selected SDK, validate and authorize both.
 
 Use CNS ID segments in topics; display names are optional metadata. Share the native namespace's canonical segment-encoding utility. Before C0 exits, freeze encoding for slash, percent, MQTT wildcard characters, and reserved terminal names (`set`, `$meta`, `$children`) so an actual node with such an ID cannot be interpreted as an operation. Encode/decode each segment exactly once; reject alternate encodings and malformed UTF-8, preserving case. Assemble OA paths through validated SDK identifiers, not user-text concatenation.
 
@@ -62,7 +61,7 @@ The initial CNS read form always targets `:_online.._value`; no arbitrary attrib
 
 ### 4.2 Relationship to native tag/type topics
 
-The example Speed node and `winccoa/this/tags/Pump101/speed` resolve to the same underlying value but remain different MQTT topics. Register the DPE once in the shared interest registry where possible and fan out to each authorized, interested path. Reference ownership must include the CNS mapping revision; removing a CNS alias must not remove a direct tag subscription.
+The example Speed node and `winccoa/System1/tags/Pump101/speed` resolve to the same underlying value but remain different MQTT topics. Register the DPE once in the shared interest registry where possible and fan out to each authorized, interested path. Reference ownership must include the CNS mapping revision; removing a CNS alias must not remove a direct tag subscription.
 
 Use the baseline native value-payload contract and retained policy. Do not apply lossy query-bridge regex or underscore transformations to CNS identifier paths. Different views may legitimately expose one DPE at different paths.
 
@@ -71,22 +70,22 @@ Use the baseline native value-payload contract and retained policy. Do not apply
 After exact reads, propose read-only metadata topics:
 
 ```text
-winccoa/cns/local/<view>/$meta
-winccoa/cns/local/<view>/$children
-winccoa/cns/local/<view>/<node-path>/$meta
-winccoa/cns/local/<view>/<node-path>/$children
+winccoa/<systemname>/cns/<view>/$meta
+winccoa/<systemname>/cns/<view>/$children
+winccoa/<systemname>/cns/<view>/<node-path>/$meta
+winccoa/<systemname>/cns/<view>/<node-path>/$children
 ```
 
-The remote equivalents use `winccoa/cns/remote/<systemname>/...`. Metadata describes kind, canonical CNS path, optional display names, authorized link information, mapping revision, and availability. Child listings contain immediate child IDs, not a recursive dump. Freeze payload version, byte/child limits, and an explicit oversize result before implementation; pagination, if needed, requires a separately specified request/result contract. Never truncate a listing and present it as complete.
+Remote systems use the same form with their own system name. Metadata describes kind, canonical CNS path, optional display names, authorized link information, mapping revision, and availability. Child listings contain immediate child IDs, not a recursive dump. Freeze payload version, byte/child limits, and an explicit oversize result before implementation; pagination, if needed, requires a separately specified request/result contract. Never truncate a listing and present it as complete.
 
 Metadata is optional and independently authorized. Do not retain a shared unfiltered catalog that exposes hidden child names or linked DPEs to other users. If visibility differs per principal, defer shared retained listings until an authorization-safe delivery design is demonstrated. Views are configured in the initial release; automatic discovery of all systems/views is not required.
 
-Later wildcard subscriptions, for example `winccoa/cns/local/Plant/Line1/#`, match MQTT paths in a bounded authorized catalog. Do not translate MQTT `+`/`#` directly into OA query wildcard syntax. Specify metadata inclusion, future-node discovery, empty-match behavior, expansion limits, per-session accounting, and shared-subscription behavior before enabling them. Broad ordinary MQTT subscriptions such as `#` must not trigger a full CNS scan or unlimited DPE registration.
+Later wildcard subscriptions, for example `winccoa/<systemname>/cns/Plant/Line1/#`, match MQTT paths in a bounded authorized catalog. Do not translate MQTT `+`/`#` directly into OA query wildcard syntax. Specify metadata inclusion, future-node discovery, empty-match behavior, expansion limits, per-session accounting, and shared-subscription behavior before enabling them. Broad ordinary MQTT subscriptions such as `#` must not trigger a full CNS scan or unlimited DPE registration.
 
 ## 5. Resolution and Subscription Flow
 
 1. Authenticate and authorize the requested CNS topic and configured scope/view before catalog lookup.
-2. Parse and decode its local/remote scope and ID segments; resolve the existing CNS node on the OA manager thread.
+2. Parse and decode its system and ID segments; resolve the existing CNS node on the OA manager thread.
 3. Resolve the linked system/DPE and identifier type. Normalize scalar-root access correctly; reject grouping nodes, unsupported targets, missing links, and unavailable systems for value subscriptions.
 4. Apply the same underlying DPE access policy used by native tag/type access, plus CNS/view restrictions. A new view must not provide a route around a denied target. Define this target-level policy if native topic ACLs alone cannot express it.
 5. Record `(CNS path, topic, resolved DPE, mapping revision, session generation)` and obtain an interest in the shared canonical DPE registry.
@@ -119,8 +118,8 @@ Offline queues may already contain historical messages under the old path. Defin
 After exact-read and change-handling acceptance, propose terminal `/set`:
 
 ```text
-winccoa/cns/local/Plant/Line1/Pump101/Speed/set
-winccoa/cns/remote/SubstationA/Electrical/Feeders/Feeder1/Voltage/set
+winccoa/System1/cns/Plant/Line1/Pump101/Speed/set
+winccoa/SubstationA/cns/Electrical/Feeders/Feeder1/Voltage/set
 ```
 
 Resolve a value-bearing node to the same typed `:_original.._value` write used by native tag/type commands. Preserve command ID, deadline, origin, principal, and confirmed target/mapping generation. Recheck generation and authorization immediately before issuing the write; if a node was relinked while the command waited, fail it rather than silently writing to either a stale or unintended new target.
@@ -145,7 +144,7 @@ Do not couple CNS rollout to broker replication. Single-node CNS must work indep
 All criteria are pending. Use the real broker listeners and a developer-built C++ manager connected to a test OA project; record commit, SDK/OS/compiler, fixture topology, expected/actual behavior, and logs. Optional C2/C3 criteria apply only when those increments are enabled.
 
 - [ ] **CNS-01 — SDK proof:** Demonstrate C++ view/tree/node enumeration, link/type resolution, topology observation and cleanup, remote disconnect/reconnect, and startup consistency using the human-confirmed SDK. Record unsupported capabilities and any bounded polling fallback; CTRL examples alone do not satisfy this criterion.
-- [ ] **CNS-02 — Grammar and isolation:** Resolve all section 4 examples with colliding local/remote node names, scalar roots, Unicode and reserved IDs. Display-language changes leave topics unchanged. Malformed/alternate encodings and a local system addressed through `remote` fail; no remote failure falls back locally. Disabled CNS creates no catalogs/observers/interests and rejects explicit access without changing tag/type/status behavior.
+- [ ] **CNS-02 — Grammar and isolation:** Resolve all section 4 examples with colliding local/remote node names, scalar roots, Unicode and reserved IDs. Display-language changes leave topics unchanged. Malformed/alternate encodings fail; no remote failure falls back locally. Disabled CNS creates no catalogs/observers/interests and rejects explicit access without changing tag/type/status behavior.
 - [ ] **CNS-03 — Target resolution:** Test value-bearing DPEs, scalar roots, unlinked grouping nodes, structured roots, dangling links, and unsupported identifier types. Reads reach only the actual linked DPE; the path text is never interpreted as a datapoint name. Apply the defined authorization/error behavior to cross-system links if supported.
 - [ ] **CNS-04 — Values and reference ownership:** Two CNS nodes and one native tag topic linked to the same DPE share the intended underlying registration. Each interested topic receives initial/live values according to the base contract; repeated SUBSCRIBE does not leak interests. Removing one path leaves the others functional; the last interest disconnects once.
 - [ ] **CNS-05 — Access policy:** A user denied a target cannot recover read/write access through another CNS view, alias, remote scope, or wildcard. Existence, link metadata, and child listings do not leak unauthorized information. External publishers and configured query output cannot forge CNS-owned values/metadata.

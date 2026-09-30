@@ -10,11 +10,8 @@ import (
 
 const (
 	Root        = "winccoa"
-	SegThis     = "this"
-	SegRemote   = "remote"
 	SegTags     = "tags"
 	SegTypes    = "types"
-	SegNode     = "node"
 	SegCNS      = "cns"
 	SegSet      = "set"
 	DefaultAttr = "_online.._value"
@@ -32,24 +29,21 @@ var ReadAttrs = map[string]bool{
 type Kind int
 
 const (
-	KindOther  Kind = iota // not under winccoa/<reserved>
-	KindNative             // winccoa/this|remote/...
-	KindStatus             // winccoa/node/<id>/status
-	KindNode               // other winccoa/node/... topics (broker-owned, not status)
-	KindCNS                // winccoa/cns/... (reserved, disabled)
+	KindOther  Kind = iota // not in the native namespace
+	KindNative             // winccoa/<system>/...
+	KindStatus             // winccoa/<system>: broker status (retained JSON)
+	KindCNS                // winccoa/<system>/cns/... (reserved, disabled)
 )
 
 var (
-	ErrMalformed     = errors.New("malformed native topic")
-	ErrNoncanonical  = errors.New("noncanonical native topic encoding")
-	ErrAttribute     = errors.New("attribute not allowed")
-	ErrLocalAsRemote = errors.New("remote system name identifies the local system")
+	ErrMalformed    = errors.New("malformed native topic")
+	ErrNoncanonical = errors.New("noncanonical native topic encoding")
+	ErrAttribute    = errors.New("attribute not allowed")
 )
 
 // Target is a parsed native topic.
 type Target struct {
-	Remote   bool
-	System   string // remote system name; empty for local until bound
+	System   string // WinCC OA system name (the first level)
 	TypeName string // non-empty for the types/ form
 	DP       string
 	Elements []string
@@ -66,20 +60,17 @@ func Classify(topic string) Kind {
 	}
 	rest := strings.TrimPrefix(topic, Root)
 	rest = strings.TrimPrefix(rest, "/")
-	first, after, _ := strings.Cut(rest, "/")
-	switch first {
-	case SegThis, SegRemote:
-		return KindNative
-	case SegCNS:
+	system, after, more := strings.Cut(rest, "/")
+	switch {
+	case system == "" || system == "+" || system == "#":
+		// "winccoa", "winccoa/#", "winccoa/+/...": ordinary MQTT filters.
+		return KindOther
+	case !more:
+		return KindStatus
+	case after == SegCNS || strings.HasPrefix(after, SegCNS+"/"):
 		return KindCNS
-	case SegNode:
-		parts := strings.Split(after, "/")
-		if len(parts) == 2 && parts[1] == "status" && parts[0] != "" && !strings.ContainsAny(parts[0], "+#") {
-			return KindStatus
-		}
-		return KindNode
 	}
-	return KindOther
+	return KindNative
 }
 
 // HasWildcard reports whether a filter contains an MQTT wildcard.
@@ -108,26 +99,15 @@ func Parse(topic string) (Target, error) {
 		return t, fmt.Errorf("%w: wildcard", ErrMalformed)
 	}
 	segs := strings.Split(topic, "/")[1:]
-	i := 0
-	switch segs[i] {
-	case SegThis:
-		i++
-	case SegRemote:
-		t.Remote = true
-		i++
-		if i >= len(segs) {
-			return t, fmt.Errorf("%w: missing remote system", ErrMalformed)
-		}
-		sys, err := decodeSegment(segs[i], false)
-		if err != nil {
-			return t, err
-		}
-		if sys == "" {
-			return t, fmt.Errorf("%w: missing remote system", ErrMalformed)
-		}
-		t.System = sys
-		i++
+	sys, err := decodeSegment(segs[0], false)
+	if err != nil {
+		return t, err
 	}
+	if sys == "" {
+		return t, fmt.Errorf("%w: missing system", ErrMalformed)
+	}
+	t.System = sys
+	i := 1
 	if i >= len(segs) {
 		return t, fmt.Errorf("%w: missing tags/types", ErrMalformed)
 	}
@@ -214,12 +194,7 @@ func (t Target) IsRoot() bool { return len(t.Elements) == 0 }
 
 // Topic renders the canonical topic for the target in the given form.
 func (t Target) Topic() string {
-	segs := []string{Root}
-	if t.Remote {
-		segs = append(segs, SegRemote, encodeSegment(t.System, false))
-	} else {
-		segs = append(segs, SegThis)
-	}
+	segs := []string{Root, encodeSegment(t.System, false)}
 	if t.TypeName != "" {
 		segs = append(segs, SegTypes, encodeSegment(t.TypeName, false))
 	} else {

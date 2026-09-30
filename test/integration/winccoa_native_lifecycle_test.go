@@ -39,7 +39,8 @@ func TestNativeStartupFailures(t *testing.T) {
 	cfg.GraphQL.Enabled = false
 	cfg.Metrics.Enabled = false
 	cfg.SQLite.Path = filepath.Join(t.TempDir(), "n.db")
-	cfg.WinCCOaNative = config.WinCCOaNativeConfig{Enabled: true, Namespace: true, Stores: []string{config.WinCCOaStoreDevice}}
+	cfg.WinCCOaNative = config.WinCCOaNativeConfig{Enabled: true, Namespace: true}
+	cfg.ConfigStoreType = config.StoreWinCCOA
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +55,7 @@ func TestNativeStartupFailures(t *testing.T) {
 	sim2, client2 := newSim(0)
 	defer sim2.Close()
 	sim2.Pause()
-	cfg.WinCCOaNative.Stores = nil
+	cfg.ConfigStoreType = config.StoreSQLite
 	srv, err := broker.NewWithOptions(cfg, slog.New(slog.DiscardHandler), nil, broker.Options{OA: client2})
 	if err != nil {
 		t.Fatal(err)
@@ -86,8 +87,8 @@ func TestNativeNoGrowth(t *testing.T) {
 
 	cycle := func(i int) {
 		c, _ := dialRaw(t, env.port, rawConnect{ClientID: fmt.Sprintf("g%d", i%5), Version: 5, Clean: true})
-		c.Subscribe(sub("winccoa/this/tags/Pump1/speed", 1), sub("winccoa/this/types/AnalogDrive/Pump101/count", 0))
-		c.Unsubscribe("winccoa/this/tags/Pump1/speed")
+		c.Subscribe(sub("winccoa/System1/tags/Pump1/speed", 1), sub("winccoa/System1/types/AnalogDrive/Pump101/count", 0))
+		c.Unsubscribe("winccoa/System1/tags/Pump1/speed")
 		c.Close() // clean session: remaining interest released on disconnect
 	}
 	reload := func(i int) {

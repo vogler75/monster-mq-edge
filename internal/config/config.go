@@ -15,6 +15,9 @@ const (
 	StoreSQLite   StoreType = "SQLITE"
 	StorePostgres StoreType = "POSTGRES"
 	StoreMongoDB  StoreType = "MONGODB"
+	// StoreWinCCOA keeps configs (ConfigStoreType) or sessions
+	// (SessionStoreType) in WinCC OA datapoints; only in the WinCC OA manager.
+	StoreWinCCOA StoreType = "WINCCOA"
 )
 
 // validBackends is the set of store types that can back the persistent storage
@@ -224,11 +227,13 @@ type FeaturesConfig struct {
 // embedded in a WinCC OA API manager. It is read before any OA access and is
 // ignored by the standalone binary, which has no embedding host.
 type WinCCOaNativeConfig struct {
-	Enabled    bool     `yaml:"Enabled"`
-	Transport  string   `yaml:"Transport"`  // NATIVE | GRAPHQL for WinCCOA-Client devices
-	Namespace  bool     `yaml:"Namespace"`  // winccoa/this|remote namespace and writes
-	Stores     []string `yaml:"Stores"`     // subset of DeviceConfig, ArchiveConfig, Sessions
-	EchoPolicy string   `yaml:"EchoPolicy"` // BROKER_TAG | NO_SOURCE
+	Enabled    bool   `yaml:"Enabled"`
+	Transport  string `yaml:"Transport"`  // NATIVE | GRAPHQL for WinCCOA-Client devices
+	Namespace  bool   `yaml:"Namespace"`  // winccoa/<system> namespace and writes
+	EchoPolicy string `yaml:"EchoPolicy"` // BROKER_TAG | NO_SOURCE
+
+	// LegacyStores is the removed Stores list; set only to reject old configs.
+	LegacyStores []string `yaml:"Stores,omitempty"`
 }
 
 const (
@@ -236,9 +241,6 @@ const (
 	WinCCOaTransportGraphQL = "GRAPHQL"
 	WinCCOaEchoBrokerTag    = "BROKER_TAG"
 	WinCCOaEchoNoSource     = "NO_SOURCE"
-	WinCCOaStoreDevice      = "DeviceConfig"
-	WinCCOaStoreArchive     = "ArchiveConfig"
-	WinCCOaStoreSessions    = "Sessions"
 )
 
 func (w *WinCCOaNativeConfig) validate() error {
@@ -258,12 +260,8 @@ func (w *WinCCOaNativeConfig) validate() error {
 	default:
 		return fmt.Errorf("WinCCOaNative.EchoPolicy %q must be BROKER_TAG or NO_SOURCE", w.EchoPolicy)
 	}
-	for _, st := range w.Stores {
-		switch st {
-		case WinCCOaStoreDevice, WinCCOaStoreArchive, WinCCOaStoreSessions:
-		default:
-			return fmt.Errorf("WinCCOaNative.Stores entry %q must be one of DeviceConfig, ArchiveConfig, Sessions", st)
-		}
+	if len(w.LegacyStores) > 0 {
+		return fmt.Errorf("WinCCOaNative.Stores was removed; use ConfigStoreType: WINCCOA (device and archive configs) and SessionStoreType: WINCCOA")
 	}
 	return nil
 }
@@ -273,14 +271,10 @@ func (c *Config) AllowRootWildcard() bool {
 	return c.AllowRootWildcardSubscription == nil || *c.AllowRootWildcardSubscription
 }
 
-// HasStore reports whether name is in Stores.
-func (w WinCCOaNativeConfig) HasStore(name string) bool {
-	for _, s := range w.Stores {
-		if s == name {
-			return true
-		}
-	}
-	return false
+// UsesWinCCOaStores reports whether configs or sessions are kept in WinCC OA
+// datapoints (ConfigStoreType / SessionStoreType WINCCOA).
+func (c *Config) UsesWinCCOaStores() bool {
+	return c.ConfigStore() == StoreWinCCOA || c.SessionStore() == StoreWinCCOA
 }
 
 type PythonScriptsConfig struct {
@@ -480,22 +474,14 @@ func (c *Config) Validate() error {
 	if !c.DefaultStoreType.isValidBackend() {
 		return fmt.Errorf("invalid DefaultStoreType %q (must be one of SQLITE, POSTGRES, MONGODB)", c.DefaultStoreType)
 	}
-	overrides := []struct {
-		name  string
-		value StoreType
-	}{
-		{"ConfigStoreType", c.ConfigStoreType},
-	}
-	for _, f := range overrides {
-		if f.value != "" && !f.value.isValidBackend() {
-			return fmt.Errorf("invalid %s %q (must be one of SQLITE, POSTGRES, MONGODB)", f.name, f.value)
-		}
+	if c.ConfigStoreType != "" && c.ConfigStoreType != StoreWinCCOA && !c.ConfigStoreType.isValidBackend() {
+		return fmt.Errorf("invalid ConfigStoreType %q (must be one of SQLITE, POSTGRES, MONGODB, WINCCOA)", c.ConfigStoreType)
 	}
 	if c.RetainedStoreType != "" && !c.RetainedStoreType.isValidRetainedBackend() {
 		return fmt.Errorf("invalid RetainedStoreType %q (must be one of SQLITE, POSTGRES, MONGODB, MEMORY)", c.RetainedStoreType)
 	}
-	if c.SessionStoreType != "" && !c.SessionStoreType.isValidVolatileBackend() {
-		return fmt.Errorf("invalid SessionStoreType %q (must be one of SQLITE, POSTGRES, MONGODB, MEMORY)", c.SessionStoreType)
+	if c.SessionStoreType != "" && c.SessionStoreType != StoreWinCCOA && !c.SessionStoreType.isValidVolatileBackend() {
+		return fmt.Errorf("invalid SessionStoreType %q (must be one of SQLITE, POSTGRES, MONGODB, MEMORY, WINCCOA)", c.SessionStoreType)
 	}
 	if c.QueueStoreType != "" && !c.QueueStoreType.isValidVolatileBackend() {
 		return fmt.Errorf("invalid QueueStoreType %q (must be one of SQLITE, POSTGRES, MONGODB, MEMORY)", c.QueueStoreType)
