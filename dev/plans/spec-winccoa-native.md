@@ -52,6 +52,7 @@ Demonstrated live by the probe (acceptance record, AC-02): `del=true` keeps a ho
 - The host drops a request whose deadline has passed before it reaches the manager thread and completes it with `MMQ_E_TIMEOUT` without executing it, so an expired write is never executed late.
 - A sent `QUERY_CONNECT`/`DP_CONNECT` whose OA answer reports an error is disconnected by the host with the matching callback before the error completion is delivered (spec of the embedded-manager plan, section 6.2).
 - Host -> Go events: `mmq_event(handle, ref, data, len)` for hotlink/query data of a registered subscription reference. Non-blocking; returns `MMQ_E_OVERLOAD` when the event queue is full (the host counts it; the drop policy is section 7).
+- Query tables larger than half of `MMQ_MAX_MESSAGE` are split into several events; every chunk repeats the header row, and all but the last chunk of an initial answer carry `FlagMore` (bit 3).
 - Payload encoding: the TLV format of section 3.1 in both directions. Payloads are length-delimited; embedded NULs are allowed.
 - No Go pointer is retained by C and no C pointer is retained by Go after a call returns.
 - Status codes: `MMQ_OK 0`, `MMQ_E_INVALID -1`, `MMQ_E_STATE -2`, `MMQ_E_NOT_FOUND -3`, `MMQ_E_UNAUTHORIZED -4`, `MMQ_E_TYPE -5`, `MMQ_E_TIMEOUT -6`, `MMQ_E_OVERLOAD -7`, `MMQ_E_OA -8`, `MMQ_E_PERSIST -9`, `MMQ_E_ABI -10`, `MMQ_E_TOO_LARGE -11`, `MMQ_E_UNAVAILABLE -12`. Go panics are recovered at every export and reported as `MMQ_E_STATE`; C++ exceptions never cross the boundary.
@@ -94,8 +95,7 @@ Element types reported by `RESOLVE`/`TYPE_CHECK` use the same numbers as value k
 - Command: terminal `set` after the element path; the write target is always `:_original.._value`. Reserved tokens are reserved only in the terminal position: `.../Pump1/set/_online.._value` reads an element named `set`, and a terminal element named `set` is written `%73et`.
 - DPE building: segments are joined with `.`; a trailing `.` is appended only when the joined name has no dot. A DP-only path resolves to `<dp>.` only when the root element of its DPT is a value element; otherwise the filter/command is rejected (`not a value element`).
 - `remote/<system>` where `<system>` is the local system name is rejected. Unknown or disconnected remote systems never fall back to local.
-- Filters: wildcards (`+`, `#`) anywhere under `winccoa/local/` or `winccoa/remote/` are rejected. Shared subscriptions (`$share/<g>/...`) targeting native branches are rejected. Broad filters such as `#` or `winccoa/#` are accepted as ordinary MQTT filters: they receive native publications caused by other exact subscribers but never create OA interests.
-- External publishes to any `winccoa/local|remote|node|cns` topic other than a `.../set` command are rejected. Configured query output topics under the device namespace must not resolve into those branches (validated at connector start).
+- Filters: shared subscriptions (`$share/<g>/...`) targeting native branches are rejected. Broad filters above the native branches (`#`, `winccoa/#`, `winccoa/local/#`) are ordinary MQTT filters: they receive native publications caused by other subscribers but never create OA registrations. Wildcards inside a native branch are served by queries (section 4.2).
 
 ### 4.1 SUBACK codes
 
@@ -105,11 +105,37 @@ Element types reported by `RESOLVE`/`TYPE_CHECK` use the same numbers as value k
 | ACL denied | `0x87` | `0x80` |
 | Malformed / noncanonical / DPE missing / not a value element / type mismatch | `0x8F` | `0x80` |
 | OA or remote system unavailable, validation timeout | `0x83` | `0x80` |
-| Wildcard in native branch | `0xA2` | `0x80` |
+| Wildcard filter that cannot be expressed as a query, or root filter while `AllowRootWildcardSubscription` is false | `0x8F` | `0x80` |
+| Wildcard query limit reached | `0x83` | `0x80` |
 | Shared filter in native branch | `0x9E` | `0x80` |
 | CNS branch (disabled) | `0x83` | `0x80` |
 
 Order and count always match the SUBSCRIBE packet. Rejected filters create no MQTT subscription, no OA interest, no persisted row.
+
+### 4.2 Wildcard filters
+
+A native filter with `+` or `#` after `tags/` or `types/` becomes one `dpQueryConnectSingle` (`SELECT '_online.._value', '_online.._stime' FROM '<pattern>' [WHERE _DPT = "<type>"] [REMOTE '<system>']`), shared by every subscription with the same filter semantics:
+
+| Filter | Query pattern |
+|---|---|
+| `winccoa/local/tags/#` | `'*.**'` |
+| `winccoa/local/tags/Pump1/#` | `'Pump1.**'` |
+| `winccoa/local/tags/Pump1/value/#` | `'{Pump1.value,Pump1.value.**}'` |
+| `winccoa/local/tags/+/speed` | `'*.speed'` |
+| `winccoa/local/tags/+` | `'*.'` (scalar roots) |
+| `winccoa/local/types/Pump/#` | `'*.**' WHERE _DPT = "Pump"` |
+| `winccoa/local/types/Pump/+/value/#` | `'{*.value,*.value.**}' WHERE _DPT = "Pump"` |
+| `winccoa/local/types/#`, `types/+/...` | any type; rows are published under their DP's type |
+| `winccoa/remote/<Sys>/tags/...` | `... REMOTE '<Sys>'` |
+
+- `+` matches exactly one name level (`*`), a trailing `#` matches the level and everything below (`**`, which also includes the root of a scalar DP). Partial-level wildcards do not exist in MQTT; names containing OA pattern characters (`*?[]{},'"`), attribute segments and names starting with `_` are rejected (`0x8F`).
+- Rows are published as `{"time","value"}` to the exact topic of each element in the filter's form (`tags/...` or `types/<DPT>/...`), QoS 1, not retained. Internal (`_`) and store (`MMQ*`) datapoints are never published.
+- Current values: the initial query answer (possibly split into several events, `FlagMore`) is delivered to the subscribers that are waiting; later subscribers of the same filter get the cached current values at once. Retain handling applies as for exact filters.
+- One change is published once: a query does not publish a topic that has an exact native subscription (that path publishes it), and overlapping queries are deduplicated by value and `_online.._stime`.
+- Datapoints created after the subscription are reported by the running query (verified on 3.21); deleted ones simply stop.
+- Root filters (no datapoint name and no type: `tags/#`, `tags/+/...`, `types/#`, `types/+/...`) are governed by `AllowRootWildcardSubscription` like `#`: when it is `false` they are rejected with `0x8F`. The broker-wide `#` is rejected with `0x8F` as in the Java broker.
+- Limits: at most 1000 distinct wildcard queries; above that `0x83`. The last unsubscribe disconnects the query; a lost remote system disconnects its queries and a returning one registers them again.
+- External publishes to any `winccoa/local|remote|node|cns` topic other than a `.../set` command are rejected. Configured query output topics under the device namespace must not resolve into those branches (validated at connector start).
 
 ## 5. Store semantics
 

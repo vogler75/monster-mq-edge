@@ -140,7 +140,7 @@ func TestLiveSubackMatrix(t *testing.T) {
 		sub("winccoa/local/tags/MMQLiveScalar", 0),
 		sub("winccoa/local/tags/MMQLive1/speed/_online.._stime", 0),
 	}
-	want := []byte{0x01, 0x8F, 0x87, 0x83, 0xA2, 0x9E, 0x01, 0x83, 0x8F, 0x8F, 0x01, 0x00, 0x00}
+	want := []byte{0x01, 0x8F, 0x87, 0x83, 0x01, 0x9E, 0x01, 0x83, 0x8F, 0x8F, 0x01, 0x00, 0x00}
 	for _, v := range []byte{5, 4} {
 		c := e.client(t, fmt.Sprintf("live-suback-%d", v), v)
 		got := c.Subscribe(filters...)
@@ -340,6 +340,10 @@ func (e liveEnv) ctrl(t *testing.T, script string) {
 // OA calls on the manager thread.
 func TestLiveNoGrowth(t *testing.T) {
 	e := live(t)
+	// Registrations restored from other persisted sessions are the baseline.
+	time.Sleep(6 * time.Second)
+	base := e.lastStats(t, time.Now().Add(-5*time.Second))
+	t.Logf("baseline: %v", base)
 	for i := 0; i < 100; i++ {
 		a := e.client(t, fmt.Sprintf("grow-a-%d", i%3), 5)
 		b := e.client(t, fmt.Sprintf("grow-b-%d", i%3), 4)
@@ -349,7 +353,7 @@ func TestLiveNoGrowth(t *testing.T) {
 			time.Sleep(6 * time.Second)
 			st := e.lastStats(t, time.Now().Add(-4*time.Second))
 			t.Logf("while subscribed: %v", st)
-			if st["connects"] < 1 || st["connects"] > 2 {
+			if d := st["connects"] - base["connects"]; d < 1 || d > 2 {
 				t.Errorf("expected shared registrations for 2 elements, got %v", st)
 			}
 		}
@@ -365,7 +369,7 @@ func TestLiveNoGrowth(t *testing.T) {
 	time.Sleep(7 * time.Second)
 	st := e.lastStats(t, time.Now().Add(-5*time.Second))
 	t.Logf("after cycles: %v", st)
-	if st["connects"] != 0 || st["queries"] != 0 || st["liveCallbacks"] > 1 || st["offThreadCalls"] != 0 {
+	if st["connects"] != base["connects"] || st["queries"] != base["queries"] || st["liveCallbacks"] > base["liveCallbacks"] || st["offThreadCalls"] != 0 {
 		t.Fatalf("registrations or callbacks left: %v", st)
 	}
 }
@@ -588,4 +592,77 @@ func TestLiveOverload(t *testing.T) {
 	if v := e.get(t, "MMQLive2.count"); v != "77" {
 		t.Fatalf("value after recovery %q", v)
 	}
+}
+
+// Native wildcard filters on real WinCC OA queries.
+func TestLiveWildcards(t *testing.T) {
+	e := live(t)
+	c := e.client(t, "live-wild", 5)
+	defer c.Close()
+	c.Subscribe(sub("winccoa/local/tags/MMQLive1/#", 1))
+	got := topicList(collectTopics(c, 2*time.Second))
+	t.Logf("tags/MMQLive1/#: %v", got)
+	for _, want := range []string{"speed", "running", "name", "count", "unsigned", "ts", "nested/a"} {
+		found := false
+		for _, g := range got {
+			if g == "winccoa/local/tags/MMQLive1/"+want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("tags/MMQLive1/# lacks %s", want)
+		}
+	}
+	d := e.client(t, "live-wild-d", 5)
+	defer d.Close()
+	d.Subscribe(sub("winccoa/local/types/MMQLiveTest/+/nested/#", 1), sub("winccoa/local/tags/+/speed", 1))
+	got = topicList(collectTopics(d, 2*time.Second))
+	t.Logf("types/+/nested/# and +/speed: %v", got)
+	if strings.Join(got, ",") != "winccoa/local/tags/MMQLive1/speed,winccoa/local/tags/MMQLive2/speed,winccoa/local/types/MMQLiveTest/MMQLive1/nested/a,winccoa/local/types/MMQLiveTest/MMQLive2/nested/a" {
+		t.Errorf("unexpected topics %v", got)
+	}
+
+	start := time.Now()
+	e.set(t, "MMQLive1.speed", "44.5", "float")
+	for name, cl := range map[string]*rawClient{"tags/MMQLive1/#": c, "tags/+/speed": d} {
+		msgs := collectTopics(cl, time.Second)["winccoa/local/tags/MMQLive1/speed"]
+		if len(msgs) != 1 || !strings.Contains(msgs[0], "44.5") {
+			t.Errorf("%s: %v", name, msgs)
+		}
+	}
+	t.Logf("change -> wildcard subscribers: %s", time.Since(start))
+
+	big := e.client(t, "live-wild-big", 5)
+	defer big.Close()
+	t0 := time.Now()
+	big.Subscribe(sub("winccoa/local/types/MMQLoad/#", 0))
+	n := len(collectTopics(big, 5*time.Second))
+	t.Logf("types/MMQLoad/#: %d elements (subscribe to last value %s)", n, time.Since(t0))
+	if n != 5000 {
+		t.Errorf("types/MMQLoad/# delivered %d of 5000", n)
+	}
+
+	root := e.client(t, "live-wild-root", 5)
+	defer root.Close()
+	root.Subscribe(sub("winccoa/local/tags/#", 0))
+	all := collectTopics(root, 6*time.Second)
+	t.Logf("tags/#: %d elements", len(all))
+	for tp := range all {
+		if strings.Contains(tp, "/tags/_") || strings.Contains(tp, "MMQConfigs_") || strings.Contains(tp, "MMQSessions_") {
+			t.Fatalf("protected datapoint in tags/#: %s", tp)
+		}
+	}
+	if _, ok := all["winccoa/local/tags/MMQLiveScalar"]; !ok {
+		t.Error("scalar root missing from tags/#")
+	}
+
+	// A datapoint created after the subscription.
+	e.ctrl(t, "mmqLiveDelete.ctl")
+	time.Sleep(time.Second)
+	e.ctrl(t, "mmqLiveFixture.ctl")
+	time.Sleep(time.Second)
+	d.Drain(300 * time.Millisecond)
+	e.set(t, "MMQLive2.speed", "5.5", "float")
+	msgs := collectTopics(d, 2*time.Second)["winccoa/local/tags/MMQLive2/speed"]
+	t.Logf("recreated DP through tags/+/speed: %v", msgs)
 }

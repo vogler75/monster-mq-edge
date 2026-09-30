@@ -27,6 +27,7 @@ const (
 	FlagAnswer   uint32 = 1 << 0 // query/connect: deliver the initial answer as an event
 	FlagNoSource uint32 = 1 << 1 // connect: dpConnectNoSource
 	FlagWait     uint32 = 1 << 2 // set: require the OA answer (always set by this package)
+	FlagMore     uint32 = 1 << 3 // event: the query answer continues in another event
 )
 
 // Resolution is the answer to OpResolve for one name.

@@ -216,6 +216,7 @@ class MonsterMQManager : public Manager
 
     int32_t complete(uint64_t reqId, int32_t status, const mmq::Writer *w = nullptr, const std::string &err = std::string());
     void event(uint64_t ref, const mmq::Writer &w);
+    bool sendTable(uint64_t ref, const Variable *table, bool answer);
     void drainRequests();
     bool process(const Pending &p);  // false = retry later
     void processDeferredDisconnects();

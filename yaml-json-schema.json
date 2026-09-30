@@ -275,6 +275,11 @@
         "DefaultTimeoutMs": { "type": "integer", "minimum": 10, "default": 200, "description": "Default timeout in milliseconds per script execution." }
       }
     },
+    "AllowRootWildcardSubscription": {
+      "type": "boolean",
+      "default": true,
+      "description": "Allow subscriptions to the root wildcard '#'. When false, '#' is rejected (SUBACK 0x8F), and so are native WinCC OA wildcard filters that cover every datapoint (winccoa/<scope>/tags/#, tags/+/..., types/#)."
+    },
     "WinCCOaNative": {
       "type": "object",
       "additionalProperties": false,

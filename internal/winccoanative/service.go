@@ -54,6 +54,11 @@ type Options struct {
 	// ReconcileInterval paces retries of unregistered interests and the
 	// removal of interests whose session is gone.
 	ReconcileInterval time.Duration
+	// AllowRootWildcard permits wildcard filters that cover every
+	// datapoint (tags/#, tags/+/..., types/#), like '#' for MQTT.
+	AllowRootWildcard bool
+	// MaxWildcardQueries bounds the number of distinct wildcard queries.
+	MaxWildcardQueries int
 	// SessionExists reports whether a client session still exists; used to
 	// drop interests of sessions that expired while not in memory.
 	SessionExists func(clientID string) bool
@@ -77,6 +82,9 @@ func (o *Options) defaults() {
 	}
 	if o.CatalogTTL <= 0 {
 		o.CatalogTTL = time.Minute
+	}
+	if o.MaxWildcardQueries <= 0 {
+		o.MaxWildcardQueries = 1000
 	}
 	if o.ReconcileInterval <= 0 {
 		o.ReconcileInterval = 30 * time.Second
@@ -129,6 +137,8 @@ type Stats struct {
 	Commands      uint64
 	CommandErrors uint64
 	Duplicates    uint64
+	WildQueries   int
+	WildSubs      int
 }
 
 // Service owns the native namespace state.
@@ -149,6 +159,11 @@ type Service struct {
 	cmds    map[string]cmdRecord
 	queue   []string
 
+	wild        map[string]*wildQuery
+	wildSubs    map[subKey]string
+	exactTopics map[string]int    // topics with an exact native subscription
+	lastSig     map[string]string // topic -> last published change
+
 	kick    chan struct{}
 	ctx     context.Context
 	cancel  context.CancelFunc
@@ -163,17 +178,21 @@ type Service struct {
 func NewService(api oahost.API, b Broker, opts Options, logger *slog.Logger) *Service {
 	opts.defaults()
 	return &Service{
-		api:     api,
-		broker:  b,
-		opts:    opts,
-		logger:  logger.With("component", "winccoa-native"),
-		subs:    map[subKey]*subEntry{},
-		dpes:    map[string]*dpeEntry{},
-		batches: map[uint64]*batch{},
-		batchOf: map[string]*batch{},
-		catalog: map[string]catalogEntry{},
-		cmds:    map[string]cmdRecord{},
-		kick:    make(chan struct{}, 1),
+		api:         api,
+		broker:      b,
+		opts:        opts,
+		logger:      logger.With("component", "winccoa-native"),
+		subs:        map[subKey]*subEntry{},
+		dpes:        map[string]*dpeEntry{},
+		batches:     map[uint64]*batch{},
+		batchOf:     map[string]*batch{},
+		catalog:     map[string]catalogEntry{},
+		cmds:        map[string]cmdRecord{},
+		wild:        map[string]*wildQuery{},
+		wildSubs:    map[subKey]string{},
+		exactTopics: map[string]int{},
+		lastSig:     map[string]string{},
+		kick:        make(chan struct{}, 1),
 	}
 }
 
@@ -212,6 +231,7 @@ func (s *Service) Stop(ctx context.Context) {
 	s.ready.Store(false)
 	s.cancel()
 	s.wg.Wait()
+	s.stopWild(ctx)
 	if s.unwatch != nil {
 		s.unwatch()
 	}
@@ -257,7 +277,7 @@ func (s *Service) Validate(filter string) (Verdict, string) {
 		return SharedDeny, "shared subscriptions are not supported for native topics"
 	}
 	if HasWildcard(f) {
-		return WildcardDeny, "wildcards are not supported for native topics"
+		return s.validateWild(f)
 	}
 	t, err := Parse(f)
 	if err != nil {
@@ -379,6 +399,10 @@ func (s *Service) Subscribed(clientID, filter string, existed bool) {
 	if shared || Classify(f) != KindNative {
 		return
 	}
+	if HasWildcard(f) {
+		s.subscribedWild(clientID, f, existed, false)
+		return
+	}
 	t, err := Parse(f)
 	if err != nil || t.Command {
 		return
@@ -418,6 +442,7 @@ func (s *Service) Subscribed(clientID, filter string, existed bool) {
 	e := &subEntry{key: key, topic: f, waiting: true}
 	s.subs[sk] = e
 	d.subs[sk] = e
+	s.exactTopics[f]++
 	var deliver *oahost.Value
 	var ts time.Time
 	if d.last != nil {
@@ -436,6 +461,11 @@ func (s *Service) Subscribed(clientID, filter string, existed bool) {
 // Unsubscribed removes interests for the given filters of a client.
 func (s *Service) Unsubscribed(clientID string, filters []string) {
 	var drop []uint64
+	for _, filter := range filters {
+		if HasWildcard(filter) {
+			s.unsubscribedWild(subKey{clientID, filter})
+		}
+	}
 	s.mu.Lock()
 	for _, filter := range filters {
 		sk := subKey{clientID, filter}
@@ -444,6 +474,9 @@ func (s *Service) Unsubscribed(clientID string, filters []string) {
 			continue
 		}
 		delete(s.subs, sk)
+		if s.exactTopics[e.topic]--; s.exactTopics[e.topic] <= 0 {
+			delete(s.exactTopics, e.topic)
+		}
 		d := s.dpes[e.key]
 		if d == nil {
 			continue
@@ -498,15 +531,17 @@ func (s *Service) Restore(subs map[string][]string) (invalid map[string][]string
 			switch v {
 			case NotNative:
 				continue
-			case Accept:
+			case Accept, Unavailable:
+				// Unavailable ones are kept: the system may come back and
+				// the registration is retried.
 				f, _ := SplitShared(filter)
-				if Classify(f) == KindNative {
+				switch {
+				case Classify(f) != KindNative:
+				case HasWildcard(f):
+					s.subscribedWild(client, f, false, true)
+				default:
 					s.addRestored(client, filter)
 				}
-			case Unavailable:
-				// Keep it: the system may come back. It is retried by the
-				// worker once registered.
-				s.addRestored(client, filter)
 			default:
 				s.logger.Warn("native subscription failed revalidation", "client", client, "filter", filter, "reason", why)
 				invalid[client] = append(invalid[client], filter)
@@ -541,6 +576,7 @@ func (s *Service) addRestored(clientID, filter string) {
 	e := &subEntry{key: key, topic: filter}
 	s.subs[sk] = e
 	d.subs[sk] = e
+	s.exactTopics[filter]++
 	s.attachLocked(d)
 }
 
@@ -733,6 +769,9 @@ func (s *Service) onSystem(system string, available bool) {
 		s.oaUp.Store(available)
 		defer s.PublishStatus()
 	}
+	s.wildOnSystem(system, available)
+	var lost []uint64
+	defer func() { s.disconnectAsync(lost) }()
 	s.mu.Lock()
 	for name := range s.catalog {
 		if strings.HasPrefix(name, system+":") {
@@ -751,7 +790,9 @@ func (s *Service) onSystem(system string, available bool) {
 			continue
 		}
 		s.dropBatchLocked(b)
-		s.api.C.DropRef(ref)
+		// The host keeps registrations on a lost system; release them so a
+		// reconnect does not leave a second registration behind.
+		lost = append(lost, ref)
 		for _, n := range b.names {
 			if d := s.dpes[n]; d != nil && d.batch == b {
 				d.batch = nil
@@ -1028,7 +1069,7 @@ func (s *Service) PublishStatus() {
 
 func (s *Service) Stats() Stats {
 	s.mu.Lock()
-	st := Stats{Interests: len(s.subs), DPEs: len(s.dpes), Batches: len(s.batches)}
+	st := Stats{Interests: len(s.subs), DPEs: len(s.dpes), Batches: len(s.batches), WildQueries: len(s.wild), WildSubs: len(s.wildSubs)}
 	s.mu.Unlock()
 	st.Connects = s.connects.Load()
 	st.Disconnects = s.disconnects.Load()

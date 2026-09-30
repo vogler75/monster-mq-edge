@@ -384,3 +384,54 @@ bool encodeTable(Writer &w, const Variable *v)
 }
 
 }  // namespace mmq
+
+namespace mmq
+{
+
+bool encodeTableChunks(const Variable *v, uint32_t maxBytes, const std::function<void(const Writer &, bool)> &sink)
+{
+  if (v && v->isA() == ANYTYPE_VAR)
+    v = static_cast<const AnyTypeVar *>(v)->getVar();
+  if (!v || !v->isDynVar())
+    return false;
+  const DynVar *rows = static_cast<const DynVar *>(v);
+  auto rowWriter = [](const Variable *row) {
+    if (row && row->isA() == ANYTYPE_VAR)
+      row = static_cast<const AnyTypeVar *>(row)->getVar();
+    Writer cells;
+    if (row && row->isDynVar())
+    {
+      const DynVar *d = static_cast<const DynVar *>(row);
+      for (unsigned int c = 0; c < d->getArrayLength(); c++)
+        cells.value(TagValue, d->getAt(c));
+    }
+    return cells;
+  };
+  unsigned int n = rows->getArrayLength();
+  if (n == 0)
+  {
+    sink(Writer(), true);
+    return true;
+  }
+  Writer header = rowWriter(rows->getAt(0));
+  Writer chunk;
+  chunk.nested(TagRow, header);
+  bool hasRows = false;
+  for (unsigned int r = 1; r < n; r++)
+  {
+    Writer cells = rowWriter(rows->getAt(r));
+    if (hasRows && chunk.size() + cells.size() + 5 > maxBytes)
+    {
+      sink(chunk, false);
+      chunk = Writer();
+      chunk.nested(TagRow, header);
+      hasRows = false;
+    }
+    chunk.nested(TagRow, cells);
+    hasRows = true;
+  }
+  sink(chunk, true);
+  return true;
+}
+
+}  // namespace mmq

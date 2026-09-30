@@ -230,6 +230,12 @@ func build(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus, opts Optio
 		}
 	}
 
+	if !cfg.AllowRootWildcard() {
+		if err := server.AddHook(new(rootWildcardHook), nil); err != nil {
+			return nil, fmt.Errorf("add root wildcard hook: %w", err)
+		}
+	}
+
 	// Native WinCC OA namespace. Added before the storage hook so accepted
 	// commands are consumed (not archived or delivered) and rejected
 	// filters never reach persistence.
@@ -239,6 +245,7 @@ func build(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus, opts Optio
 			NodeID:            cfg.NodeID,
 			NoSource:          cfg.WinCCOaNative.EchoPolicy == config.WinCCOaEchoNoSource,
 			ReconcileInterval: opts.NativeReconcile,
+			AllowRootWildcard: cfg.AllowRootWildcard(),
 			SessionExists: func(clientID string) bool {
 				if _, ok := server.Clients.Get(clientID); ok {
 					return true

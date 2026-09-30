@@ -114,6 +114,11 @@ HostMonitoring:
 # false -> rely on the in-memory inflight buffer.
 QueuedMessagesEnabled: true
 
+# Allow subscriptions to the root wildcard '#' (as in the Java broker). When
+# false, '#' and native WinCC OA wildcards covering every datapoint
+# (winccoa/<scope>/tags/#, types/#) are rejected with SUBACK 0x8F.
+AllowRootWildcardSubscription: true
+
 # MaxQueueMessages -> limit the max number of offline messages queued per client. 0 means unlimited.
 MaxQueueMessages: 1000000
 

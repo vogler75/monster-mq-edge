@@ -81,7 +81,9 @@ func TestNativeAccessIsolation(t *testing.T) {
 		sub("winccoa/local/tags/MMQConfigs_k1/config", 1),          // native storage datapoint
 		sub("#", 0), // broad filter
 	)
-	want := []byte{0x01, 0x87, 0x87, 0x87, 0x87, 0x9E, 0xA2, 0x87, 0x00}
+	// The wildcard is accepted; delivery-time ACL checks keep the denied
+	// element out of it (checked below).
+	want := []byte{0x01, 0x87, 0x87, 0x87, 0x87, 0x9E, 0x01, 0x87, 0x00}
 	if string(codes) != string(want) {
 		t.Fatalf("reader SUBACK\n got % x\nwant % x", codes, want)
 	}
@@ -110,6 +112,9 @@ func TestNativeAccessIsolation(t *testing.T) {
 	}
 	if got["winccoa/local/types/AnalogDrive/Pump101/speed"] {
 		t.Error("broad filter leaked a denied element through its type alias")
+	}
+	if got["winccoa/local/tags/Pump101/speed"] {
+		t.Error("native wildcard leaked a denied element")
 	}
 	if !got["winccoa/local/tags/Pump1/speed"] {
 		t.Errorf("reader did not receive its allowed element: %v", got)

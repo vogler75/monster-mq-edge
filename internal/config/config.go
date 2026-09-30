@@ -268,6 +268,11 @@ func (w *WinCCOaNativeConfig) validate() error {
 	return nil
 }
 
+// AllowRootWildcard returns the effective AllowRootWildcardSubscription.
+func (c *Config) AllowRootWildcard() bool {
+	return c.AllowRootWildcardSubscription == nil || *c.AllowRootWildcardSubscription
+}
+
 // HasStore reports whether name is in Stores.
 func (w WinCCOaNativeConfig) HasStore(name string) bool {
 	for _, s := range w.Stores {
@@ -346,9 +351,13 @@ type Config struct {
 	//   false → rely on the in-memory inflight buffer. Messages are lost
 	//           on broker restart but lower latency / no DB writes per publish.
 	QueuedMessagesEnabled bool `yaml:"QueuedMessagesEnabled"`
-	MaxQueueMessages      *int `yaml:"MaxQueueMessages"`
-	QueueBatchSize        *int `yaml:"QueueBatchSize"`
-	QueueFlushIntervalMs  *int `yaml:"QueueFlushIntervalMs"`
+	// AllowRootWildcardSubscription permits subscribing to '#' (default
+	// true, as in the Java broker). It also governs native WinCC OA
+	// wildcard filters that cover every datapoint.
+	AllowRootWildcardSubscription *bool `yaml:"AllowRootWildcardSubscription,omitempty"`
+	MaxQueueMessages              *int  `yaml:"MaxQueueMessages"`
+	QueueBatchSize                *int  `yaml:"QueueBatchSize"`
+	QueueFlushIntervalMs          *int  `yaml:"QueueFlushIntervalMs"`
 }
 
 func Default() *Config {

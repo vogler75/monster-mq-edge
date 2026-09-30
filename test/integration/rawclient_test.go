@@ -26,6 +26,7 @@ type rawClient struct {
 	waiters map[uint16]chan packets.Packet
 	msgs    chan packets.Packet
 	closed  chan struct{}
+	done    chan struct{} // closed by Close so a blocked reader gives up
 	connack chan packets.Packet
 }
 
@@ -52,6 +53,7 @@ func dialRaw(t testing.TB, port int, c rawConnect) (*rawClient, packets.Packet) 
 		waiters: map[uint16]chan packets.Packet{},
 		msgs:    make(chan packets.Packet, 1024),
 		closed:  make(chan struct{}),
+		done:    make(chan struct{}),
 		connack: make(chan packets.Packet, 1),
 	}
 	pk := packets.Packet{
@@ -147,7 +149,11 @@ func (c *rawClient) readLoop() {
 				_ = ack.PubackEncode(&b)
 				_, _ = c.conn.Write(b.Bytes())
 			}
-			c.msgs <- pk
+			select {
+			case c.msgs <- pk:
+			case <-c.done:
+				return
+			}
 		case packets.Disconnect:
 			return
 		}
@@ -338,6 +344,12 @@ func (c *rawClient) Drain(wait time.Duration) int {
 }
 
 func (c *rawClient) Close() {
+	select {
+	case <-c.done:
+		return
+	default:
+		close(c.done)
+	}
 	pk := packets.Packet{FixedHeader: packets.FixedHeader{Type: packets.Disconnect}, ProtocolVersion: c.version}
 	var buf bytes.Buffer
 	_ = pk.DisconnectEncode(&buf)

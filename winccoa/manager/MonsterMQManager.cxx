@@ -251,8 +251,27 @@ int32_t MonsterMQManager::complete(uint64_t reqId, int32_t status, const Writer 
 
 void MonsterMQManager::event(uint64_t ref, const Writer &w)
 {
-  // A full queue drops the event; the library counts it.
-  (void)mmq_event(handle, ref, w.data(), w.size());
+  // A full queue drops the event (counted by the library); anything else
+  // is logged, since the broker never sees it.
+  int32_t rc = mmq_event(handle, ref, w.data(), w.size());
+  if (rc != MMQ_OK && rc != MMQ_E_OVERLOAD)
+    logLine(MMQ_LOG_WARN, "event for reference " + std::to_string(ref) + " (" + std::to_string(w.size()) +
+                              " bytes) not delivered: " + std::to_string(rc));
+}
+
+// Sends a query table as one or more events below the ABI message limit;
+// every chunk repeats the header row and all but the last initial-answer
+// chunk carry FlagMore.
+bool MonsterMQManager::sendTable(uint64_t ref, const Variable *table, bool answer)
+{
+  return encodeTableChunks(table, MMQ_MAX_MESSAGE / 2, [&](const Writer &rows, bool last) {
+    Writer ev;
+    uint32_t flags = (answer ? FlagAnswer : 0) | (last ? 0 : FlagMore);
+    if (flags)
+      ev.u32(TagFlags, flags);
+    ev.append(rows);
+    event(ref, ev);
+  });
 }
 
 std::string MonsterMQManager::answerError(DpMsgAnswer &answer)
@@ -646,15 +665,8 @@ void MonsterMQManager::onQueryAnswer(QueryWait *w, DpMsgAnswer &answer)
     return;
   for (AnswerGroup *g = answer.getFirstGroup(); g; g = answer.getNextGroup())
     for (AnswerItem *item = g->getFirstItem(); item; item = g->getNextItem())
-    {
-      Writer ev;
-      ev.u32(TagFlags, FlagAnswer);
-      if (encodeTable(ev, item->getValuePtr()))
-      {
-        event(w->ref, ev);
+      if (sendTable(w->ref, item->getValuePtr(), true))
         return;
-      }
-    }
 }
 
 void MonsterMQManager::onQueryHotlink(QueryWait *w, DpHLGroup &group)
@@ -663,11 +675,7 @@ void MonsterMQManager::onQueryHotlink(QueryWait *w, DpHLGroup &group)
   if (it == queries.end() || it->second.wait != w)
     return;
   for (DpVCItem *item = group.getFirstItem(); item; item = group.getNextItem())
-  {
-    Writer ev;
-    if (encodeTable(ev, item->getValuePtr()))
-      event(w->ref, ev);
-  }
+    sendTable(w->ref, item->getValuePtr(), false);
 }
 
 void MonsterMQManager::disconnectQuery(uint64_t ref)

@@ -154,7 +154,7 @@ func TestNativeSubackPerFilter(t *testing.T) {
 		sub("winccoa/local/tags/Nope/speed", 1),                   // missing DP
 		sub("winccoa/local/tags/_Users", 1),                       // internal DP: denied
 		sub("winccoa/remote/SubstationB/tags/Feeder1/voltage", 1), // unavailable remote system
-		sub("winccoa/local/tags/Pump101/+", 1),                    // wildcard
+		sub("winccoa/local/tags/Pump101/+/x", 1),                  // wildcard below a leaf: accepted, matches nothing
 		sub("$share/g/winccoa/local/tags/Pump101/speed", 1),       // shared
 		sub("winccoa/node/this/status", 1),                        // status topic
 		sub("winccoa/cns/View/node", 1),                           // reserved CNS
@@ -165,7 +165,7 @@ func TestNativeSubackPerFilter(t *testing.T) {
 		sub("winccoa/local/tags/ScalarTag", 0),                    // scalar root
 		sub("winccoa/local/tags/MMQConfigs_k1/config", 1),         // native store DP: denied
 	}
-	want5 := []byte{0x01, 0x8F, 0x87, 0x83, 0xA2, 0x9E, 0x01, 0x83, 0x8F, 0x8F, 0x8F, 0x01, 0x00, 0x87}
+	want5 := []byte{0x01, 0x8F, 0x87, 0x83, 0x01, 0x9E, 0x01, 0x83, 0x8F, 0x8F, 0x8F, 0x01, 0x00, 0x87}
 	want3 := make([]byte, len(want5))
 	for i, c := range want5 {
 		if c > 2 {

@@ -89,6 +89,24 @@ The standalone broker is unaffected: `make build`, `build-arm64` and
   native subscriptions from the stores and revalidates them against the
   current datapoints.
 
+## Wildcard subscriptions
+
+Wildcards inside `winccoa/<scope>/tags/` and `winccoa/<scope>/types/` are
+served by WinCC OA queries:
+
+- `winccoa/local/tags/Pump1/#`: every value element of `Pump1`
+- `winccoa/local/tags/Pump1/value/#`: `Pump1.value` and everything below
+- `winccoa/local/tags/+/speed`: the `speed` element of every datapoint
+- `winccoa/local/types/Pump/#`: every element of every datapoint of type `Pump`
+- `winccoa/local/types/Pump/+/value/#`: the `value` subtree of all `Pump`s
+- `winccoa/local/tags/#`: the whole system (internal and store datapoints excluded)
+
+Each element is published to its own topic, so a client can mix wildcard and
+exact subscriptions; a change is delivered once. Filters that cover every
+datapoint (`tags/#`, `tags/+/...`, `types/#`) and the broker-wide `#` are
+only accepted while `AllowRootWildcardSubscription` (top-level config key,
+default `true`) is not set to `false`.
+
 ## SDK probe (AC-02)
 
 Set `probeQuery` and/or `probeDpe` in `[monstermq]` and start the manager

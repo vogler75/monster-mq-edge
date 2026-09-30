@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstring>
 #include <string>
+#include <functional>
 #include <vector>
 
 #include <DpElementType.hxx>
@@ -39,6 +40,7 @@ enum Op : uint32_t
 
 const uint32_t FlagAnswer = 1u << 0;
 const uint32_t FlagNoSource = 1u << 1;
+const uint32_t FlagMore = 1u << 3;  // query answer continues in another event
 
 class Writer
 {
@@ -52,6 +54,8 @@ class Writer
     // Encodes a Variable as a TLV value field (kind + body).
     void value(uint8_t tag, const Variable *v);
     void nested(uint8_t tag, const Writer &inner) { raw(tag, inner.data(), inner.size()); }
+    // Appends the fields of another writer as they are.
+    void append(const Writer &other) { buf.insert(buf.end(), other.buf.begin(), other.buf.end()); }
 
     const uint8_t *data() const { return buf.empty() ? nullptr : buf.data(); }
     uint32_t size() const { return (uint32_t)buf.size(); }
@@ -96,6 +100,11 @@ Variable *decodeValue(const Field &f, DpElementType et, std::string &err);
 // Encodes a query result table (DynVar of DynVar, header row first) as
 // repeated TagRow fields. Returns false if v is not a table.
 bool encodeTable(Writer &w, const Variable *v);
+
+// Splits a query result table into row chunks of at most maxBytes, each
+// starting with the header row, and calls sink(rows, last) per chunk.
+// Returns false if v is not a table.
+bool encodeTableChunks(const Variable *v, uint32_t maxBytes, const std::function<void(const Writer &, bool)> &sink);
 
 }  // namespace mmq
 

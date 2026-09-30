@@ -385,7 +385,7 @@ func (h *Host) setLocked(address string, v oahost.Value, own bool) ([]pendingEve
 		if !q.re.MatchString(full) {
 			continue
 		}
-		evs = append(evs, pendingEvent{ref: ref, data: h.queryTable([]string{full}, q)})
+		evs = append(evs, pendingEvent{ref: ref, data: h.queryTable([]string{full}, q, false)})
 	}
 	return evs, nil
 }
@@ -690,7 +690,7 @@ func (h *Host) dpConnect(m oahost.Message) ([]pendingEvent, error) {
 }
 
 var (
-	queryRe = regexp.MustCompile(`(?i)^\s*SELECT\s+(.+?)\s+FROM\s+'([^']+)'(?:\s+WHERE\s+_DPT\s*=\s*"([^"]+)")?\s*$`)
+	queryRe = regexp.MustCompile(`(?i)^\s*SELECT\s+(.+?)\s+FROM\s+'([^']+)'(?:\s+WHERE\s+_DPT\s*=\s*"([^"]+)")?(?:\s+REMOTE\s+'([^']+)')?\s*$`)
 	attrRe  = regexp.MustCompile(`'([^']+)'`)
 )
 
@@ -702,16 +702,17 @@ func (h *Host) queryConnect(m oahost.Message) ([]pendingEvent, error) {
 		return nil, fmt.Errorf("%w: unsupported query", oahost.ErrOA)
 	}
 	pattern := sub[2]
-	if !strings.Contains(pattern, ":") {
-		pattern = h.local + ":" + pattern
+	sysName := h.local
+	if sub[4] != "" {
+		sysName = sub[4]
+	} else if i := strings.Index(pattern, ":"); i >= 0 && !strings.Contains(pattern[:i], ".") {
+		sysName, pattern = pattern[:i], pattern[i+1:]
 	}
-	sysName := strings.SplitN(pattern, ":", 2)[0]
 	s := h.systems[sysName]
 	if s == nil || !s.available {
 		return nil, fmt.Errorf("%w: system %s", oahost.ErrUnavailable, sysName)
 	}
-	pattern = strings.TrimSuffix(pattern, ".")
-	re, err := regexp.Compile("^" + globToRe(pattern) + `\.?$`)
+	re, err := oaPatternRe(sysName, pattern)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", oahost.ErrOA, err)
 	}
@@ -742,28 +743,50 @@ func (h *Host) queryConnect(m oahost.Message) ([]pendingEvent, error) {
 		}
 	}
 	sort.Strings(matches)
-	return []pendingEvent{{ref: ref, data: h.queryTable(matches, q)}}, nil
+	return []pendingEvent{{ref: ref, data: h.queryTable(matches, q, true)}}, nil
 }
 
-func globToRe(p string) string {
-	var b strings.Builder
-	for _, c := range p {
-		switch c {
-		case '*':
-			b.WriteString(".*")
-		case '?':
-			b.WriteString(".")
-		default:
-			b.WriteString(regexp.QuoteMeta(string(c)))
-		}
+// oaPatternRe compiles a dpQuery FROM pattern with WinCC OA semantics: '*'
+// matches within one name level, "X.**" matches X's elements at any depth
+// (the root of a scalar DP included), "{a,b}" lists alternatives. A DP
+// root is named "DP." and an element "DP.a.b".
+func oaPatternRe(system, pattern string) (*regexp.Regexp, error) {
+	alts := []string{pattern}
+	if strings.HasPrefix(pattern, "{") && strings.HasSuffix(pattern, "}") {
+		alts = strings.Split(pattern[1:len(pattern)-1], ",")
 	}
-	return b.String()
+	var parts []string
+	for _, a := range alts {
+		if !strings.Contains(a, ".") {
+			a += "."
+		}
+		var b strings.Builder
+		for i := 0; i < len(a); i++ {
+			switch {
+			case strings.HasPrefix(a[i:], ".**"):
+				b.WriteString(`\..*`)
+				i += 2
+			case a[i] == '*':
+				b.WriteString(`[^.]*`)
+			case a[i] == '?':
+				b.WriteString(`[^.]`)
+			default:
+				b.WriteString(regexp.QuoteMeta(string(a[i])))
+			}
+		}
+		parts = append(parts, b.String())
+	}
+	return regexp.Compile("^" + regexp.QuoteMeta(system) + ":(" + strings.Join(parts, "|") + ")$")
 }
+
 
 // queryTable renders a dyn_dyn_anytype-like table: header row ["", ":attr"]
 // followed by [dpe, value] rows.
-func (h *Host) queryTable(dpes []string, q *query) []byte {
+func (h *Host) queryTable(dpes []string, q *query, answer bool) []byte {
 	var w oahost.Writer
+	if answer {
+		w.U32(oahost.TagFlags, oahost.FlagAnswer)
+	}
 	var hdr oahost.Writer
 	hdr.Value(oahost.TagValue, oahost.Value{Kind: oahost.KindString, Str: ""})
 	for _, a := range q.attrs {
@@ -777,9 +800,6 @@ func (h *Host) queryTable(dpes []string, q *query) []byte {
 		}
 		var row oahost.Writer
 		name := full
-		if !strings.Contains(strings.SplitN(full, ":", 2)[1], ".") {
-			name += "."
-		}
 		row.Value(oahost.TagValue, oahost.Value{Kind: oahost.KindString, Str: name})
 		for _, a := range q.attrs {
 			row.Value(oahost.TagValue, h.readAttr(d, el, a))
