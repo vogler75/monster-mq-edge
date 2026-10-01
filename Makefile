@@ -78,7 +78,7 @@ lint:
 # dev/plans/spec-winccoa-native.md). Standalone targets stay CGO_ENABLED=0.
 EMBED_OUT := build/embed
 
-embed-lib:
+embed-lib: prepare-dashboard
 	mkdir -p $(EMBED_OUT)
 	CGO_ENABLED=1 go build $(GOFLAGS) -tags winccoa_embed -buildmode=c-archive -o $(EMBED_OUT)/libmonstermq.a ./embed/cabi
 	cp embed/cabi/monstermq.h embed/cabi/monstermq_types.h $(EMBED_OUT)/

@@ -23,6 +23,7 @@ static void mmq_call_log(const mmq_host *h, int32_t level, const char *msg, uint
 import "C"
 
 import (
+	"log/slog"
 	"fmt"
 	"runtime/debug"
 	"sync"
@@ -31,6 +32,7 @@ import (
 
 	"monstermq.io/edge/internal/broker"
 	"monstermq.io/edge/internal/config"
+	mlog "monstermq.io/edge/internal/log"
 	"monstermq.io/edge/internal/oahost"
 )
 
@@ -212,10 +214,13 @@ func (in *instance) start() {
 			in.fail(fmt.Sprintf("panic during start: %v", r))
 		}
 	}()
-	logger := newHostLogger(in.host, in.cfg.Logging.Level)
+	// Log lines go to the WinCC OA log and to the log bus that feeds the
+	// dashboard's log viewer (GraphQL systemLogs).
+	logBus := mlog.NewBus(in.cfg.Logging.RingBufferSize)
+	logger := slog.New(mlog.NewHandler(logBus, newHostLogger(in.host, in.cfg.Logging.Level).Handler(), in.cfg.NodeID))
 	in.client.SetLogger(logger)
 	in.startDiagnostics(logger)
-	srv, err := broker.NewWithOptions(in.cfg, logger, nil, broker.Options{OA: in.client})
+	srv, err := broker.NewWithOptions(in.cfg, logger, logBus, broker.Options{OA: in.client})
 	if err != nil {
 		in.fail(err.Error())
 		return
