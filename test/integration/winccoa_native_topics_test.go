@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"monstermq.io/edge/internal/broker"
+	"monstermq.io/edge/internal/config"
 	"monstermq.io/edge/internal/oahost"
 	"monstermq.io/edge/internal/winccoanative"
 )
@@ -397,5 +398,64 @@ func TestNativeTopicsWildcard(t *testing.T) {
 	}
 	if st := env.srv.Native().Stats(); st.TopicDPs != 0 || st.TopicWilds != 0 || st.TopicDirs != 0 {
 		t.Fatalf("stats %+v", st)
+	}
+}
+
+// TopicDpNames: NAME names the datapoints after the topic; a datapoint that
+// holds another topic is never written, deleted or delivered from.
+func TestNativeTopicsDpNames(t *testing.T) {
+	sim, client := newSim(0)
+	defer sim.Close()
+	env := startNative(t, 27194, filepath.Join(t.TempDir(), "n.db"), sim, client, func(c *config.Config) {
+		c.WinCCOaNative.TopicDpNames = config.WinCCOaTopicDpName
+	}, broker.Options{})
+	defer env.srv.Close()
+
+	s, _ := dialRaw(t, env.port, rawConnect{ClientID: "ns", Version: 5, Clean: true})
+	defer s.Close()
+	s.Subscribe(sub("winccoa/topics/plant/line-1", 1), sub("winccoa/topics/plant/#", 1))
+	p, _ := dialRaw(t, env.port, rawConnect{ClientID: "np", Version: 5, Clean: true})
+	defer p.Close()
+	if code := p.Publish(rawPub{Topic: "winccoa/topics/plant/line-1", Payload: []byte("v"), QoS: 1}); code != 0 {
+		t.Fatalf("puback 0x%02x", code)
+	}
+	if pk, ok := s.NextOn("winccoa/topics/plant/line-1", 3*time.Second); !ok || string(pk.Payload) != "v" {
+		t.Fatal("not delivered with readable names")
+	}
+	if v, err := sim.Get("System1:MMQTopic_plant/line-1.topic"); err != nil || v.Str != "plant/line-1" {
+		t.Fatalf("readable datapoint %+v %v", v, err)
+	}
+	s.Drain(300 * time.Millisecond)
+
+	// A datapoint with the name of plant/x that holds another topic.
+	dp := "System1:" + winccoanative.TopicDPName("plant/x")
+	api := oahost.API{C: client}
+	if err := api.DpCreate(context.Background(), dp, winccoanative.TopicType, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if err := sim.Set(dp+".topic", oahost.Value{Kind: oahost.KindString, Str: "plant/y"}); err != nil {
+		t.Fatal(err)
+	}
+	if code := p.Publish(rawPub{Topic: "winccoa/topics/plant/x", Payload: []byte("w"), QoS: 1}); code != 0x90 {
+		t.Fatalf("write to a foreign datapoint: 0x%02x", code)
+	}
+	if code := p.Publish(rawPub{Topic: "winccoa/topics/plant/x", QoS: 1, Retain: true}); code != 0x90 {
+		t.Fatalf("delete of a foreign datapoint: 0x%02x", code)
+	}
+	if _, err := sim.Get(dp + ".topic"); err != nil {
+		t.Fatal("foreign datapoint deleted")
+	}
+	x, _ := dialRaw(t, env.port, rawConnect{ClientID: "nx", Version: 5, Clean: true})
+	defer x.Close()
+	x.Subscribe(sub("winccoa/topics/plant/x", 1))
+	time.Sleep(300 * time.Millisecond)
+	if err := sim.Set(dp+".value", oahost.Value{Kind: oahost.KindBytes, Bytes: []byte("z")}); err != nil {
+		t.Fatal(err)
+	}
+	if pk, ok := x.Next(500 * time.Millisecond); ok {
+		t.Fatalf("delivered from a foreign datapoint: %s %q", pk.TopicName, pk.Payload)
+	}
+	if pk, ok := s.Next(300 * time.Millisecond); ok {
+		t.Fatalf("wildcard delivered from a foreign datapoint: %s %q", pk.TopicName, pk.Payload)
 	}
 }

@@ -275,7 +275,7 @@ limited to just under 1 MiB (the manager's message limit).
 Publishes to `winccoa/systems/<System>/topics/<topic>` (local shortcut
 `winccoa/topics/<topic>`; the level is `TopicsName`) are not handled by the
 broker itself but written to a datapoint of type `MMQTopic` on that system,
-one per topic (`MMQTopic_k<hash of the topic>`). Subscribers get the messages
+one per topic. Subscribers get the messages
 through a connection to that datapoint, so every broker of a distributed
 system that subscribes to the same topic receives them, whichever broker
 published:
@@ -286,6 +286,16 @@ published:
 | `value` | blob | payload of non-retained publishes; last value storage turned off |
 | `retained` | blob | retained message (kept across restarts) |
 
+- Datapoint names (`TopicDpNames`, the same on every broker of a
+  distributed system):
+  - `HASH` (default): `MMQTopic_k<24 hex digits of SHA-256 of the topic>`.
+  - `NAME`: `MMQTopic_<topic>`, e.g. `plant/line-1/temp` ->
+    `MMQTopic_plant/line-1/temp`. Characters WinCC OA forbids in datapoint
+    names (blank `. : , ; * ? [ ] { } $ @`, control characters), the quotes
+    `" ' \` and `%` are written as `%XX` (hex), so different topics never
+    share a name; a name over 128 characters falls back to the hash.
+  - In both modes a datapoint whose `topic` element holds another topic is
+    never written, deleted or delivered from (publish rejected with `0x90`).
 - The first publish to a topic creates the datapoint (also on a remote
   system) and turns off the last value storage of `value`; later publishes
   only write the element. The PUBACK is sent after WinCC OA confirmed the

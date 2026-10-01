@@ -61,6 +61,10 @@ type Options struct {
 	AllowRootWildcard bool
 	// MaxWildcardQueries bounds the number of distinct wildcard queries.
 	MaxWildcardQueries int
+	// TopicDPNames names topic datapoints after the topic (TopicDPName)
+	// instead of its hash (TopicDP). Every broker of a distributed system
+	// must use the same naming.
+	TopicDPNames bool
 	// SessionExists reports whether a client session still exists; used to
 	// drop interests of sessions that expired while not in memory.
 	SessionExists func(clientID string) bool

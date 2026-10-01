@@ -242,6 +242,10 @@ type WinCCOaNativeConfig struct {
 	// TopicsName is the level for MQTT topics kept in MMQTopic datapoints:
 	// <TopicRoot>/<SystemsName>/<system>/<TopicsName>/<topic>, default "topics".
 	TopicsName string `yaml:"TopicsName"`
+	// TopicDpNames names MMQTopic datapoints by a hash of the topic (HASH,
+	// default) or after the topic itself (NAME, e.g. MMQTopic_plant/line1). All brokers of a
+	// distributed system must use the same naming.
+	TopicDpNames string `yaml:"TopicDpNames"`
 
 	// LegacyStores is the removed Stores list; set only to reject old configs.
 	LegacyStores []string `yaml:"Stores,omitempty"`
@@ -250,6 +254,9 @@ type WinCCOaNativeConfig struct {
 const (
 	WinCCOaEchoBrokerTag = "BROKER_TAG"
 	WinCCOaEchoNoSource  = "NO_SOURCE"
+
+	WinCCOaTopicDpHash = "HASH"
+	WinCCOaTopicDpName = "NAME"
 )
 
 func (w *WinCCOaNativeConfig) validate() error {
@@ -270,6 +277,13 @@ func (w *WinCCOaNativeConfig) validate() error {
 	}
 	if w.TopicsName == "" {
 		w.TopicsName = "topics"
+	}
+	switch w.TopicDpNames {
+	case "":
+		w.TopicDpNames = WinCCOaTopicDpHash
+	case WinCCOaTopicDpHash, WinCCOaTopicDpName:
+	default:
+		return fmt.Errorf("WinCCOaNative.TopicDpNames %q must be HASH or NAME", w.TopicDpNames)
 	}
 	switch w.EchoPolicy {
 	case WinCCOaEchoBrokerTag, WinCCOaEchoNoSource:

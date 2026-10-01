@@ -36,6 +36,7 @@ WinCCOaNative:
   TypesName: types              # <TopicRoot>/<SystemsName>/<system>/<TypesName>/<dpt>/<dp>/<element>...
   SystemsName: systems          # every system: <TopicRoot>/<SystemsName>/<system>/<TagsName>/...
   TopicsName: topics            # MQTT topics in MMQTopic datapoints: <TopicRoot>/<SystemsName>/<system>/<TopicsName>/<topic>
+  TopicDpNames: HASH            # MMQTopic datapoint names: HASH (MMQTopic_k<hash>) or NAME (MMQTopic_plant/line1, same on all brokers)
   LocalShortcut: true           # local system also as <TopicRoot>/<TagsName>/... (status on <TopicRoot>)
   EchoPolicy: BROKER_TAG
 UserManagement:

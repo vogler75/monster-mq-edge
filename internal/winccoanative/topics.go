@@ -14,8 +14,8 @@ import (
 )
 
 // TopicType is the datapoint type of the topics branch: one datapoint per
-// MQTT topic and system, named MMQTopic_k<hash of the topic>, so every
-// system that runs a broker can replicate topics through WinCC OA.
+// MQTT topic and system, named by TopicDP or TopicDPName, so every system
+// that runs a broker can replicate topics through WinCC OA.
 const TopicType = "MMQTopic"
 
 // Elements of MMQTopic. value carries non-retained publishes and has the
@@ -37,11 +37,54 @@ func topicElementKinds() []uint32 {
 // out of the last value database.
 const lastValueStorageOff = "_original.._last_value_storage_off"
 
-// TopicDP is the datapoint name of an MQTT topic below the topics branch.
+// TopicDP is the hashed datapoint name of an MQTT topic below the topics
+// branch: MMQTopic_k<24 hex digits of SHA-256>.
 func TopicDP(topic string) string {
 	sum := sha256.Sum256([]byte("topic\x00" + topic))
 	return TopicType + "_k" + hex.EncodeToString(sum[:])[:24]
 }
+
+// maxTopicDPName bounds a readable datapoint name; longer topics get the
+// hashed name.
+const maxTopicDPName = 128
+
+// TopicDPName is the readable datapoint name of a topic: MMQTopic_ and the
+// topic itself, e.g. plant/line-1/temp -> MMQTopic_plant/line-1/temp. The
+// characters WinCC OA forbids in datapoint names (blank . : , ; * ? [ ] { }
+// $ @, control characters), the quotes " ' \ and the escape character %
+// are written as %XX (uppercase hex), so different topics never get the
+// same name. Topics whose name would exceed maxTopicDPName characters get
+// the hashed name (TopicDP).
+func TopicDPName(topic string) string {
+	const hexDigits = "0123456789ABCDEF"
+	var b strings.Builder
+	b.WriteString(TopicType + "_")
+	for i := 0; i < len(topic); i++ {
+		c := topic[i]
+		if c < 0x20 || c == 0x7F || strings.IndexByte(" .:,;*?[]{}$@%\"'\\", c) >= 0 {
+			b.WriteByte('%')
+			b.WriteByte(hexDigits[c>>4])
+			b.WriteByte(hexDigits[c&15])
+		} else {
+			b.WriteByte(c)
+		}
+		if b.Len() > maxTopicDPName {
+			return TopicDP(topic)
+		}
+	}
+	return b.String()
+}
+
+// topicDP is the datapoint name of a topic in the configured naming.
+func (s *Service) topicDP(topic string) string {
+	if s.opts.TopicDPNames {
+		return TopicDPName(topic)
+	}
+	return TopicDP(topic)
+}
+
+// ErrTopicCollision reports a datapoint that holds another topic.
+var ErrTopicCollision = errors.New("topic datapoint belongs to another topic")
 
 // TopicTarget is a parsed topic of the topics branch.
 type TopicTarget struct {
@@ -101,8 +144,10 @@ type topicSub struct {
 // topicEntry is the connection of one MMQTopic datapoint, shared by every
 // subscription on it.
 type topicEntry struct {
-	key      string // Sys:MMQTopic_k...
+	key      string // Sys:MMQTopic_...
 	system   string
+	topic    string // topic below topics/ the datapoint must hold
+	foreign  bool   // its topic element holds another topic: nothing is delivered
 	subs     map[subKey]*topicSub
 	ref      uint64
 	live     bool // connected
@@ -112,6 +157,7 @@ type topicEntry struct {
 	retained []byte
 }
 
+func (e *topicEntry) topicAddr() string    { return e.key + "." + topicElTopic + ":" + DefaultAttr }
 func (e *topicEntry) valueAddr() string    { return e.key + "." + topicElValue + ":" + DefaultAttr }
 func (e *topicEntry) retainedAddr() string { return e.key + "." + topicElRetained + ":" + DefaultAttr }
 
@@ -187,7 +233,7 @@ func (s *Service) subscribedTopic(clientID, filter string, existed, restored boo
 	if err != nil {
 		return
 	}
-	key := s.sysOf(t.System) + ":" + TopicDP(t.Topic)
+	key := s.sysOf(t.System) + ":" + s.topicDP(t.Topic)
 	sk := subKey{clientID, filter}
 	s.mu.Lock()
 	if old, ok := s.tsubs[sk]; ok && old.key == key {
@@ -204,7 +250,7 @@ func (s *Service) subscribedTopic(clientID, filter string, existed, restored boo
 	}
 	e := s.topics[key]
 	if e == nil {
-		e = &topicEntry{key: key, system: s.sysOf(t.System), subs: map[subKey]*topicSub{}}
+		e = &topicEntry{key: key, system: s.sysOf(t.System), topic: t.Topic, subs: map[subKey]*topicSub{}}
 		s.topics[key] = e
 	}
 	sub := &topicSub{key: key, topic: filter, waiting: !restored}
@@ -277,7 +323,7 @@ func (s *Service) subscribedTopicWild(clientID, filter string, existed, restored
 func (s *Service) attachWildLocked(sk subKey, w *topicWild, sysDP, topic string, waiting bool) *topicDelivery {
 	e := s.topics[sysDP]
 	if e == nil {
-		e = &topicEntry{key: sysDP, system: w.system, subs: map[subKey]*topicSub{}}
+		e = &topicEntry{key: sysDP, system: w.system, topic: topic, subs: map[subKey]*topicSub{}}
 		s.topics[sysDP] = e
 	}
 	if _, ok := e.subs[sk]; ok {
@@ -376,7 +422,7 @@ func (s *Service) onDirRows(d *topicDir, m oahost.Message) {
 		sys, rest, ok := strings.Cut(row[0].Str, ":")
 		dp, _, _ := strings.Cut(rest, ".")
 		topic := row[1].Str
-		if !ok || topic == "" || TopicDP(topic) != dp {
+		if !ok || topic == "" || s.topicDP(topic) != dp {
 			continue // not configured yet, or not a topic datapoint of this broker kind
 		}
 		sysDP := sys + ":" + dp
@@ -509,7 +555,9 @@ func (s *Service) connectTopics() {
 }
 
 func (s *Service) connectTopic(e *topicEntry) {
-	names := []string{e.valueAddr(), e.retainedAddr()}
+	// The topic element comes first: its answer tells whether the
+	// datapoint holds this topic before any value is delivered.
+	names := []string{e.topicAddr(), e.valueAddr(), e.retainedAddr()}
 	// Never NoSource: the hotlink of the own write is how local
 	// subscribers get the message.
 	ref, err := s.api.DpConnect(s.ctx, names, oahost.FlagAnswer, func(m oahost.Message) { s.onTopicHotlink(e, m) }, s.opts.ConnectTimeout)
@@ -547,6 +595,10 @@ func (s *Service) onTopicHotlink(e *topicEntry, m oahost.Message) {
 		return
 	}
 	for i, name := range names {
+		if name == e.topicAddr() {
+			s.checkTopicOwner(e, values[i].Str)
+			continue
+		}
 		retained := name == e.retainedAddr()
 		if !retained && name != e.valueAddr() {
 			continue
@@ -558,6 +610,10 @@ func (s *Service) onTopicHotlink(e *topicEntry, m oahost.Message) {
 		if s.topics[e.key] != e {
 			s.mu.Unlock()
 			return
+		}
+		if e.foreign {
+			s.mu.Unlock()
+			continue
 		}
 		if retained {
 			e.retained = append([]byte(nil), payload...)
@@ -594,6 +650,23 @@ func (s *Service) onTopicHotlink(e *topicEntry, m oahost.Message) {
 	}
 }
 
+// checkTopicOwner marks a datapoint whose topic element holds another
+// topic (a name collision); its values are never delivered. An empty topic
+// element is a datapoint that is still being configured.
+func (s *Service) checkTopicOwner(e *topicEntry, topic string) {
+	if topic == "" {
+		return
+	}
+	s.mu.Lock()
+	was := e.foreign
+	e.foreign = topic != e.topic
+	now := e.foreign
+	s.mu.Unlock()
+	if now && !was {
+		s.logger.Warn("topic datapoint holds another topic; not delivered", "dp", e.key, "topic", e.topic, "holds", topic)
+	}
+}
+
 // topicsOnSystemLocked drops the connections and the directory query of a
 // lost system and registers them again when it returns (caller holds s.mu).
 func (s *Service) topicsOnSystemLocked(system string, available bool) (lost, lostDirs []uint64) {
@@ -620,6 +693,7 @@ func (s *Service) topicsOnSystemLocked(system string, available bool) (lost, los
 			e.live = false
 		}
 		e.known = false
+		e.foreign = false
 		e.retained = nil
 		for _, sub := range e.subs {
 			sub.waiting = true
@@ -640,6 +714,7 @@ func (s *Service) invalidateTopicLocked(sysDP string) (uint64, bool) {
 		return 0, false
 	}
 	e.known = false
+	e.foreign = false
 	e.retained = nil
 	for _, sub := range e.subs {
 		sub.waiting = true
@@ -679,11 +754,11 @@ func (s *Service) PublishTopic(topic string, payload []byte, retain bool) (Verdi
 	if !s.ready.Load() || !s.oaUp.Load() {
 		return Unavailable, "WinCC OA not ready"
 	}
-	sysDP := s.sysOf(t.System) + ":" + TopicDP(t.Topic)
+	sysDP := s.sysOf(t.System) + ":" + s.topicDP(t.Topic)
 	ctx, cancel := context.WithTimeout(context.Background(), s.opts.WriteTimeout)
 	defer cancel()
 	if retain && len(payload) == 0 {
-		return s.deleteTopic(ctx, sysDP)
+		return s.deleteTopic(ctx, sysDP, t.Topic)
 	}
 	el := topicElValue
 	if retain {
@@ -711,7 +786,7 @@ func (s *Service) PublishTopic(topic string, payload []byte, retain bool) (Verdi
 }
 
 func topicVerdict(err error) (Verdict, string) {
-	if errors.Is(err, oahost.ErrInvalid) || errors.Is(err, oahost.ErrType) {
+	if errors.Is(err, oahost.ErrInvalid) || errors.Is(err, oahost.ErrType) || errors.Is(err, ErrTopicCollision) {
 		return Invalid, err.Error()
 	}
 	return Unavailable, err.Error()
@@ -748,6 +823,8 @@ func (s *Service) prepareTopic(ctx context.Context, sysDP, topic string) error {
 		created = true
 	} else if res.TypeName != "" && res.TypeName != TopicType {
 		return fmt.Errorf("%w: %s has type %s, not %s", oahost.ErrInvalid, sysDP, res.TypeName, TopicType)
+	} else if err := s.checkTopicElement(ctx, sysDP, topic); err != nil {
+		return err
 	}
 	err = s.api.DpSet(ctx,
 		[]string{sysDP + "." + topicElTopic + ":" + WriteAttr, sysDP + "." + topicElValue + ":" + lastValueStorageOff},
@@ -767,12 +844,17 @@ func (s *Service) prepareTopic(ctx context.Context, sysDP, topic string) error {
 
 // deleteTopic clears the retained element, so connected subscribers get
 // the empty retained message, then deletes the datapoint.
-func (s *Service) deleteTopic(ctx context.Context, sysDP string) (Verdict, string) {
+func (s *Service) deleteTopic(ctx context.Context, sysDP, topic string) (Verdict, string) {
 	s.prepMu.Lock()
 	defer s.prepMu.Unlock()
 	s.mu.Lock()
 	delete(s.prepared, sysDP)
 	s.mu.Unlock()
+	if err := s.checkTopicElement(ctx, sysDP, topic); errors.Is(err, oahost.ErrNotFound) {
+		return Accept, ""
+	} else if err != nil {
+		return topicVerdict(err)
+	}
 	err := s.api.DpSet(ctx, []string{sysDP + "." + topicElRetained + ":" + WriteAttr},
 		[]oahost.Value{{Kind: oahost.KindBytes}}, s.opts.WriteTimeout)
 	if errors.Is(err, oahost.ErrNotFound) {
@@ -785,4 +867,17 @@ func (s *Service) deleteTopic(ctx context.Context, sysDP string) (Verdict, strin
 		return topicVerdict(err)
 	}
 	return Accept, ""
+}
+
+// checkTopicElement makes sure an existing datapoint holds topic (or none
+// yet), so a name collision never overwrites or deletes another topic.
+func (s *Service) checkTopicElement(ctx context.Context, sysDP, topic string) error {
+	vals, err := s.api.DpGet(ctx, []string{sysDP + "." + topicElTopic + ":" + DefaultAttr}, s.opts.WriteTimeout)
+	if err != nil {
+		return err
+	}
+	if have := vals[0].Str; have != "" && have != topic {
+		return fmt.Errorf("%w: %s holds %q, not %q", ErrTopicCollision, sysDP, have, topic)
+	}
+	return nil
 }

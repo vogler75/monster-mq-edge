@@ -280,6 +280,7 @@ func build(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus, opts Optio
 			NoSource:          cfg.WinCCOaNative.EchoPolicy == config.WinCCOaEchoNoSource,
 			ReconcileInterval: opts.NativeReconcile,
 			AllowRootWildcard: cfg.AllowRootWildcard(),
+			TopicDPNames:      cfg.WinCCOaNative.TopicDpNames == config.WinCCOaTopicDpName,
 			SessionExists: func(clientID string) bool {
 				if _, ok := server.Clients.Get(clientID); ok {
 					return true
