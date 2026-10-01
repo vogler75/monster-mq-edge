@@ -280,6 +280,14 @@ func (h *Host) DeleteDP(sys, name string) {
 	_ = h.client.Event(oahost.StateRef, w.Bytes())
 }
 
+// dpChangeEvent reports a created or deleted datapoint on StateRef.
+func dpChangeEvent(sysDP string, exists bool) pendingEvent {
+	var w oahost.Writer
+	w.String(oahost.TagName, sysDP)
+	w.Bool(oahost.TagExists, exists)
+	return pendingEvent{ref: oahost.StateRef, data: w.Bytes()}
+}
+
 func zero(k oahost.Kind) oahost.Value {
 	v := oahost.Value{Kind: k}
 	if k == oahost.KindTime {
@@ -353,6 +361,13 @@ func (h *Host) setLocked(address string, v oahost.Value, own bool) ([]pendingEve
 	k := t.Elements[el]
 	if k == ElemStruct {
 		return nil, fmt.Errorf("%w: %s is a structure node", oahost.ErrType, address)
+	}
+	if attr == attrLVSOff {
+		if v.Kind != oahost.KindBool {
+			return nil, fmt.Errorf("%w: %s expects bool", oahost.ErrType, address)
+		}
+		d.values[el+"#"+attrLVSOff] = v
+		return nil, nil
 	}
 	if attr != "" && attr != "_original.._value" && attr != "_online.._value" {
 		return nil, fmt.Errorf("%w: attribute %s not writable", oahost.ErrInvalid, attr)
@@ -432,8 +447,16 @@ func goid() int64 {
 	return id
 }
 
+// attrLVSOff turns off the last value storage of an element.
+const attrLVSOff = "_original.._last_value_storage_off"
+
 func (h *Host) readAttr(d *dp, el, attr string) oahost.Value {
 	switch attr {
+	case attrLVSOff:
+		if v, ok := d.values[el+"#"+attrLVSOff]; ok {
+			return v
+		}
+		return oahost.Value{Kind: oahost.KindBool}
 	case "_online.._stime":
 		if v, ok := d.values[el+"#stime"]; ok {
 			return v
@@ -538,8 +561,8 @@ func (h *Host) handle(r request) {
 		sys, dpn := splitSys(name, h.local)
 		if strings.Contains(dpn, ".") {
 			err = fmt.Errorf("%w: dpCreate takes a DP name without element or dot: %q", oahost.ErrInvalid, name)
-		} else {
-			err = h.createLocked(sys, dpn, m.String(oahost.TagTypeName))
+		} else if err = h.createLocked(sys, dpn, m.String(oahost.TagTypeName)); err == nil {
+			evs = append(evs, dpChangeEvent(sys+":"+dpn, true))
 		}
 	case oahost.OpDpDelete:
 		name := m.String(oahost.TagName)
@@ -550,6 +573,7 @@ func (h *Host) handle(r request) {
 			err = oahost.ErrNotFound
 		} else {
 			delete(s.dps, dpn)
+			evs = append(evs, dpChangeEvent(sys+":"+dpn, false))
 		}
 	case oahost.OpTypeCheck:
 		err = h.typeCheck(m)
@@ -635,6 +659,9 @@ func (h *Host) dpSet(m oahost.Message) ([]pendingEvent, error) {
 			return nil, err
 		}
 		k := h.types[d.typ].Elements[el]
+		if attrOf(string(names[i])) == attrLVSOff {
+			k = uint32(oahost.KindBool)
+		}
 		if k == ElemStruct || oahost.Kind(k) != v.Kind {
 			return nil, fmt.Errorf("%w: %s", oahost.ErrType, names[i])
 		}

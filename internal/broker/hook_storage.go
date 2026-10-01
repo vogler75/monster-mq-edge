@@ -33,6 +33,10 @@ type StorageHook struct {
 	metrics          MetricsCounter
 	retainedInMemory bool // when true, OnRetainMessage skips DB persistence
 	server           *mqtt.Server
+	// replicated reports topics whose publishes the broker does not deliver
+	// itself but receives back from WinCC OA (native topics branch); the
+	// bus and archives see only the delivered message.
+	replicated func(topic string) bool
 }
 
 // ArchiveDispatcher receives every published message for archive-group fanout.
@@ -274,6 +278,9 @@ func (h *StorageHook) OnPacketSent(_ *mqtt.Client, pk packets.Packet, _ []byte) 
 func (h *StorageHook) OnPublished(cl *mqtt.Client, pk packets.Packet) {
 	if h.metrics != nil {
 		h.metrics.IncIn()
+	}
+	if pk.Ignore && h.replicated != nil && h.replicated(pk.TopicName) {
+		return
 	}
 	hasBus := h.bus != nil && h.bus.HasSubscribers()
 	hasArchive := h.archives != nil && h.archives.HasGroups()

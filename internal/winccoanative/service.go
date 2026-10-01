@@ -142,6 +142,10 @@ type Stats struct {
 	Duplicates    uint64
 	WildQueries   int
 	WildSubs      int
+	TopicDPs      int
+	TopicSubs     int
+	TopicWilds    int
+	TopicDirs     int
 }
 
 // Service owns the native namespace state.
@@ -166,6 +170,14 @@ type Service struct {
 	wildSubs    map[subKey]string
 	exactTopics map[string]int    // topics with an exact native subscription
 	lastSig     map[string]string // topic -> last published change
+
+	// topics branch
+	topics   map[string]*topicEntry // Sys:MMQTopic_k... -> connection
+	tsubs    map[subKey]*topicSub
+	twild    map[subKey]*topicWild
+	tdirs    map[string]*topicDir // system -> directory of its topic datapoints
+	prepared map[string]bool      // Sys:MMQTopic_k... created and configured in this run
+	prepMu   sync.Mutex           // serializes datapoint creation and deletion
 
 	kick    chan struct{}
 	ctx     context.Context
@@ -195,6 +207,11 @@ func NewService(api oahost.API, b Broker, opts Options, logger *slog.Logger) *Se
 		wildSubs:    map[subKey]string{},
 		exactTopics: map[string]int{},
 		lastSig:     map[string]string{},
+		topics:      map[string]*topicEntry{},
+		tsubs:       map[subKey]*topicSub{},
+		twild:       map[subKey]*topicWild{},
+		tdirs:       map[string]*topicDir{},
+		prepared:    map[string]bool{},
 		kick:        make(chan struct{}, 1),
 	}
 }
@@ -210,6 +227,9 @@ func (s *Service) Start(ctx context.Context) error {
 		return errors.New("winccoa native: host reported an empty local system name")
 	}
 	s.localSystem = info.LocalSystem
+	if err := s.ensureTopicType(ctx); err != nil {
+		return fmt.Errorf("winccoa native: %w", err)
+	}
 	s.oaUp.Store(true)
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	unSys := s.api.C.WatchSystems(s.onSystem)
@@ -218,7 +238,8 @@ func (s *Service) Start(ctx context.Context) error {
 			s.Invalidate(sys, dp)
 		}
 	})
-	s.unwatch = func() { unSys(); unDP() }
+	unNew := s.api.C.WatchCreated(s.topicCreated)
+	s.unwatch = func() { unSys(); unDP(); unNew() }
 	s.wg.Add(1)
 	go s.worker()
 	s.ready.Store(true)
@@ -248,7 +269,25 @@ func (s *Service) Stop(ctx context.Context) {
 	for _, d := range s.dpes {
 		d.batch = nil
 	}
+	for _, e := range s.topics {
+		if e.live {
+			refs = append(refs, e.ref)
+			e.live = false
+		}
+	}
+	var dirRefs []uint64
+	for _, d := range s.tdirs {
+		if d.live {
+			dirRefs = append(dirRefs, d.ref)
+			d.live = false
+		}
+	}
 	s.mu.Unlock()
+	for _, ref := range dirRefs {
+		if err := s.api.QueryDisconnect(ctx, ref); err != nil {
+			s.logger.Warn("topic directory disconnect on stop failed", "ref", ref, "err", err)
+		}
+	}
 	for _, ref := range refs {
 		if err := s.api.DpDisconnect(ctx, ref); err != nil {
 			s.logger.Warn("dpDisconnect on stop failed", "ref", ref, "err", err)
@@ -273,6 +312,11 @@ func (s *Service) Validate(filter string) (Verdict, string) {
 			return SharedDeny, "shared subscription on status topic"
 		}
 		return Accept, ""
+	case KindTopics:
+		if shared {
+			return SharedDeny, "shared subscriptions are not supported for native topics"
+		}
+		return s.validateTopic(f)
 	}
 	if shared {
 		return SharedDeny, "shared subscriptions are not supported for native topics"
@@ -291,15 +335,16 @@ func (s *Service) Validate(filter string) (Verdict, string) {
 	return v, why
 }
 
-// Storage datapoint types of the native stores; never exposed as tags.
-var protectedTypes = map[string]bool{"MMQConfigs": true, "MMQSessions": true, "MMQRetained": true, "MMQUsers": true}
+// Storage datapoint types of the native stores and the topics branch;
+// never exposed as tags.
+var protectedTypes = map[string]bool{"MMQConfigs": true, "MMQSessions": true, "MMQRetained": true, "MMQUsers": true, TopicType: true}
 
 // Protected reports datapoints that the namespace never exposes: OA
 // internal datapoints (leading underscore, e.g. _Users) and the native
 // store datapoints.
 func Protected(dp string) bool {
 	return strings.HasPrefix(dp, "_") || strings.HasPrefix(dp, "MMQConfigs_") || strings.HasPrefix(dp, "MMQSessions_") || strings.HasPrefix(dp, "MMQRetained_") ||
-		strings.HasPrefix(dp, "MMQUsers_")
+		strings.HasPrefix(dp, "MMQUsers_") || strings.HasPrefix(dp, TopicType+"_")
 }
 
 // CanonicalTopic is the tags-form topic of t (type path and default
@@ -320,6 +365,16 @@ func CanonicalTopic(t Target) string {
 // A shortcut topic of the local system maps to its explicit
 // <root>/<systems>/<local>/... form once n.Local is known.
 func (n Names) CanonicalOf(topic string) (string, bool) {
+	if n.Classify(topic) == KindTopics && !HasWildcard(topic) {
+		t, err := n.ParseTopic(topic)
+		if err != nil {
+			return "", false
+		}
+		if t.System == "" {
+			t.System = n.Local
+		}
+		return t.MQTTTopic(), true
+	}
 	if n.Classify(topic) != KindNative || HasWildcard(topic) {
 		return "", false
 	}
@@ -397,6 +452,14 @@ func (s *Service) lookup(name string) (oahost.Resolution, error) {
 // handling 1).
 func (s *Service) Subscribed(clientID, filter string, existed bool) {
 	f, shared := SplitShared(filter)
+	if !shared && s.opts.Names.Classify(f) == KindTopics {
+		if HasWildcard(f) {
+			s.subscribedTopicWild(clientID, f, existed, false)
+		} else {
+			s.subscribedTopic(clientID, f, existed, false)
+		}
+		return
+	}
 	if shared || s.opts.Names.Classify(f) != KindNative {
 		return
 	}
@@ -457,7 +520,8 @@ func (s *Service) Subscribed(clientID, filter string, existed bool) {
 
 // Unsubscribed removes interests for the given filters of a client.
 func (s *Service) Unsubscribed(clientID string, filters []string) {
-	var drop []uint64
+	var drop, dropDirs []uint64
+	defer func() { s.disconnectQueryAsync(dropDirs) }()
 	for _, filter := range filters {
 		if HasWildcard(filter) {
 			s.unsubscribedWild(subKey{clientID, filter})
@@ -466,6 +530,14 @@ func (s *Service) Unsubscribed(clientID string, filters []string) {
 	s.mu.Lock()
 	for _, filter := range filters {
 		sk := subKey{clientID, filter}
+		if ref, ok := s.unsubscribedTopic(sk); ok {
+			drop = append(drop, ref)
+		}
+		refs, dirRef := s.unsubscribedTopicWild(sk)
+		drop = append(drop, refs...)
+		if dirRef != 0 {
+			dropDirs = append(dropDirs, dirRef)
+		}
 		e, ok := s.subs[sk]
 		if !ok {
 			continue
@@ -533,6 +605,10 @@ func (s *Service) Restore(subs map[string][]string) (invalid map[string][]string
 				// the registration is retried.
 				f, _ := SplitShared(filter)
 				switch {
+				case s.opts.Names.Classify(f) == KindTopics && HasWildcard(f):
+					s.subscribedTopicWild(client, f, false, true)
+				case s.opts.Names.Classify(f) == KindTopics:
+					s.subscribedTopic(client, f, false, true)
 				case s.opts.Names.Classify(f) != KindNative:
 				case HasWildcard(f):
 					s.subscribedWild(client, f, false, true, v == Unavailable)
@@ -611,6 +687,7 @@ func (s *Service) worker() {
 	defer reconcile.Stop()
 	for {
 		s.connectQueued()
+		s.connectTopics()
 		select {
 		case <-s.ctx.Done():
 			return
@@ -766,6 +843,9 @@ func (s *Service) onSystem(system string, available bool) {
 	var lost []uint64
 	defer func() { s.disconnectAsync(lost) }()
 	s.mu.Lock()
+	lostTopics, lostDirs := s.topicsOnSystemLocked(system, available)
+	lost = append(lost, lostTopics...)
+	defer s.disconnectQueryAsync(lostDirs)
 	for name := range s.catalog {
 		if strings.HasPrefix(name, system+":") {
 			delete(s.catalog, name)
@@ -819,6 +899,9 @@ func (s *Service) Invalidate(system, dp string) {
 	prefix := system + ":" + dp + "."
 	var drop []uint64
 	s.mu.Lock()
+	if ref, ok := s.invalidateTopicLocked(system + ":" + dp); ok {
+		drop = append(drop, ref)
+	}
 	for name := range s.catalog {
 		if strings.HasPrefix(name, prefix) {
 			delete(s.catalog, name)
@@ -860,6 +943,12 @@ func (s *Service) reconcile() {
 		for sk := range s.subs {
 			byClient[sk.client] = append(byClient[sk.client], sk.filter)
 		}
+		for sk := range s.tsubs {
+			byClient[sk.client] = append(byClient[sk.client], sk.filter)
+		}
+		for sk := range s.twild {
+			byClient[sk.client] = append(byClient[sk.client], sk.filter)
+		}
 		s.mu.Unlock()
 		for c, fs := range byClient {
 			if !s.opts.SessionExists(c) {
@@ -872,6 +961,16 @@ func (s *Service) reconcile() {
 	for key, d := range s.dpes {
 		if d.batch == nil && !d.queued {
 			retry = append(retry, key)
+		}
+	}
+	for _, e := range s.topics {
+		if !e.live && !e.inflight {
+			e.due = true
+		}
+	}
+	for _, d := range s.tdirs {
+		if !d.live && !d.inflight {
+			d.due = true
 		}
 	}
 	s.mu.Unlock()
@@ -1106,7 +1205,7 @@ func (s *Service) StaleStatusClear(topic string, retain bool, payload []byte) bo
 
 func (s *Service) Stats() Stats {
 	s.mu.Lock()
-	st := Stats{Interests: len(s.subs), DPEs: len(s.dpes), Batches: len(s.batches), WildQueries: len(s.wild), WildSubs: len(s.wildSubs)}
+	st := Stats{Interests: len(s.subs), DPEs: len(s.dpes), Batches: len(s.batches), WildQueries: len(s.wild), WildSubs: len(s.wildSubs), TopicDPs: len(s.topics), TopicSubs: len(s.tsubs), TopicWilds: len(s.twild), TopicDirs: len(s.tdirs)}
 	s.mu.Unlock()
 	st.Connects = s.connects.Load()
 	st.Disconnects = s.disconnects.Load()

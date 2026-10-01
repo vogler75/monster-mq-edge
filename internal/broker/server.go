@@ -167,6 +167,7 @@ func build(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus, opts Optio
 		Tags:       cfg.WinCCOaNative.TagsName,
 		Types:      cfg.WinCCOaNative.TypesName,
 		Systems:    cfg.WinCCOaNative.SystemsName,
+		Topics:     cfg.WinCCOaNative.TopicsName,
 		NoShortcut: !cfg.WinCCOaNative.Shortcut(),
 	}.WithDefaults()
 	if err := names.Validate(); err != nil {
@@ -313,6 +314,9 @@ func build(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus, opts Optio
 	}
 	retainedInMemory := cfg.RetainedStore() == config.StoreMemory
 	storageHook := NewStorageHook(storage, bus, subs, archives, cfg.NodeID, logger, counter, retainedInMemory, server)
+	if nativeOn && cfg.WinCCOaNative.Namespace {
+		storageHook.replicated = func(t string) bool { return names.Classify(t) == winccoanative.KindTopics }
+	}
 	if err := server.AddHook(storageHook, nil); err != nil {
 		return nil, fmt.Errorf("add storage hook: %w", err)
 	}

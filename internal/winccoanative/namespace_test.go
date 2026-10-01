@@ -2,6 +2,7 @@ package winccoanative
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -120,7 +121,7 @@ func TestErrorKinds(t *testing.T) {
 }
 
 func TestCustomNames(t *testing.T) {
-	n := Names{Root: "plant/oa", Tags: "t", Types: "dpt", Systems: "sys"}
+	n := Names{Root: "plant/oa", Tags: "t", Types: "dpt", Systems: "sys", Topics: "mq"}
 	if err := n.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -148,6 +149,8 @@ func TestCustomNames(t *testing.T) {
 		"plant/oa/sys/System1":               KindStatus,
 		"plant/oa/sys/System1/t/Pump1/x":     KindNative,
 		"plant/oa/sys/System1/cns/v":         KindCNS,
+		"plant/oa/sys/System1/mq/a/b":        KindTopics,
+		"plant/oa/mq/a":                      KindTopics,
 		"plant/oa/#":                         KindOther,
 		"winccoa/systems/System1/tags/Pump1": KindOther,
 		"plant/oax/System1/t/Pump1/x":        KindOther,
@@ -272,5 +275,58 @@ func TestProtectedStoreDatapoints(t *testing.T) {
 	}
 	if Protected("Pump1") {
 		t.Error("Pump1 protected")
+	}
+}
+
+func TestTopicsBranch(t *testing.T) {
+	n := DefaultNames
+	for topic, want := range map[string]Kind{
+		"winccoa/topics/a/b":                 KindTopics,
+		"winccoa/topics":                     KindTopics,
+		"winccoa/topics/#":                   KindTopics,
+		"winccoa/systems/System1/topics/a":   KindTopics,
+		"winccoa/systems/System1/topics":     KindTopics,
+		"winccoa/systems/System1/topicsx/a":  KindNative,
+		"winccoa/systems/+/topics/a":         KindOther,
+		"winccoa/systems/System1/tags/topic": KindNative,
+	} {
+		if got := n.Classify(topic); got != want {
+			t.Errorf("%s: got %v want %v", topic, got, want)
+		}
+	}
+	tt, err := n.ParseTopic("winccoa/systems/System2/topics/plant/line 1//x")
+	if err != nil || tt.System != "System2" || tt.Topic != "plant/line 1//x" {
+		t.Fatalf("parsed %+v %v", tt, err)
+	}
+	if got := tt.MQTTTopic(); got != "winccoa/systems/System2/topics/plant/line 1//x" {
+		t.Fatalf("round trip %q", got)
+	}
+	tt, err = n.ParseTopic("winccoa/topics/a")
+	if err != nil || tt.System != "" || tt.Topic != "a" {
+		t.Fatalf("shortcut %+v %v", tt, err)
+	}
+	for _, bad := range []string{"winccoa/topics", "winccoa/topics/", "winccoa/systems/System1/topics", "winccoa/topics/a/#", "winccoa/topics/+"} {
+		if _, err := n.ParseTopic(bad); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+	n.Local = "System1"
+	if c, ok := n.CanonicalOf("winccoa/topics/a/b"); !ok || c != "winccoa/systems/System1/topics/a/b" {
+		t.Fatalf("canonical %q %v", c, ok)
+	}
+	if TopicDP("a/b") == TopicDP("a/c") || !strings.HasPrefix(TopicDP("a/b"), "MMQTopic_k") || len(TopicDP("a/b")) != len("MMQTopic_k")+24 {
+		t.Fatalf("dp name %q", TopicDP("a/b"))
+	}
+	if !Protected(TopicDP("a")) {
+		t.Fatal("topic datapoint exposed as tag")
+	}
+	nt := Names{Root: "oa", Tags: "t", Types: "y", Systems: "s", Topics: "t"}
+	if nt.Validate() == nil {
+		t.Fatal("equal tags and topics names accepted")
+	}
+	ns := DefaultNames
+	ns.NoShortcut = true
+	if ns.Classify("winccoa/topics/a") == KindTopics {
+		t.Fatal("topics shortcut classified without LocalShortcut")
 	}
 }

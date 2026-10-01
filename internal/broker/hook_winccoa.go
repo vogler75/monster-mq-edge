@@ -116,6 +116,8 @@ func (h *WinCCOaNativeHook) OnPublish(cl *mqtt.Client, pk packets.Packet) (packe
 	switch kind := h.svc.Names().Classify(pk.TopicName); kind {
 	case winccoanative.KindOther:
 		return pk, nil
+	case winccoanative.KindTopics:
+		return h.publishTopic(cl, pk)
 	case winccoanative.KindNative:
 	default:
 		if kind == winccoanative.KindStatus && h.svc.StaleStatusClear(pk.TopicName, pk.FixedHeader.Retain, pk.Payload) {
@@ -132,6 +134,23 @@ func (h *WinCCOaNativeHook) OnPublish(cl *mqtt.Client, pk packets.Packet) (packe
 	}
 	h.logger.Info("native command rejected", "client", cl.ID, "topic", pk.TopicName, "verdict", v.String(), "reason", why)
 	h.rejectReply(pk, reply, v, why)
+	code := verdictCode(v, why)
+	if v == winccoanative.Invalid {
+		code = packets.ErrTopicNameInvalid
+		code.Reason = why
+	}
+	return pk, code
+}
+
+// publishTopic writes a publish of the topics branch to its datapoint. The
+// broker does not deliver or retain it itself: subscribers on every system
+// get it through their datapoint connection.
+func (h *WinCCOaNativeHook) publishTopic(cl *mqtt.Client, pk packets.Packet) (packets.Packet, error) {
+	v, why := h.svc.PublishTopic(pk.TopicName, pk.Payload, pk.FixedHeader.Retain)
+	if v == winccoanative.Accept {
+		return pk, packets.CodeSuccessIgnore
+	}
+	h.logger.Info("topic publish rejected", "client", cl.ID, "topic", pk.TopicName, "verdict", v.String(), "reason", why)
 	code := verdictCode(v, why)
 	if v == winccoanative.Invalid {
 		code = packets.ErrTopicNameInvalid

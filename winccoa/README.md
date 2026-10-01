@@ -47,7 +47,9 @@ The standalone broker is unaffected: `make build`, `build-arm64` and
    are created by the manager at startup when a store type is `WINCCOA` and
    the type is missing. An existing type is never changed: with a different
    layout the broker refuses to start. `winccoa/scripts/mmqCreateTypes.ctl`
-   creates the same types manually, e.g. to prepare a project.
+   creates the same types manually, e.g. to prepare a project. With
+   `Namespace: true` the manager also creates `MMQTopic` (topics branch, see
+   "Topics replicated through WinCC OA").
 3. Copy `monstermq.yaml.example` to `<project>/config/monstermq.yaml` and
    adjust ports, users and stores. The manager runs in the project
    directory, so relative paths in it (`SQLite.Path`, key stores) resolve
@@ -90,6 +92,8 @@ The standalone broker is unaffected: `make build`, `build-arm64` and
   (`_online.._value`, `_online.._stime`, `_online.._status`,
   `_online.._invalid`), writes via `.../set` with `{"value": ..}`. See the
   spec for encoding, reason codes and command results.
+  `winccoa/systems/<System>/topics/<topic>`: MQTT topics replicated through
+  `MMQTopic` datapoints (see "Topics replicated through WinCC OA").
 
 ## Debug logging of WinCC OA calls
 
@@ -265,6 +269,47 @@ message expiry and retention purges. The broker loads all retained messages
 at startup and serves subscriptions from memory; edits made to these
 datapoints in WinCC OA while it runs are not picked up. One payload is
 limited to just under 1 MiB (the manager's message limit).
+
+## Topics replicated through WinCC OA
+
+Publishes to `winccoa/systems/<System>/topics/<topic>` (local shortcut
+`winccoa/topics/<topic>`; the level is `TopicsName`) are not handled by the
+broker itself but written to a datapoint of type `MMQTopic` on that system,
+one per topic (`MMQTopic_k<hash of the topic>`). Subscribers get the messages
+through a connection to that datapoint, so every broker of a distributed
+system that subscribes to the same topic receives them, whichever broker
+published:
+
+| Element | Type | Content |
+|---|---|---|
+| `topic` | string | MQTT topic below `topics/` (the datapoint name is a hash of it) |
+| `value` | blob | payload of non-retained publishes; last value storage turned off |
+| `retained` | blob | retained message (kept across restarts) |
+
+- The first publish to a topic creates the datapoint (also on a remote
+  system) and turns off the last value storage of `value`; later publishes
+  only write the element. The PUBACK is sent after WinCC OA confirmed the
+  write; failures are rejected (`0x83` for an unavailable system or a missing
+  `MMQTopic` type there). The manager creates the type on its own system;
+  a remote system must have it (its own broker creates it).
+- A retained publish writes `retained`, a retained publish with an empty
+  payload clears it (subscribers get the empty message) and deletes the
+  datapoint. Non-retained publishes never delete it.
+- A subscription connects `value` and `retained`; a new subscriber gets the
+  retained message (retain flag set), every later write of either element is
+  delivered live (retain flag unset). Subscribing before the datapoint exists
+  is allowed: the subscription connects as soon as any broker creates it.
+- Wildcards work below `topics/` (`winccoa/systems/<System>/topics/#`,
+  `winccoa/topics/plant/+/state`): one `dpQueryConnectSingle` per system on
+  `MMQTopic_*.topic` lists the topics, including ones created later, and
+  every matching datapoint is connected like an exact subscription.
+  Messages arrive under the concrete topic in the subscribed form.
+- A topic created by a broker on another system may lose its very first
+  non-retained message for subscribers elsewhere (written before their
+  connect); a retained message is never lost. On the publishing broker the
+  subscriptions connect before the first write.
+- The broker's own retained store is not used for these topics. Shared
+  subscriptions are not supported below `topics/`.
 
 ## Load and soak
 

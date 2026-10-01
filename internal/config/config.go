@@ -239,6 +239,9 @@ type WinCCOaNativeConfig struct {
 	LocalShortcut *bool  `yaml:"LocalShortcut"`
 	SystemsName   string `yaml:"SystemsName"` // level before system names, default "systems"
 	EchoPolicy    string `yaml:"EchoPolicy"`  // BROKER_TAG | NO_SOURCE
+	// TopicsName is the level for MQTT topics kept in MMQTopic datapoints:
+	// <TopicRoot>/<SystemsName>/<system>/<TopicsName>/<topic>, default "topics".
+	TopicsName string `yaml:"TopicsName"`
 
 	// LegacyStores is the removed Stores list; set only to reject old configs.
 	LegacyStores []string `yaml:"Stores,omitempty"`
@@ -264,6 +267,9 @@ func (w *WinCCOaNativeConfig) validate() error {
 	}
 	if w.SystemsName == "" {
 		w.SystemsName = "systems"
+	}
+	if w.TopicsName == "" {
+		w.TopicsName = "topics"
 	}
 	switch w.EchoPolicy {
 	case WinCCOaEchoBrokerTag, WinCCOaEchoNoSource:

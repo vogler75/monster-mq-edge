@@ -292,6 +292,7 @@
         "TagsName":   { "type": "string", "default": "tags", "pattern": "^[^/+#%]+$", "description": "Topic level for tag access: <TopicRoot>/<SystemsName>/<system>/<TagsName>/<dp>/..." },
         "TypesName":  { "type": "string", "default": "types", "pattern": "^[^/+#%]+$", "description": "Topic level for access through the datapoint type: <TopicRoot>/<SystemsName>/<system>/<TypesName>/<dpt>/<dp>/..." },
         "SystemsName": { "type": "string", "default": "systems", "pattern": "^[^/+#%]+$", "description": "Topic level before every system name: <TopicRoot>/<SystemsName>/<system>/..." },
+        "TopicsName": { "type": "string", "default": "topics", "pattern": "^[^/+#%]+$", "description": "Topic level for MQTT topics kept in MMQTopic datapoints and replicated through WinCC OA: <TopicRoot>/<SystemsName>/<system>/<TopicsName>/<topic>." },
         "LocalShortcut": { "type": "boolean", "default": true, "description": "Also offer the local system without the system part: <TopicRoot>/<TagsName>/..., <TopicRoot>/<TypesName>/..., status on <TopicRoot>." },
         "EchoPolicy": { "type": "string", "enum": ["BROKER_TAG", "NO_SOURCE"], "default": "BROKER_TAG", "description": "How values written through MQTT are echoed to native subscribers." }
       }

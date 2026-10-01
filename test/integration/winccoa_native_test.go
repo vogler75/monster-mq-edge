@@ -832,9 +832,13 @@ func TestNativeLocalShortcut(t *testing.T) {
 	if live := c.NextOnAll(2*time.Second, short, typed, explicit); len(live) != 3 {
 		t.Fatalf("live publications: %d of 3", len(live))
 	}
-	for topic, v := range map[string]float64{short: 42, explicit: 43, remote: 231} {
-		if code := c.Publish(rawPub{Topic: topic + "/set", Payload: []byte(fmt.Sprintf(`{"value":%v}`, v)), QoS: 1}); code != 0 {
-			t.Fatalf("write %s PUBACK 0x%02x", topic, code)
+	// Ordered: both local writes go to the same element.
+	for _, w := range []struct {
+		topic string
+		v     float64
+	}{{short, 42}, {explicit, 43}, {remote, 231}} {
+		if code := c.Publish(rawPub{Topic: w.topic + "/set", Payload: []byte(fmt.Sprintf(`{"value":%v}`, w.v)), QoS: 1}); code != 0 {
+			t.Fatalf("write %s PUBACK 0x%02x", w.topic, code)
 		}
 		time.Sleep(150 * time.Millisecond)
 	}

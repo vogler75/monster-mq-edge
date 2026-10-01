@@ -103,6 +103,9 @@ func (h *QueueHook) Provides(b byte) bool {
 // index, filters for persistent (clean=false) sessions that are currently
 // disconnected, and enqueues a copy of the message for each.
 func (h *QueueHook) OnPublished(_ *mqtt.Client, pk packets.Packet) {
+	if pk.Ignore {
+		return // not delivered to online subscribers either
+	}
 	h.mu.RLock()
 	noneOffline := len(h.offline) == 0
 	h.mu.RUnlock()

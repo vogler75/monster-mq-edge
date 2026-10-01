@@ -735,6 +735,35 @@ bool MonsterMQManager::resolveCached(const std::string &name, DpIdentifier &id)
   return true;
 }
 
+// Element type to decode a value of a config attribute other than the
+// value (e.g. _original.._last_value_storage_off) with.
+static DpElementType attributeElementType(const DpIdentifier &id)
+{
+  DpIdentification *ident = Manager::getDpIdentificationPtr();
+  VariableType vt = NO_VAR;
+  if (!ident || ident->getAttributeType(id, vt) != DpIdentOK)
+    return DPELEMENT_NOELEMENT;
+  switch (vt)
+  {
+    case BIT_VAR:
+      return DPELEMENT_BIT;
+    case INTEGER_VAR:
+      return DPELEMENT_INT;
+    case UINTEGER_VAR:
+      return DPELEMENT_UINT;
+    case FLOAT_VAR:
+      return DPELEMENT_FLOAT;
+    case TEXT_VAR:
+      return DPELEMENT_TEXT;
+    case TIME_VAR:
+      return DPELEMENT_TIME;
+    case BIT32_VAR:
+      return DPELEMENT_32BIT;
+    default:
+      return DPELEMENT_NOELEMENT;
+  }
+}
+
 bool MonsterMQManager::opDpSet(uint64_t reqId, const Message &m)
 {
   std::vector<const Field *> names = m.all(TagName);
@@ -771,6 +800,13 @@ bool MonsterMQManager::opDpSet(uint64_t reqId, const Message &m)
     getElementType(id, et);
     std::string err;
     Variable *v = decodeValue(*values[i], et, err);
+    if (!v)
+    {
+      DpElementType at = attributeElementType(id);
+      std::string aerr;
+      if (at != DPELEMENT_NOELEMENT && at != et)
+        v = decodeValue(*values[i], at, aerr);
+    }
     if (!v)
     {
       release();
@@ -923,14 +959,29 @@ void MonsterMQManager::opDpCreate(uint64_t reqId, const Message &m)
     complete(reqId, MMQ_E_INVALID, nullptr, "dpCreate takes a DP name without element or trailing dot");
     return;
   }
-  DpTypeId tid = 0;
-  if (!getTypeId(CharString(type.c_str()), tid))
+  SystemNumType num = DpIdentification::getDefaultSystem();
+  if (!sys.empty() && sys != std::string((const char *)localSystem))
   {
-    complete(reqId, MMQ_E_NOT_FOUND, nullptr, "datapoint type not found: " + type);
+    if (!getSystemId(CharString(sys.c_str()), num))
+    {
+      complete(reqId, MMQ_E_UNAVAILABLE, nullptr, "unknown system " + sys);
+      return;
+    }
+    if (!distUp.count(num))
+    {
+      complete(reqId, MMQ_E_UNAVAILABLE, nullptr, "system " + sys + " is not connected");
+      return;
+    }
+  }
+  // Type ids are per system.
+  DpTypeId tid = 0;
+  if (!getTypeId(CharString(type.c_str()), tid, num))
+  {
+    complete(reqId, MMQ_E_NOT_FOUND, nullptr, "datapoint type not found: " + (sys.empty() ? type : sys + ":" + type));
     return;
   }
   // The framework deletes the answer object.
-  if (!dpCreate(CharString(dp.c_str()), tid, new RequestWait(this, RequestWait::Create, reqId, dp)))
+  if (!dpCreate(CharString(dp.c_str()), tid, new RequestWait(this, RequestWait::Create, reqId, dp), num))
     complete(reqId, MMQ_E_OA, nullptr, "dpCreate message not sent");
 }
 
@@ -1115,9 +1166,24 @@ void MonsterMQManager::dpDeleted(SystemNumType system, DpIdType dp)
   reportDpChange(system, dp, 0);
 }
 
-void MonsterMQManager::dpCreated(SystemNumType, const CharString &, const DpIdentifier &)
+// Creations of MMQTopic datapoints are reported, on every system, so
+// waiting topic subscriptions connect at once.
+void MonsterMQManager::dpCreated(SystemNumType system, const CharString &dpName, const DpIdentifier &)
 {
   idCache.clear();
+  std::string sysPart, dp;
+  splitSystem(std::string((const char *)dpName), sysPart, dp);
+  if (!handle || dp.compare(0, 9, "MMQTopic_") != 0)
+    return;
+  while (!dp.empty() && dp.back() == '.')
+    dp.pop_back();
+  CharString sysName;
+  if (!getSystemName(system, sysName))
+    return;
+  Writer ev;
+  ev.str(TagName, std::string((const char *)sysName) + ":" + dp);
+  ev.boolean(TagExists, true);
+  event(0, ev);
 }
 
 void MonsterMQManager::dpTypeChanged(SystemNumType system, const DpType &changedType)

@@ -158,15 +158,16 @@ type Client struct {
 	host   Host
 	limits Limits
 
-	mu         sync.Mutex
-	nextID     uint64
-	nextRef    uint64
-	pending    map[uint64]*call
-	handlers   map[uint64]EventHandler
-	watchers   map[uint64]SystemWatcher
-	dpWatchers map[uint64]DPWatcher
-	nextWatch  uint64
-	closed     bool
+	mu          sync.Mutex
+	nextID      uint64
+	nextRef     uint64
+	pending     map[uint64]*call
+	handlers    map[uint64]EventHandler
+	watchers    map[uint64]SystemWatcher
+	dpWatchers  map[uint64]DPWatcher
+	newWatchers map[uint64]DPWatcher
+	nextWatch   uint64
+	closed      bool
 
 	events []chan event
 	done   chan struct{}
@@ -195,13 +196,14 @@ func NewClient(host Host, limits Limits) *Client {
 		}
 	}
 	c := &Client{
-		host:       host,
-		limits:     limits,
-		pending:    map[uint64]*call{},
-		handlers:   map[uint64]EventHandler{},
-		watchers:   map[uint64]SystemWatcher{},
-		dpWatchers: map[uint64]DPWatcher{},
-		done:       make(chan struct{}),
+		host:        host,
+		limits:      limits,
+		pending:     map[uint64]*call{},
+		handlers:    map[uint64]EventHandler{},
+		watchers:    map[uint64]SystemWatcher{},
+		dpWatchers:  map[uint64]DPWatcher{},
+		newWatchers: map[uint64]DPWatcher{},
+		done:        make(chan struct{}),
 	}
 	per := limits.EventQueue / limits.EventWorkers
 	if per < 1 {
@@ -430,6 +432,10 @@ func (c *Client) deliverState(data []byte) {
 	for _, w := range c.dpWatchers {
 		dws = append(dws, w)
 	}
+	nws := make([]DPWatcher, 0, len(c.newWatchers))
+	for _, w := range c.newWatchers {
+		nws = append(nws, w)
+	}
 	c.mu.Unlock()
 	// Fields come in pairs: TagSysName or TagName, then TagExists.
 	var sys, dp string
@@ -448,6 +454,10 @@ func (c *Client) deliverState(data []byte) {
 				}
 			case dp != "" && !up:
 				for _, w := range dws {
+					safeCall(func() { w(dp) })
+				}
+			case dp != "":
+				for _, w := range nws {
 					safeCall(func() { w(dp) })
 				}
 			}
@@ -476,6 +486,22 @@ func (c *Client) WatchDatapoints(w DPWatcher) func() {
 	return func() {
 		c.mu.Lock()
 		delete(c.dpWatchers, id)
+		c.mu.Unlock()
+	}
+}
+
+// WatchCreated registers w for datapoints the host reports as created
+// ("Sys:DP"; the host reports only the types it is asked to, MMQTopic) and
+// returns a function that removes it.
+func (c *Client) WatchCreated(w DPWatcher) func() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.nextWatch++
+	id := c.nextWatch
+	c.newWatchers[id] = w
+	return func() {
+		c.mu.Lock()
+		delete(c.newWatchers, id)
 		c.mu.Unlock()
 	}
 }

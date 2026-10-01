@@ -24,15 +24,17 @@ var ReadAttrs = map[string]bool{
 }
 
 // Names are the configurable topic levels of the namespace. Every system,
-// the local one included, is addressed as <Root>/<Systems>/<system>/<Tags>/...
-// and <Root>/<Systems>/<system>/<Types>/<dpt>/...; unless NoShortcut is set,
+// the local one included, is addressed as <Root>/<Systems>/<system>/<Tags>/...,
+// <Root>/<Systems>/<system>/<Types>/<dpt>/... and
+// <Root>/<Systems>/<system>/<Topics>/<mqtt topic>; unless NoShortcut is set,
 // the local system is also reachable without the system part as
-// <Root>/<Tags>/... and <Root>/<Types>/....
+// <Root>/<Tags>/..., <Root>/<Types>/... and <Root>/<Topics>/....
 type Names struct {
 	Root       string // one or more topic levels, e.g. "winccoa" or "plant/oa"
 	Tags       string // one level
 	Types      string // one level
 	Systems    string // one level
+	Topics     string // one level
 	NoShortcut bool   // no <Root>/<Tags>/... shortcut for the local system
 
 	// Local is the local system name once known; it maps shortcut topics to
@@ -40,9 +42,9 @@ type Names struct {
 	Local string
 }
 
-// DefaultNames is winccoa/systems/<system>/tags|types with the local
-// shortcut winccoa/tags|types.
-var DefaultNames = Names{Root: "winccoa", Tags: "tags", Types: "types", Systems: "systems"}
+// DefaultNames is winccoa/systems/<system>/tags|types|topics with the local
+// shortcut winccoa/tags|types|topics.
+var DefaultNames = Names{Root: "winccoa", Tags: "tags", Types: "types", Systems: "systems", Topics: "topics"}
 
 // Validate checks that the names are usable topic levels.
 func (n Names) Validate() error {
@@ -57,7 +59,7 @@ func (n Names) Validate() error {
 	if strings.HasPrefix(n.Root, "$") {
 		return fmt.Errorf("topic root %q must not start with $", n.Root)
 	}
-	for _, v := range []struct{ what, name string }{{"tags", n.Tags}, {"types", n.Types}, {"systems", n.Systems}} {
+	for _, v := range []struct{ what, name string }{{"tags", n.Tags}, {"types", n.Types}, {"systems", n.Systems}, {"topics", n.Topics}} {
 		if v.name == "" || strings.ContainsAny(v.name, "/+#%") || strings.ContainsRune(v.name, 0) {
 			return fmt.Errorf("%s name %q must be one non-empty topic level without / + # %%", v.what, v.name)
 		}
@@ -65,8 +67,13 @@ func (n Names) Validate() error {
 			return fmt.Errorf("%s name %q is reserved", v.what, v.name)
 		}
 	}
-	if n.Tags == n.Types || n.Tags == n.Systems || n.Types == n.Systems {
-		return fmt.Errorf("tags, types and systems names must differ (%q, %q, %q)", n.Tags, n.Types, n.Systems)
+	levels := []string{n.Tags, n.Types, n.Systems, n.Topics}
+	for i := range levels {
+		for j := i + 1; j < len(levels); j++ {
+			if levels[i] == levels[j] {
+				return fmt.Errorf("tags, types, systems and topics names must differ (%q, %q, %q, %q)", n.Tags, n.Types, n.Systems, n.Topics)
+			}
+		}
 	}
 	return nil
 }
@@ -85,6 +92,9 @@ func (n Names) WithDefaults() Names {
 	if n.Systems == "" {
 		n.Systems = DefaultNames.Systems
 	}
+	if n.Topics == "" {
+		n.Topics = DefaultNames.Topics
+	}
 	return n
 }
 
@@ -95,6 +105,7 @@ const (
 	KindNative             // <root>/<systems>/<system>/..., local shortcut <root>/<tags|types>/...
 	KindStatus             // <root>/<systems>/<system>, local shortcut <root>: broker status (retained JSON)
 	KindCNS                // <root>/<systems>/<system>/cns/..., <root>/cns/... (reserved, disabled)
+	KindTopics             // <root>/<systems>/<system>/<topics>/..., <root>/<topics>/...: MQTT topics kept in MMQTopic datapoints
 )
 
 var (
@@ -138,6 +149,9 @@ func (n Names) Classify(topic string) Kind {
 		if first == SegCNS && !n.NoShortcut {
 			return KindCNS
 		}
+		if first == n.Topics && !n.NoShortcut {
+			return KindTopics
+		}
 		return KindNative // local shortcut, or rejected when parsed
 	case !more:
 		return KindNative // "<root>/<systems>": missing system
@@ -151,6 +165,8 @@ func (n Names) Classify(topic string) Kind {
 		return KindStatus
 	case after == SegCNS || strings.HasPrefix(after, SegCNS+"/"):
 		return KindCNS
+	case after == n.Topics || strings.HasPrefix(after, n.Topics+"/"):
+		return KindTopics
 	}
 	return KindNative
 }
