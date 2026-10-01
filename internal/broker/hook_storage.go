@@ -90,10 +90,17 @@ func (h *StorageHook) OnSessionEstablished(cl *mqtt.Client, _ packets.Packet) {
 	if cl.Properties.Props.SessionExpiryIntervalFlag {
 		sei = int64(cl.Properties.Props.SessionExpiryInterval)
 	}
+	// The stored clean_session flag means "not persistent", as in the Java
+	// broker: for MQTT 5 that is a zero session expiry, not the Clean Start
+	// flag (Clean Start only discards the previous session, done above).
+	cleanSession := cl.Properties.Clean
+	if pv == 5 {
+		cleanSession = sei == 0
+	}
 	info := stores.SessionInfo{
 		ClientID:              cl.ID,
 		NodeID:                h.nodeID,
-		CleanSession:          cl.Properties.Clean,
+		CleanSession:          cleanSession,
 		Connected:             true,
 		UpdateTime:            time.Now(),
 		ClientAddress:         cl.Net.Remote,
@@ -303,9 +310,10 @@ func (h *StorageHook) OnRetainMessage(cl *mqtt.Client, pk packets.Packet, r int6
 		_ = h.store.Retained.DelAll(ctx, []string{pk.TopicName})
 		return
 	}
-	clientID := ""
+	clientID, username := "", ""
 	if cl != nil {
 		clientID = cl.ID
+		username = string(cl.Properties.Username)
 	}
 	createdAt := time.Now().UTC()
 	if pk.Created > 0 {
@@ -318,6 +326,7 @@ func (h *StorageHook) OnRetainMessage(cl *mqtt.Client, pk packets.Packet, r int6
 		QoS:         pk.FixedHeader.Qos,
 		IsRetain:    true,
 		ClientID:    clientID,
+		Username:    username,
 		Time:        createdAt,
 	}
 	if pk.Expiry > pk.Created && pk.Created > 0 {

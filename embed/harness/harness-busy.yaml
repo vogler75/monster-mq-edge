@@ -1,0 +1,13 @@
+NodeId: harness
+TCP:
+  Enabled: true
+  Port: 27191
+GraphQL:
+  Enabled: false
+Metrics:
+  Enabled: false
+SQLite:
+  Path: ./harness-data/harness-busy.db
+WinCCOaNative:
+  Enabled: true
+  Namespace: true

@@ -11,3 +11,6 @@ data/
 internal/dashboard/dist/*
 !internal/dashboard/dist/placeholder.html
 /dist/
+/build/
+embed/harness/harness-data/
+winccoa/manager/build/

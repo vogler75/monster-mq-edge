@@ -3,7 +3,9 @@ package winccoa
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,7 +20,8 @@ type Manager struct {
 	logger    *slog.Logger
 	nodeID    string
 
-	srvCtx context.Context
+	srvCtx       context.Context
+	reservedRoot string // native topic root, never a query output target
 
 	mu         sync.Mutex
 	connectors map[string]Connector
@@ -35,6 +38,24 @@ func NewManager(store stores.DeviceConfigStore, publisher LocalPublisher, nodeID
 		connectors: map[string]Connector{},
 		lastConfig: map[string]string{},
 	}
+}
+
+// SetReservedRoot protects the native WinCC OA namespace of the embedded
+// broker: devices whose output topics fall below root are not started.
+func (m *Manager) SetReservedRoot(root string) { m.reservedRoot = root }
+
+// CheckReservedOutput reports an error when an address's output topic prefix
+// falls into the native namespace (<root>/<system> status and everything
+// below it), which configured query output must never publish into.
+func CheckReservedOutput(root, namespace string, addr Address) error {
+	if root == "" {
+		return nil
+	}
+	base := joinTopic(namespace, addr.Topic)
+	if base == root || strings.HasPrefix(base, root+"/") {
+		return fmt.Errorf("address topic %q resolves into reserved branch %q", base, root)
+	}
+	return nil
 }
 
 func (m *Manager) Start(ctx context.Context) error {
@@ -144,6 +165,12 @@ func (m *Manager) startDevice(d stores.DeviceConfig) {
 	if errs := cfg.Validate(); len(errs) > 0 {
 		m.logger.Warn("winccoa config invalid", "name", d.Name, "errors", errs)
 		return
+	}
+	for _, a := range cfg.Addresses {
+		if err := CheckReservedOutput(m.reservedRoot, d.Namespace, a); err != nil {
+			m.logger.Warn("winccoa start failed", "name", d.Name, "err", err)
+			return
+		}
 	}
 	m.logger.Info("winccoa starting connector", "name", d.Name, "namespace", d.Namespace, "addresses", len(cfg.Addresses))
 	c := New(d.Name, cfg, d.Namespace, m.publisher, m.logger)

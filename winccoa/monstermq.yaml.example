@@ -1,0 +1,42 @@
+# Bootstrap configuration of the broker embedded in the WinCC OA manager
+# (WCCOAmmq). Copy to <project>/config/monstermq.yaml; the manager
+# reads it through the [monstermq] brokerConfig entry.
+NodeId: edge-oa-1
+Logging:
+  Level: INFO                   # DEBUG logs every WinCC OA call (dpConnect, dpQueryConnectSingle with the query, dpSetWait, ...)
+TCP:
+  Enabled: true
+  Port: 1883
+GraphQL:
+  Enabled: true
+  Port: 4000
+SQLite:
+  Path: ./data/monstermq.db     # relative to the WinCC OA project directory
+DefaultStoreType: SQLITE        # WINCCOA: everything below in WinCC OA, queue and metrics in memory, no database file
+ConfigStoreType: WINCCOA        # device and archive configs in MMQConfigs datapoints (or SQLITE)
+UserStoreType: WINCCOA          # MQTT users and ACL rules in MMQUsers datapoints (or SQLITE)
+SessionStoreType: WINCCOA       # sessions and subscriptions in MMQSessions datapoints (or SQLITE, MEMORY)
+RetainedStoreType: SQLITE       # retained messages: SQLITE (default), WINCCOA (MMQRetained datapoints) or MEMORY (lost on restart)
+QueueStoreType: SQLITE          # offline messages of persistent sessions: SQLITE or MEMORY
+Features:                       # optional subsystems; each is off unless set to true
+  WinCCOa: true                 # WinCCOA-Client devices: query WinCC OA through its GraphQL server
+  WinCCUa: false                # WinCC Unified bridge devices (GraphQL or Open Pipe)
+  MqttClient: false             # MQTT bridge devices to other brokers
+  DeviceImportExport: false     # export/import of device configurations (GraphQL, dashboard)
+  PythonScripts: false          # Python/Starlark scripting engine
+  RtspCamera: false             # RTSP camera snapshots published over MQTT
+  Hmi: false                    # hosting of HTML/JS HMI pages
+  Mcp: false                    # MCP server (AI assistant access)
+  Redfish: false                # DMTF Redfish REST API
+WinCCOaNative:
+  Enabled: true
+  Namespace: true               # winccoa/systems/<system>/tags|types, validated subscriptions, writes
+  TopicRoot: winccoa            # first topic level(s); the status topic is <TopicRoot>/<SystemsName>/<system>
+  TagsName: tags                # <TopicRoot>/<SystemsName>/<system>/<TagsName>/<dp>/<element>...
+  TypesName: types              # <TopicRoot>/<SystemsName>/<system>/<TypesName>/<dpt>/<dp>/<element>...
+  SystemsName: systems          # every system: <TopicRoot>/<SystemsName>/<system>/<TagsName>/...
+  LocalShortcut: true           # local system also as <TopicRoot>/<TagsName>/... (status on <TopicRoot>)
+  EchoPolicy: BROKER_TAG
+UserManagement:
+  Enabled: true                 # recommended: ACLs gate native reads and writes
+  AnonymousEnabled: false

@@ -332,6 +332,13 @@ func (g *graphqlConnector) handleSubscriptionData(msg map[string]any) {
 }
 
 func (g *graphqlConnector) publishRows(addr Address, values []any) {
+	publishQueryRows(g.pub, g.publish, &g.metrics, g.logger, addr, values)
+}
+
+// publishQueryRows publishes a dpQuery result table (header row first, then
+// [datapoint, values...] rows) exactly as the GraphQL bridge always has, so
+// the native transport produces identical topics and payloads.
+func publishQueryRows(pub *publisher, publish LocalPublisher, m *metrics, logger *slog.Logger, addr Address, values []any) {
 	if len(values) < 2 {
 		return
 	}
@@ -360,13 +367,13 @@ func (g *graphqlConnector) publishRows(addr Address, values []any) {
 			}
 			row[key] = rowValues[i]
 		}
-		topic := g.pub.resolveDatapointTopic(addr.Topic, datapoint)
-		payload := g.pub.formatDatapointPayload(row, firstValue)
-		if err := g.publish(topic, payload, addr.Retained, 0); err != nil {
-			g.logger.Warn("winccoa publish failed", "topic", topic, "err", err)
+		topic := pub.resolveDatapointTopic(addr.Topic, datapoint)
+		payload := pub.formatDatapointPayload(row, firstValue)
+		if err := publish(topic, payload, addr.Retained, 0); err != nil {
+			logger.Warn("winccoa publish failed", "topic", topic, "err", err)
 			continue
 		}
-		g.metrics.inc()
+		m.inc()
 	}
 }
 

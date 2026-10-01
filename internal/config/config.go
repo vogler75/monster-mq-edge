@@ -15,6 +15,10 @@ const (
 	StoreSQLite   StoreType = "SQLITE"
 	StorePostgres StoreType = "POSTGRES"
 	StoreMongoDB  StoreType = "MONGODB"
+	// StoreWinCCOA keeps configs (ConfigStoreType), sessions
+	// (SessionStoreType) or retained messages (RetainedStoreType) in WinCC OA
+	// datapoints; only in the WinCC OA manager.
+	StoreWinCCOA StoreType = "WINCCOA"
 )
 
 // validBackends is the set of store types that can back the persistent storage
@@ -101,10 +105,10 @@ type MongoDBConfig struct {
 }
 
 type UserManagementConfig struct {
-	Enabled                bool   `yaml:"Enabled"`
-	PasswordAlgorithm      string `yaml:"PasswordAlgorithm"`
-	AnonymousEnabled       bool   `yaml:"AnonymousEnabled"`
-	AclCacheEnabled        bool   `yaml:"AclCacheEnabled"`
+	Enabled                 bool   `yaml:"Enabled"`
+	PasswordAlgorithm       string `yaml:"PasswordAlgorithm"`
+	AnonymousEnabled        bool   `yaml:"AnonymousEnabled"`
+	AclCacheEnabled         bool   `yaml:"AclCacheEnabled"`
 	AclCheckOnSubscription  *bool  `yaml:"AclCheckOnSubscription,omitempty"`
 	AllowAnonymousLocalhost bool   `yaml:"AllowAnonymousLocalhost"`
 }
@@ -220,6 +224,76 @@ type FeaturesConfig struct {
 	PythonScripts      bool `yaml:"PythonScripts"`
 }
 
+// WinCCOaNativeConfig is the bootstrap configuration for running the broker
+// embedded in a WinCC OA API manager. It is read before any OA access and is
+// ignored by the standalone binary, which has no embedding host.
+type WinCCOaNativeConfig struct {
+	Enabled   bool   `yaml:"Enabled"`
+	Namespace bool   `yaml:"Namespace"` // <TopicRoot>/<SystemsName>/<system> namespace and writes
+	TopicRoot string `yaml:"TopicRoot"` // first topic level(s), default "winccoa"
+	TagsName  string `yaml:"TagsName"`  // level for tag access, default "tags"
+	TypesName string `yaml:"TypesName"` // level for type access, default "types"
+	// Every system is addressed as <TopicRoot>/<SystemsName>/<system>/....
+	// LocalShortcut (default true) also offers the local system without the
+	// system part: <TopicRoot>/<TagsName>/..., <TopicRoot>/<TypesName>/....
+	LocalShortcut *bool  `yaml:"LocalShortcut"`
+	SystemsName   string `yaml:"SystemsName"` // level before system names, default "systems"
+	EchoPolicy    string `yaml:"EchoPolicy"`  // BROKER_TAG | NO_SOURCE
+
+	// LegacyStores is the removed Stores list; set only to reject old configs.
+	LegacyStores []string `yaml:"Stores,omitempty"`
+}
+
+const (
+	WinCCOaEchoBrokerTag = "BROKER_TAG"
+	WinCCOaEchoNoSource  = "NO_SOURCE"
+)
+
+func (w *WinCCOaNativeConfig) validate() error {
+	if w.EchoPolicy == "" {
+		w.EchoPolicy = WinCCOaEchoBrokerTag
+	}
+	if w.TopicRoot == "" {
+		w.TopicRoot = "winccoa"
+	}
+	if w.TagsName == "" {
+		w.TagsName = "tags"
+	}
+	if w.TypesName == "" {
+		w.TypesName = "types"
+	}
+	if w.SystemsName == "" {
+		w.SystemsName = "systems"
+	}
+	switch w.EchoPolicy {
+	case WinCCOaEchoBrokerTag, WinCCOaEchoNoSource:
+	default:
+		return fmt.Errorf("WinCCOaNative.EchoPolicy %q must be BROKER_TAG or NO_SOURCE", w.EchoPolicy)
+	}
+	if len(w.LegacyStores) > 0 {
+		return fmt.Errorf("WinCCOaNative.Stores was removed; use ConfigStoreType: WINCCOA (device and archive configs) and SessionStoreType: WINCCOA")
+	}
+	return nil
+}
+
+// AllowRootWildcard returns the effective AllowRootWildcardSubscription.
+func (c *Config) AllowRootWildcard() bool {
+	return c.AllowRootWildcardSubscription == nil || *c.AllowRootWildcardSubscription
+}
+
+// Shortcut reports whether the local system is also reachable without the
+// system part (LocalShortcut, default true).
+func (w WinCCOaNativeConfig) Shortcut() bool {
+	return w.LocalShortcut == nil || *w.LocalShortcut
+}
+
+// UsesWinCCOaStores reports whether configs, sessions or retained messages
+// are kept in WinCC OA datapoints (store type WINCCOA).
+func (c *Config) UsesWinCCOaStores() bool {
+	return c.ConfigStore() == StoreWinCCOA || c.SessionStore() == StoreWinCCOA || c.RetainedStore() == StoreWinCCOA ||
+		c.UserStore() == StoreWinCCOA
+}
+
 type PythonScriptsConfig struct {
 	WorkerPoolSize   int   `yaml:"WorkerPoolSize"`
 	QueueBufferSize  int   `yaml:"QueueBufferSize"`
@@ -260,6 +334,7 @@ type Config struct {
 	RetainedStoreType StoreType `yaml:"RetainedStoreType"`
 	ConfigStoreType   StoreType `yaml:"ConfigStoreType"`
 	QueueStoreType    StoreType `yaml:"QueueStoreType"`
+	UserStoreType     StoreType `yaml:"UserStoreType"` // users and ACL rules; only WINCCOA differs from DefaultStoreType
 
 	SQLite   SQLiteConfig   `yaml:"SQLite"`
 	Postgres PostgresConfig `yaml:"Postgres"`
@@ -278,6 +353,7 @@ type Config struct {
 	HMI            HMIConfig            `yaml:"HMI"`
 	Redfish        RedfishConfig        `yaml:"Redfish"`
 	PythonScripts  PythonScriptsConfig  `yaml:"PythonScripts"`
+	WinCCOaNative  WinCCOaNativeConfig  `yaml:"WinCCOaNative"`
 
 	// QueuedMessagesEnabled selects how messages for offline persistent (clean=false)
 	// sessions are held until the client reconnects.
@@ -287,38 +363,38 @@ type Config struct {
 	//   false → rely on the in-memory inflight buffer. Messages are lost
 	//           on broker restart but lower latency / no DB writes per publish.
 	QueuedMessagesEnabled bool `yaml:"QueuedMessagesEnabled"`
-	MaxQueueMessages      *int `yaml:"MaxQueueMessages"`
-	QueueBatchSize        *int `yaml:"QueueBatchSize"`
-	QueueFlushIntervalMs  *int `yaml:"QueueFlushIntervalMs"`
+	// AllowRootWildcardSubscription permits subscribing to '#' (default
+	// true, as in the Java broker). It also governs native WinCC OA
+	// wildcard filters that cover every datapoint.
+	AllowRootWildcardSubscription *bool `yaml:"AllowRootWildcardSubscription,omitempty"`
+	MaxQueueMessages              *int  `yaml:"MaxQueueMessages"`
+	QueueBatchSize                *int  `yaml:"QueueBatchSize"`
+	QueueFlushIntervalMs          *int  `yaml:"QueueFlushIntervalMs"`
 }
 
 func Default() *Config {
 	return &Config{
-		NodeID:            "",
-		TCP:               Listener{Enabled: true, Port: 1883},
-		TCPS:              Listener{Enabled: false, Port: 8883},
-		WS:                Listener{Enabled: false, Port: 1884},
-		WSS:               Listener{Enabled: false, Port: 8884},
-		MaxMessageSize:    1048576,
-		DefaultStoreType:  StoreSQLite,
-		SessionStoreType:  StoreSQLite,
-		RetainedStoreType: StoreSQLite,
-		ConfigStoreType:   StoreSQLite,
-		QueueStoreType:    StoreSQLite,
-		SQLite:            SQLiteConfig{Path: "./data/monstermq.db"},
-		UserManagement:    UserManagementConfig{Enabled: false, PasswordAlgorithm: "BCRYPT", AnonymousEnabled: true, AclCacheEnabled: true, AllowAnonymousLocalhost: false},
-		Metrics:           MetricsConfig{Enabled: true, CollectionIntervalSeconds: 1, RetentionHours: 168, MaxHistoryRows: 3600},
-		Logging:           LoggingConfig{Level: "INFO", MqttSyslogEnabled: false, RingBufferSize: 1000},
+		NodeID:           "",
+		TCP:              Listener{Enabled: true, Port: 1883},
+		TCPS:             Listener{Enabled: false, Port: 8883},
+		WS:               Listener{Enabled: false, Port: 1884},
+		WSS:              Listener{Enabled: false, Port: 8884},
+		MaxMessageSize:   1048576,
+		DefaultStoreType: StoreSQLite,
+		SQLite:           SQLiteConfig{Path: "./data/monstermq.db"},
+		UserManagement:   UserManagementConfig{Enabled: false, PasswordAlgorithm: "BCRYPT", AnonymousEnabled: true, AclCacheEnabled: true, AllowAnonymousLocalhost: false},
+		Metrics:          MetricsConfig{Enabled: true, CollectionIntervalSeconds: 1, RetentionHours: 168, MaxHistoryRows: 3600},
+		Logging:          LoggingConfig{Level: "INFO", MqttSyslogEnabled: false, RingBufferSize: 1000},
 		GraphQL: GraphQLConfig{
 			Enabled:                 true,
 			Port:                    4000,
 			TLSPort:                 4443,
 			RequireHTTPSFromOutside: false,
 		},
-		Dashboard:         DashboardConfig{Enabled: true, Path: ""},
-		RestApi:           RestApiConfig{Enabled: true},
-		MCP:               MCPConfig{Enabled: false},
-		Features:          FeaturesConfig{MqttClient: false, WinCCUa: false, WinCCOa: false, DeviceImportExport: false, Mcp: false, Hmi: false, Redfish: false, RtspCamera: false, PythonScripts: false},
+		Dashboard: DashboardConfig{Enabled: true, Path: ""},
+		RestApi:   RestApiConfig{Enabled: true},
+		MCP:       MCPConfig{Enabled: false},
+		Features:  FeaturesConfig{MqttClient: false, WinCCUa: false, WinCCOa: false, DeviceImportExport: false, Mcp: false, Hmi: false, Redfish: false, RtspCamera: false, PythonScripts: false},
 		HostMonitoring: HostMonitoringConfig{
 			Enabled:         false,
 			BaseTopic:       "nodes/{NodeId}/host",
@@ -375,16 +451,34 @@ func (c *Config) ConfigStore() StoreType {
 	return c.DefaultStoreType
 }
 
+// QueueStore returns the offline-message queue store. WinCC OA does not
+// hold queues: with DefaultStoreType WINCCOA it falls back to MEMORY.
 func (c *Config) QueueStore() StoreType {
 	if c.QueueStoreType != "" {
 		return c.QueueStoreType
 	}
+	if c.DefaultStoreType == StoreWinCCOA {
+		return StoreMemory
+	}
 	return c.DefaultStoreType
 }
 
+// MetricsStore returns the metrics store. Metrics are never written to
+// WinCC OA: with DefaultStoreType WINCCOA it falls back to MEMORY.
 func (c *Config) MetricsStore() StoreType {
 	if c.Metrics.StoreType != "" {
 		return c.Metrics.StoreType
+	}
+	if c.DefaultStoreType == StoreWinCCOA {
+		return StoreMemory
+	}
+	return c.DefaultStoreType
+}
+
+// UserStore returns the store of users and ACL rules.
+func (c *Config) UserStore() StoreType {
+	if c.UserStoreType != "" {
+		return c.UserStoreType
 	}
 	return c.DefaultStoreType
 }
@@ -403,28 +497,47 @@ func (c *Config) Validate() error {
 	if c.MaxMessageSize < 0 {
 		return fmt.Errorf("MaxMessageSize must be non-negative")
 	}
+	if err := c.WinCCOaNative.validate(); err != nil {
+		return err
+	}
 	if c.DefaultStoreType == "" {
 		return fmt.Errorf("DefaultStoreType is required")
 	}
-	if !c.DefaultStoreType.isValidBackend() {
-		return fmt.Errorf("invalid DefaultStoreType %q (must be one of SQLITE, POSTGRES, MONGODB)", c.DefaultStoreType)
+	if c.DefaultStoreType != StoreWinCCOA && !c.DefaultStoreType.isValidBackend() {
+		return fmt.Errorf("invalid DefaultStoreType %q (must be one of SQLITE, POSTGRES, MONGODB, WINCCOA)", c.DefaultStoreType)
 	}
-	overrides := []struct {
-		name  string
-		value StoreType
-	}{
-		{"ConfigStoreType", c.ConfigStoreType},
+	if c.UserStoreType != "" && c.UserStoreType != StoreWinCCOA && c.UserStoreType != c.DefaultStoreType {
+		return fmt.Errorf("invalid UserStoreType %q (must be WINCCOA or DefaultStoreType %q)", c.UserStoreType, c.DefaultStoreType)
 	}
-	for _, f := range overrides {
-		if f.value != "" && !f.value.isValidBackend() {
-			return fmt.Errorf("invalid %s %q (must be one of SQLITE, POSTGRES, MONGODB)", f.name, f.value)
+	if c.DefaultStoreType == StoreWinCCOA {
+		// Nothing else is opened: the other stores are WinCC OA datapoints
+		// or kept in memory.
+		for _, f := range []struct {
+			name  string
+			value StoreType
+			mem   bool
+		}{
+			{"ConfigStoreType", c.ConfigStoreType, false},
+			{"SessionStoreType", c.SessionStoreType, true},
+			{"RetainedStoreType", c.RetainedStoreType, true},
+			{"QueueStoreType", c.QueueStoreType, true},
+		} {
+			if f.value != "" && f.value != StoreWinCCOA && !(f.mem && f.value == StoreMemory) {
+				return fmt.Errorf("%s %q is not supported with DefaultStoreType WINCCOA (use WINCCOA or MEMORY)", f.name, f.value)
+			}
+		}
+		if c.Metrics.StoreType != "" && c.Metrics.StoreType != StoreMemory && c.Metrics.StoreType != StoreNone {
+			return fmt.Errorf("Metrics.StoreType %q is not supported with DefaultStoreType WINCCOA (use MEMORY or NONE)", c.Metrics.StoreType)
 		}
 	}
-	if c.RetainedStoreType != "" && !c.RetainedStoreType.isValidRetainedBackend() {
-		return fmt.Errorf("invalid RetainedStoreType %q (must be one of SQLITE, POSTGRES, MONGODB, MEMORY)", c.RetainedStoreType)
+	if c.ConfigStoreType != "" && c.ConfigStoreType != StoreWinCCOA && !c.ConfigStoreType.isValidBackend() {
+		return fmt.Errorf("invalid ConfigStoreType %q (must be one of SQLITE, POSTGRES, MONGODB, WINCCOA)", c.ConfigStoreType)
 	}
-	if c.SessionStoreType != "" && !c.SessionStoreType.isValidVolatileBackend() {
-		return fmt.Errorf("invalid SessionStoreType %q (must be one of SQLITE, POSTGRES, MONGODB, MEMORY)", c.SessionStoreType)
+	if c.RetainedStoreType != "" && c.RetainedStoreType != StoreWinCCOA && !c.RetainedStoreType.isValidRetainedBackend() {
+		return fmt.Errorf("invalid RetainedStoreType %q (must be one of SQLITE, POSTGRES, MONGODB, MEMORY, WINCCOA)", c.RetainedStoreType)
+	}
+	if c.SessionStoreType != "" && c.SessionStoreType != StoreWinCCOA && !c.SessionStoreType.isValidVolatileBackend() {
+		return fmt.Errorf("invalid SessionStoreType %q (must be one of SQLITE, POSTGRES, MONGODB, MEMORY, WINCCOA)", c.SessionStoreType)
 	}
 	if c.QueueStoreType != "" && !c.QueueStoreType.isValidVolatileBackend() {
 		return fmt.Errorf("invalid QueueStoreType %q (must be one of SQLITE, POSTGRES, MONGODB, MEMORY)", c.QueueStoreType)

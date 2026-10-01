@@ -822,6 +822,46 @@ func (s *Server) Publish(topic string, payload []byte, retain bool, qos byte) er
 	})
 }
 
+// PublishPacket publishes a packet through the inline client, keeping its
+// properties (e.g. MQTT 5 correlation data on a command reply).
+func (s *Server) PublishPacket(pk packets.Packet) error {
+	if !s.Options.InlineClient {
+		return ErrInlineClientNotEnabled
+	}
+	return s.InjectPacket(s.inlineClient, pk)
+}
+
+// PublishCurrentValue delivers a current value to one client's existing
+// subscription the way a retained message is delivered at subscribe time:
+// retain handling and shared-subscription rules apply and the retain flag
+// is forwarded. Nothing is stored in the retained message store.
+func (s *Server) PublishCurrentValue(clientID, filter, topic string, payload []byte, existed bool) error {
+	cl, ok := s.Clients.Get(clientID)
+	if !ok || cl.Closed() {
+		return nil
+	}
+	sub, ok := cl.State.Subscriptions.Get(filter)
+	if !ok {
+		return nil
+	}
+	if IsSharedFilter(sub.Filter) {
+		return nil
+	}
+	if sub.RetainHandling == 1 && existed || sub.RetainHandling == 2 {
+		return nil
+	}
+	sub.FwdRetainedFlag = true
+	pk := packets.Packet{
+		FixedHeader: packets.FixedHeader{Type: packets.Publish, Qos: sub.Qos, Retain: true},
+		TopicName:   topic,
+		Payload:     payload,
+		Created:     time.Now().Unix(),
+		Origin:      s.inlineClient.ID,
+	}
+	_, err := s.publishToClient(cl, sub, pk)
+	return err
+}
+
 // Subscribe adds an inline subscription for the specified topic filter and subscription identifier
 // with the provided handler function.
 func (s *Server) Subscribe(filter string, subscriptionId int, handler InlineSubFn) error {
@@ -1371,6 +1411,8 @@ func (s *Server) processSubscribe(cl *Client, pk packets.Packet) error {
 			if s.Options.Capabilities.Compatibilities.ObscureNotAuthorized {
 				reasonCodes[i] = packets.ErrUnspecifiedError.Code
 			}
+		} else if vc := s.hooks.OnSubscribeValidate(cl, sub); vc.Code != packets.CodeSuccess.Code {
+			reasonCodes[i] = vc.Code
 		} else {
 			isNew := s.Topics.Subscribe(cl.ID, sub) // [MQTT-3.8.4-3]
 			if isNew {

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"path/filepath"
+	"sync"
 	"time"
 
 	mqtt "monstermq.io/edge/internal/mqtt"
@@ -26,6 +28,7 @@ import (
 	mlog "monstermq.io/edge/internal/log"
 	"monstermq.io/edge/internal/mcp"
 	"monstermq.io/edge/internal/metrics"
+	"monstermq.io/edge/internal/oahost"
 	"monstermq.io/edge/internal/pubsub"
 	"monstermq.io/edge/internal/redfish"
 	"monstermq.io/edge/internal/restapi"
@@ -33,9 +36,11 @@ import (
 	"monstermq.io/edge/internal/stores"
 	storememory "monstermq.io/edge/internal/stores/memory"
 	storemongo "monstermq.io/edge/internal/stores/mongodb"
+	"monstermq.io/edge/internal/stores/oastore"
 	storepg "monstermq.io/edge/internal/stores/postgres"
 	storesqlite "monstermq.io/edge/internal/stores/sqlite"
 	"monstermq.io/edge/internal/topic"
+	"monstermq.io/edge/internal/winccoanative"
 )
 
 // Server is the top-level lifecycle holder for the edge broker.
@@ -60,12 +65,54 @@ type Server struct {
 	hostMonitor *hostinfo.Collector
 	hmiSync     *hmi.SyncService
 	storageHook *StorageHook
+	native      *winccoanative.Service
+	refreshStop context.CancelFunc
+	// stopMu guards the stop functions set by Serve and read by Close,
+	// which run on different goroutines.
+	stopMu       sync.Mutex
 	retainedStop context.CancelFunc
 	metricsCtx   context.Context
 	metricsStop  context.CancelFunc
 }
 
+// Options lets an embedding host assemble the broker. The zero value gives
+// the standalone behavior.
+type Options struct {
+	// Storage, when set, is used instead of the DefaultStoreType factory.
+	// The broker closes it on Close unless KeepStorageOpen is set.
+	Storage         *stores.Storage
+	KeepStorageOpen bool
+	// ConfigureStorage runs after the factory (or Storage) and the volatile
+	// store overrides, before any store is read. It may replace individual
+	// stores, e.g. with WinCC OA datapoint stores.
+	ConfigureStorage func(ctx context.Context, s *stores.Storage) error
+	// OA is the embedding host client. Native WinCC OA features are only
+	// active when it is set and cfg.WinCCOaNative.Enabled is true.
+	OA *oahost.Client
+	// NativeReconcile overrides the native interest reconcile interval.
+	NativeReconcile time.Duration
+}
+
 func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, error) {
+	return NewWithOptions(cfg, logger, logBus, Options{})
+}
+
+// NewWithOptions builds the broker. On error every resource acquired so
+// far (storage, listeners, background refreshers) is released, so a failed
+// start inside an embedding host leaves nothing bound or running.
+func NewWithOptions(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus, opts Options) (*Server, error) {
+	var undo []func()
+	srv, err := build(cfg, logger, logBus, opts, &undo)
+	if err != nil {
+		for i := len(undo) - 1; i >= 0; i-- {
+			undo[i]()
+		}
+		return nil, err
+	}
+	return srv, nil
+}
+
+func build(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus, opts Options, undo *[]func()) (*Server, error) {
 	ctx := context.Background()
 
 	// 1. Storage — picks the backend based on DefaultStoreType.
@@ -78,22 +125,69 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 		mongoDB  *storemongo.DB
 		err      error
 	)
-	switch cfg.DefaultStoreType {
-	case config.StoreSQLite, "":
+	switch {
+	case opts.Storage != nil:
+		storage = opts.Storage
+		if opts.KeepStorageOpen {
+			storage.Closer = nil
+		}
+	case cfg.DefaultStoreType == config.StoreSQLite, cfg.DefaultStoreType == "":
 		storage, sqliteDB, err = storesqlite.Build(ctx, cfg)
-	case config.StorePostgres:
+	case cfg.DefaultStoreType == config.StorePostgres:
 		storage, pgDB, err = storepg.Build(ctx, cfg)
-	case config.StoreMongoDB:
+	case cfg.DefaultStoreType == config.StoreMongoDB:
 		storage, mongoDB, err = storemongo.Build(ctx, cfg)
+	case cfg.DefaultStoreType == config.StoreWinCCOA:
+		// Configs, sessions, retained messages and users become WinCC OA
+		// datapoints below; queue and metrics stay in memory. No SQLite
+		// handle is exposed, so no archive group writes to a file here.
+		if storage, err = storesqlite.BuildMemory(ctx, cfg); err == nil {
+			storage.Backend = config.StoreWinCCOA
+		}
 	default:
 		return nil, fmt.Errorf("unsupported DefaultStoreType %q", cfg.DefaultStoreType)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("storage init: %w", err)
 	}
+	if sqliteDB != nil {
+		path, absErr := filepath.Abs(cfg.SQLite.Path)
+		if absErr != nil {
+			path = cfg.SQLite.Path
+		}
+		logger.Info("sqlite database", "path", path)
+	}
 	if err := configureVolatileStores(ctx, cfg, storage); err != nil {
 		_ = storage.Close()
 		return nil, err
+	}
+	nativeOn := opts.OA != nil && cfg.WinCCOaNative.Enabled
+	names := winccoanative.Names{
+		Root:       cfg.WinCCOaNative.TopicRoot,
+		Tags:       cfg.WinCCOaNative.TagsName,
+		Types:      cfg.WinCCOaNative.TypesName,
+		Systems:    cfg.WinCCOaNative.SystemsName,
+		NoShortcut: !cfg.WinCCOaNative.Shortcut(),
+	}.WithDefaults()
+	if err := names.Validate(); err != nil {
+		_ = storage.Close()
+		return nil, fmt.Errorf("WinCCOaNative topic names: %w", err)
+	}
+	if cfg.UsesWinCCOaStores() && !nativeOn {
+		_ = storage.Close()
+		return nil, fmt.Errorf("store type WINCCOA (Config/Session/RetainedStoreType) needs the WinCC OA manager (WCCOAmmq) with WinCCOaNative enabled")
+	}
+	if nativeOn && cfg.UsesWinCCOaStores() {
+		if err := useOAStores(ctx, cfg, storage, oahost.API{C: opts.OA}, names.Root, logger); err != nil {
+			_ = storage.Close()
+			return nil, err
+		}
+	}
+	if opts.ConfigureStorage != nil {
+		if err := opts.ConfigureStorage(ctx, storage); err != nil {
+			_ = storage.Close()
+			return nil, fmt.Errorf("storage configure: %w", err)
+		}
 	}
 	if err := ensureDefaultAdmin(ctx, cfg, storage, logger); err != nil {
 		return nil, fmt.Errorf("default admin init: %w", err)
@@ -102,6 +196,7 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 		_ = storage.Close()
 		return nil, err
 	}
+	*undo = append(*undo, func() { _ = storage.Close() })
 
 	if storage.Queue != nil && cfg.QueueStore() != config.StoreMemory {
 		batchSize := cfg.GetQueueBatchSize()
@@ -120,7 +215,9 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 	if err := authCache.Refresh(ctx); err != nil {
 		logger.Warn("user cache refresh failed", "err", err)
 	}
-	authCache.StartRefresher(context.Background(), 30*time.Second)
+	refreshCtx, refreshStop := context.WithCancel(context.Background())
+	authCache.StartRefresher(refreshCtx, 30*time.Second)
+	*undo = append(*undo, refreshStop)
 
 	// 3. Pub/sub bus + subscription index + archive manager
 	bus := pubsub.NewBus()
@@ -143,9 +240,11 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 		Logger:       logger,
 		Capabilities: caps,
 	})
+	*undo = append(*undo, func() { _ = server.Close() })
 
+	var authHook *AuthHook
 	if cfg.UserManagement.Enabled {
-		authHook := NewAuthHook(
+		authHook = NewAuthHook(
 			authCache,
 			storage.Users,
 			cfg.EffectiveUseIdentityAsUsername(),
@@ -153,12 +252,48 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 			cfg.UserManagement.AllowAnonymousLocalhost,
 			logger,
 		)
+		authHook.native = func() winccoanative.Names { return names }
 		if err := server.AddHook(authHook, nil); err != nil {
 			return nil, fmt.Errorf("add monstermq auth hook: %w", err)
 		}
 	} else {
 		if err := server.AddHook(new(auth.AllowHook), nil); err != nil {
 			return nil, fmt.Errorf("add allow-all hook: %w", err)
+		}
+	}
+
+	if !cfg.AllowRootWildcard() {
+		if err := server.AddHook(new(rootWildcardHook), nil); err != nil {
+			return nil, fmt.Errorf("add root wildcard hook: %w", err)
+		}
+	}
+
+	// Native WinCC OA namespace. Added before the storage hook so accepted
+	// commands are consumed (not archived or delivered) and rejected
+	// filters never reach persistence.
+	var native *winccoanative.Service
+	if nativeOn && cfg.WinCCOaNative.Namespace {
+		native = winccoanative.NewService(oahost.API{C: opts.OA}, server, winccoanative.Options{
+			Names:             names,
+			NodeID:            cfg.NodeID,
+			NoSource:          cfg.WinCCOaNative.EchoPolicy == config.WinCCOaEchoNoSource,
+			ReconcileInterval: opts.NativeReconcile,
+			AllowRootWildcard: cfg.AllowRootWildcard(),
+			SessionExists: func(clientID string) bool {
+				if _, ok := server.Clients.Get(clientID); ok {
+					return true
+				}
+				present, err := storage.Sessions.IsPresent(context.Background(), clientID)
+				return err != nil || present
+			},
+		}, logger)
+		if authHook != nil {
+			// The service adds the local system (known after its start,
+			// before any listener), which maps shortcut topics for ACLs.
+			authHook.native = native.Names
+		}
+		if err := server.AddHook(NewWinCCOaNativeHook(native, server, logger), nil); err != nil {
+			return nil, fmt.Errorf("add winccoa native hook: %w", err)
 		}
 	}
 
@@ -275,6 +410,9 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 	var winCCOa *winccoa.Manager
 	if cfg.Features.WinCCOa {
 		winCCOa = winccoa.NewManager(storage.DeviceConfig, publishFn, cfg.NodeID, logger)
+		if nativeOn {
+			winCCOa.SetReservedRoot(names.Root)
+		}
 	}
 
 	// 7c. Host Monitoring
@@ -364,7 +502,7 @@ func New(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus) (*Server, er
 		storage: storage, bus: bus, subs: subs, archives: archives, authCache: authCache,
 		collector: collector, bridges: bridges, winCCUa: winCCUa, winCCOa: winCCOa, rtspCameras: rtspCameras, scripts: scripts, gqlSrv: gqlSrv,
 		mcpSrv: mcpSrv, redfishMgr: redfishMgr, hostMonitor: hostMonitor, hmiSync: hmiSync,
-		storageHook: storageHook,
+		storageHook: storageHook, native: native, refreshStop: refreshStop,
 	}, nil
 }
 
@@ -372,8 +510,8 @@ func configureVolatileStores(ctx context.Context, cfg *config.Config, storage *s
 	if cfg.RetainedStore() == config.StoreMemory {
 		storage.Retained = storememory.NewMessageStore("retainedmessages")
 	}
-	if storage.Backend == config.StoreSQLite {
-		return nil
+	if storage.Backend == config.StoreSQLite || storage.Backend == config.StoreWinCCOA {
+		return nil // the SQLite factory (also the WINCCOA base) handled MEMORY itself
 	}
 	if cfg.SessionStore() == config.StoreMemory {
 		db, err := storesqlite.OpenMemory("monstermq-sessions-" + cfg.NodeID)
@@ -392,6 +530,55 @@ func configureVolatileStores(ctx context.Context, cfg *config.Config, storage *s
 	if cfg.QueueStore() == config.StoreMemory {
 		storage.Queue = storememory.NewQueueStore(30 * time.Second)
 	}
+	return nil
+}
+
+// useOAStores replaces the selected stores with WinCC OA datapoint stores.
+// The datapoint types are checked and every record is loaded here, so a
+// missing DPT or an unreachable OA stops startup instead of running with
+// an incompatible or empty configuration.
+func useOAStores(ctx context.Context, cfg *config.Config, storage *stores.Storage, api oahost.API, nativeRoot string, logger *slog.Logger) error {
+	needCfg := cfg.ConfigStore() == config.StoreWinCCOA
+	needSes := cfg.SessionStore() == config.StoreWinCCOA
+	needRet := cfg.RetainedStore() == config.StoreWinCCOA
+	needUsr := cfg.UserStore() == config.StoreWinCCOA
+	if err := oastore.EnsureTypes(ctx, api, needCfg, needSes, needRet, needUsr); err != nil {
+		return fmt.Errorf("winccoa stores: %w", err)
+	}
+	st := oastore.New(api, 10*time.Second, logger)
+	if needCfg {
+		if err := st.Device.Load(ctx); err != nil {
+			return fmt.Errorf("winccoa stores: %w", err)
+		}
+	}
+	if needSes {
+		if err := st.Sessions.Load(ctx); err != nil {
+			return fmt.Errorf("winccoa stores: %w", err)
+		}
+	}
+	if needCfg {
+		storage.DeviceConfig = st.Device
+		storage.ArchiveConfig = st.Archive
+	}
+	if needSes {
+		storage.Sessions = st.Sessions
+		storage.Subscriptions = st.Sessions
+	}
+	if needRet {
+		// The native namespace (status topics) never gets datapoints.
+		st.Retained.KeepInMemory(nativeRoot)
+		if err := st.Retained.Load(ctx); err != nil {
+			return fmt.Errorf("winccoa stores: %w", err)
+		}
+		storage.Retained = st.Retained
+	}
+	if needUsr {
+		if err := st.Users.Load(ctx); err != nil {
+			return fmt.Errorf("winccoa stores: %w", err)
+		}
+		storage.Users = st.Users
+	}
+	logger.Info("winccoa datapoint stores active", "config", needCfg, "sessions", needSes, "retained", needRet, "users", needUsr)
 	return nil
 }
 
@@ -452,9 +639,43 @@ func hydrateSubscriptionIndex(ctx context.Context, subs *topic.SubscriptionIndex
 	})
 }
 
+// startNative resolves the OA local system, restores persisted native
+// interests and removes persisted subscriptions that no longer validate.
+func (s *Server) startNative() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := s.native.Start(ctx); err != nil {
+		return err
+	}
+	persisted := map[string][]string{}
+	_ = s.storage.Subscriptions.IterateSubscriptions(ctx, func(sub stores.MqttSubscription) bool {
+		persisted[sub.ClientID] = append(persisted[sub.ClientID], sub.TopicFilter)
+		return true
+	})
+	for client, filters := range s.native.Restore(persisted) {
+		rows := make([]stores.MqttSubscription, 0, len(filters))
+		for _, f := range filters {
+			rows = append(rows, stores.MqttSubscription{ClientID: client, TopicFilter: f})
+			s.subs.Unsubscribe(client, f)
+		}
+		if err := s.storage.Subscriptions.DelSubscriptions(ctx, rows); err != nil {
+			s.logger.Warn("drop invalid native subscriptions failed", "client", client, "err", err)
+		}
+	}
+	return nil
+}
+
 func (s *Server) Serve() error {
+	if s.native != nil {
+		if err := s.startNative(); err != nil {
+			return fmt.Errorf("winccoa native start: %w", err)
+		}
+	}
 	if s.collector != nil {
-		s.metricsCtx, s.metricsStop = context.WithCancel(context.Background())
+		metricsCtx, metricsStop := context.WithCancel(context.Background())
+		s.stopMu.Lock()
+		s.metricsCtx, s.metricsStop = metricsCtx, metricsStop
+		s.stopMu.Unlock()
 		s.collector.Start(s.metricsCtx, func() (sessions, subs int, queued int64) {
 			ctx := context.Background()
 			_ = s.storage.Sessions.IterateSessions(ctx, func(stores.SessionInfo) bool { sessions++; return true })
@@ -476,7 +697,10 @@ func (s *Server) Serve() error {
 		s.archives.RunRetention(context.Background())
 	}
 	if s.storageHook != nil {
-		s.retainedStop = s.storageHook.StartRetention(context.Background(), time.Second)
+		stop := s.storageHook.StartRetention(context.Background(), time.Second)
+		s.stopMu.Lock()
+		s.retainedStop = stop
+		s.stopMu.Unlock()
 	}
 	if s.bridges != nil {
 		if err := s.bridges.Start(context.Background()); err != nil {
@@ -527,6 +751,11 @@ func (s *Server) Serve() error {
 }
 
 func (s *Server) Close() error {
+	if s.native != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		s.native.Stop(ctx)
+		cancel()
+	}
 	if s.bridges != nil {
 		s.bridges.Stop()
 	}
@@ -553,8 +782,11 @@ func (s *Server) Close() error {
 		defer cancel()
 		_ = s.redfishMgr.Stop(ctx)
 	}
-	if s.metricsStop != nil {
-		s.metricsStop()
+	s.stopMu.Lock()
+	metricsStop, retainedStop := s.metricsStop, s.retainedStop
+	s.stopMu.Unlock()
+	if metricsStop != nil {
+		metricsStop()
 	}
 	if s.collector != nil {
 		s.collector.Stop()
@@ -567,8 +799,11 @@ func (s *Server) Close() error {
 	if s.archives != nil {
 		s.archives.Stop()
 	}
-	if s.retainedStop != nil {
-		s.retainedStop()
+	if retainedStop != nil {
+		retainedStop()
+	}
+	if s.refreshStop != nil {
+		s.refreshStop()
 	}
 	if err := s.mqtt.Close(); err != nil {
 		return err
@@ -586,3 +821,9 @@ func (s *Server) Subscriptions() *topic.SubscriptionIndex { return s.subs }
 func (s *Server) Archives() *archive.Manager              { return s.archives }
 func (s *Server) AuthCache() *mauth.Cache                 { return s.authCache }
 func (s *Server) MQTT() *mqtt.Server                      { return s.mqtt }
+
+// WinCCOa returns the WinCC OA device manager (nil when the feature is off).
+func (s *Server) WinCCOa() *winccoa.Manager { return s.winCCOa }
+
+// Native returns the WinCC OA namespace service (nil when not embedded).
+func (s *Server) Native() *winccoanative.Service { return s.native }

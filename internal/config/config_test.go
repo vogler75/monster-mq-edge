@@ -174,3 +174,76 @@ func TestDebAndExampleConfigsValidate(t *testing.T) {
 		}
 	}
 }
+
+func TestWinCCOaStoresLegacyKeyRejected(t *testing.T) {
+	tmp := filepath.Join(t.TempDir(), "config.yaml")
+	yaml := []byte("WinCCOaNative:\n  Enabled: true\n  Stores: [DeviceConfig]\n")
+	if err := os.WriteFile(tmp, yaml, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(tmp); err == nil || !strings.Contains(err.Error(), "ConfigStoreType: WINCCOA") {
+		t.Fatalf("expected the removed Stores key to be rejected, got %v", err)
+	}
+	cfg := Default()
+	cfg.ConfigStoreType = StoreWinCCOA
+	cfg.SessionStoreType = StoreWinCCOA
+	if err := cfg.Validate(); err != nil || !cfg.UsesWinCCOaStores() {
+		t.Fatalf("WINCCOA store types: %v", err)
+	}
+	cfg.ConfigStoreType, cfg.SessionStoreType = StoreSQLite, StoreSQLite
+	cfg.RetainedStoreType = StoreWinCCOA
+	if err := cfg.Validate(); err != nil || !cfg.UsesWinCCOaStores() {
+		t.Fatalf("RetainedStoreType WINCCOA: %v", err)
+	}
+	cfg.QueueStoreType = StoreWinCCOA
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("QueueStoreType WINCCOA must be rejected")
+	}
+}
+
+func TestDefaultStoreWinCCOA(t *testing.T) {
+	cfg := Default()
+	cfg.DefaultStoreType = StoreWinCCOA
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for name, got := range map[string]StoreType{
+		"config": cfg.ConfigStore(), "session": cfg.SessionStore(), "retained": cfg.RetainedStore(), "user": cfg.UserStore(),
+	} {
+		if got != StoreWinCCOA {
+			t.Errorf("%s store %s, want WINCCOA", name, got)
+		}
+	}
+	if cfg.QueueStore() != StoreMemory || cfg.MetricsStore() != StoreMemory {
+		t.Errorf("queue %s metrics %s, want MEMORY", cfg.QueueStore(), cfg.MetricsStore())
+	}
+	cfg.SessionStoreType = StoreMemory
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("SessionStoreType MEMORY: %v", err)
+	}
+	for _, bad := range []func(*Config){
+		func(c *Config) { c.SessionStoreType = StoreSQLite },
+		func(c *Config) { c.ConfigStoreType = StoreMemory },
+		func(c *Config) { c.QueueStoreType = StoreSQLite },
+		func(c *Config) { c.Metrics.StoreType = StoreSQLite },
+		func(c *Config) { c.UserStoreType = StorePostgres },
+	} {
+		c := Default()
+		c.DefaultStoreType = StoreWinCCOA
+		bad(c)
+		if err := c.Validate(); err == nil {
+			t.Errorf("accepted %+v", c)
+		}
+	}
+	// The overrides fall back to DefaultStoreType when not set.
+	pg := Default()
+	pg.DefaultStoreType = StorePostgres
+	if err := pg.Validate(); err != nil || pg.QueueStore() != StorePostgres || pg.SessionStore() != StorePostgres {
+		t.Errorf("POSTGRES default: %v queue %s", err, pg.QueueStore())
+	}
+	sq := Default()
+	sq.UserStoreType = StoreWinCCOA
+	if err := sq.Validate(); err != nil || !sq.UsesWinCCOaStores() {
+		t.Errorf("UserStoreType WINCCOA: %v", err)
+	}
+}

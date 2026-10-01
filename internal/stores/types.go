@@ -14,6 +14,7 @@ type BrokerMessage struct {
 	IsDup       bool      `json:"isDup"`
 	IsQueued    bool      `json:"isQueued"`
 	ClientID    string    `json:"clientId"`
+	Username    string    `json:"username,omitempty"` // MQTT user of the publisher, where a store keeps it
 	Time        time.Time `json:"time"`
 
 	// MQTT v5 properties (subset)
@@ -49,6 +50,7 @@ const (
 	MessageStorePostgres MessageStoreType = "POSTGRES"
 	MessageStoreMongoDB  MessageStoreType = "MONGODB"
 	MessageStoreSQLite   MessageStoreType = "SQLITE"
+	MessageStoreWinCCOA  MessageStoreType = "WINCCOA"
 )
 
 type MessageArchiveType string

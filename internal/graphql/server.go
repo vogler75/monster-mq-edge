@@ -93,9 +93,7 @@ func NewServer(cfg *config.Config, resolver *resolvers.Resolver, hmiMgr *hmi.Man
 			return next(ctx)
 		}
 		if _, ok := auth.Principal(ctx); !ok && !cfg.UserManagement.AnonymousEnabled {
-			return func(context.Context) *gqlgraphql.Response {
-				return gqlgraphql.ErrorResponse(ctx, "authentication required")
-			}
+			return errorOnce(ctx, "authentication required")
 		}
 		if op.Operation == ast.Mutation {
 			for _, field := range rootFields(op.SelectionSet) {
@@ -104,9 +102,7 @@ func NewServer(cfg *config.Config, resolver *resolvers.Resolver, hmiMgr *hmi.Man
 				}
 				user, authenticated := auth.Principal(ctx)
 				if !authenticated || !user.IsAdmin {
-					return func(context.Context) *gqlgraphql.Response {
-						return gqlgraphql.ErrorResponse(ctx, "administrator access required")
-					}
+					return errorOnce(ctx, "administrator access required")
 				}
 			}
 		}
@@ -300,6 +296,21 @@ func authenticateContext(ctx context.Context, authorization string, cfg *config.
 	}
 	ctx, err := auth.AuthenticateHeader(ctx, cache, authorization)
 	return ctx, nil, err
+}
+
+// errorOnce answers an operation with one error response and then ends it.
+// A response handler is called until it returns nil: for a subscription over
+// websocket, a handler that keeps returning the error sends it in a tight
+// loop for as long as the connection lives.
+func errorOnce(ctx context.Context, msg string) gqlgraphql.ResponseHandler {
+	sent := false
+	return func(context.Context) *gqlgraphql.Response {
+		if sent {
+			return nil
+		}
+		sent = true
+		return gqlgraphql.ErrorResponse(ctx, "%s", msg)
+	}
 }
 
 func isLoginOnly(op *ast.OperationDefinition) bool {

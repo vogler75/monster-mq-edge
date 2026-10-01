@@ -116,10 +116,11 @@
       "minimum": 0,
       "default": 1048576
     },
-    "DefaultStoreType":  { "$ref": "#/$defs/StoreBackend", "description": "Backend used by every store unless overridden below." },
-    "SessionStoreType":  { "$ref": "#/$defs/VolatileStoreBackend", "description": "Override for the session/subscription store; falls back to DefaultStoreType. MEMORY uses an in-memory SQLite database." },
-    "RetainedStoreType": { "$ref": "#/$defs/RetainedStoreBackend", "description": "Override for the retained-message store; falls back to DefaultStoreType. MEMORY = built-in in-memory map only, no DB persistence and no startup load." },
-    "ConfigStoreType":   { "$ref": "#/$defs/StoreBackend", "description": "Override for the device-config store; falls back to DefaultStoreType." },
+    "DefaultStoreType":  { "type": "string", "enum": ["SQLITE", "POSTGRES", "MONGODB", "WINCCOA"], "description": "Backend used by every store unless overridden below. WINCCOA (WinCC OA manager only): configs, sessions, retained messages and users in WinCC OA datapoints, queue and metrics in memory, no database file." },
+    "UserStoreType":     { "type": "string", "enum": ["SQLITE", "POSTGRES", "MONGODB", "WINCCOA"], "description": "Store of MQTT users and ACL rules; falls back to DefaultStoreType. Only WINCCOA (MMQUsers datapoints, WinCC OA manager only) may differ from DefaultStoreType." },
+    "SessionStoreType":  { "type": "string", "enum": ["SQLITE", "POSTGRES", "MONGODB", "MEMORY", "WINCCOA"], "description": "Override for the session/subscription store; falls back to DefaultStoreType. MEMORY uses an in-memory SQLite database. WINCCOA keeps them in MMQSessions datapoints (WinCC OA manager only)." },
+    "RetainedStoreType": { "type": "string", "enum": ["SQLITE", "POSTGRES", "MONGODB", "MEMORY", "WINCCOA"], "description": "Override for the retained-message store; falls back to DefaultStoreType. MEMORY = built-in in-memory map only, no DB persistence and no startup load. WINCCOA = one MMQRetained datapoint per retained topic (WinCC OA manager only)." },
+    "ConfigStoreType":   { "type": "string", "enum": ["SQLITE", "POSTGRES", "MONGODB", "WINCCOA"], "description": "Override for the device-config and archive-config store; falls back to DefaultStoreType. WINCCOA keeps them in MMQConfigs datapoints (WinCC OA manager only)." },
     "QueueStoreType":    { "$ref": "#/$defs/VolatileStoreBackend", "description": "Override for the queued-message store; falls back to DefaultStoreType. MEMORY uses an in-memory SQLite database and does not survive restart." },
     "SQLite": {
       "type": "object",
@@ -273,6 +274,26 @@
         "WorkerPoolSize":   { "type": "integer", "minimum": 1, "default": 4, "description": "Number of concurrent worker threads for script execution." },
         "QueueBufferSize":  { "type": "integer", "minimum": 16, "default": 1024, "description": "Buffer capacity for pending script execution tasks." },
         "DefaultTimeoutMs": { "type": "integer", "minimum": 10, "default": 200, "description": "Default timeout in milliseconds per script execution." }
+      }
+    },
+    "AllowRootWildcardSubscription": {
+      "type": "boolean",
+      "default": true,
+      "description": "Allow subscriptions to the root wildcard '#'. When false, '#' is rejected (SUBACK 0x8F), and so are native WinCC OA wildcard filters that cover every datapoint (winccoa/<scope>/tags/#, tags/+/..., types/#)."
+    },
+    "WinCCOaNative": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Bootstrap settings used only when the broker runs embedded in a WinCC OA API manager. Ignored by the standalone binary.",
+      "properties": {
+        "Enabled":    { "type": "boolean", "default": false, "description": "Enable the native WinCC OA embedding features." },
+        "Namespace":  { "type": "boolean", "default": false, "description": "Expose <TopicRoot>/<SystemsName>/<system>/<TagsName>|<TypesName> topics, validated subscriptions and typed writes." },
+        "TopicRoot":  { "type": "string", "default": "winccoa", "pattern": "^[^$/+#][^+#]*$", "description": "First topic level(s) of the native namespace, e.g. winccoa or plant/oa. The status topic is <TopicRoot>/<SystemsName>/<system>." },
+        "TagsName":   { "type": "string", "default": "tags", "pattern": "^[^/+#%]+$", "description": "Topic level for tag access: <TopicRoot>/<SystemsName>/<system>/<TagsName>/<dp>/..." },
+        "TypesName":  { "type": "string", "default": "types", "pattern": "^[^/+#%]+$", "description": "Topic level for access through the datapoint type: <TopicRoot>/<SystemsName>/<system>/<TypesName>/<dpt>/<dp>/..." },
+        "SystemsName": { "type": "string", "default": "systems", "pattern": "^[^/+#%]+$", "description": "Topic level before every system name: <TopicRoot>/<SystemsName>/<system>/..." },
+        "LocalShortcut": { "type": "boolean", "default": true, "description": "Also offer the local system without the system part: <TopicRoot>/<TagsName>/..., <TopicRoot>/<TypesName>/..., status on <TopicRoot>." },
+        "EchoPolicy": { "type": "string", "enum": ["BROKER_TAG", "NO_SOURCE"], "default": "BROKER_TAG", "description": "How values written through MQTT are echoed to native subscribers." }
       }
     },
     "Redfish": {

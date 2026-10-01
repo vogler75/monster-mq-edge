@@ -1582,7 +1582,11 @@ func (r *subscriptionResolver) TopicUpdates(ctx context.Context, topicFilters []
 				if !r.allowTopic(ctx, m.TopicName, false) {
 					continue
 				}
-				out <- brokerMsgToTopicUpdate(m, format)
+				select {
+				case out <- brokerMsgToTopicUpdate(m, format):
+				case <-ctx.Done():
+					return
+				}
 			}
 		}
 	}()
@@ -1614,10 +1618,13 @@ func (r *subscriptionResolver) TopicUpdatesBulk(ctx context.Context, topicFilter
 			if len(batch) == 0 {
 				return
 			}
-			out <- &generated.TopicUpdateBulk{
+			select {
+			case out <- &generated.TopicUpdateBulk{
 				Updates:   batch,
 				Count:     len(batch),
 				Timestamp: time.Now().UnixMilli(),
+			}:
+			case <-ctx.Done():
 			}
 			batch = make([]*generated.TopicUpdate, 0, max)
 		}
@@ -1686,7 +1693,11 @@ func (r *subscriptionResolver) SystemLogs(ctx context.Context, node *string, lev
 				if !logEntryMatches(e, node, level, logger, thread, sourceClass, sourceMethod, message, nil, nil) {
 					continue
 				}
-				out <- logEntryToGraphQL(e)
+				select {
+				case out <- logEntryToGraphQL(e):
+				case <-ctx.Done():
+					return
+				}
 			}
 		}
 	}()
