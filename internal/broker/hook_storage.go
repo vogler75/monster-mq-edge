@@ -3,11 +3,16 @@ package broker
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
+	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
+	"monstermq.io/edge/internal/config"
 	mqtt "monstermq.io/edge/internal/mqtt"
 	"monstermq.io/edge/internal/mqtt/hooks/storage"
 	"monstermq.io/edge/internal/mqtt/packets"
@@ -19,9 +24,9 @@ import (
 
 // StorageHook persists retained messages, sessions, subscriptions, and dispatches
 // every published message to:
-//   * the in-process pubsub bus (for GraphQL topicUpdates)
-//   * the archive group manager (for last-value + history fanout)
-//   * the metrics collector (one IncIn per publish, IncOut per Sent packet)
+//   - the in-process pubsub bus (for GraphQL topicUpdates)
+//   - the archive group manager (for last-value + history fanout)
+//   - the metrics collector (one IncIn per publish, IncOut per Sent packet)
 type StorageHook struct {
 	mqtt.HookBase
 	store            *stores.Storage
@@ -37,6 +42,35 @@ type StorageHook struct {
 	// itself but receives back from WinCC OA (native topics branch); the
 	// bus and archives see only the delivered message.
 	replicated func(topic string) bool
+
+	// PeerLink replicas (pk.Forward != nil). Set before the server starts.
+	peer PeerPolicy
+	// retainedViaOA reports sources whose link has oaRetained: WinCC OA
+	// already stores and replicates their MMQRetained writes, so a retained
+	// replica only updates the in-memory view of the oastore (ApplyCached).
+	retainedViaOA func(source string) bool
+	replicas      *replicaRetained
+}
+
+// PeerPolicy is how the broker hooks treat PeerLink replicas, from
+// PeerLink.Receive. Live delivery and the retained store always get them.
+type PeerPolicy struct {
+	Bus     bool // pubsub bus: GraphQL topicUpdates, scripts, REST SSE, bridges
+	Archive bool // archive groups
+	Queue   bool // offline queues of persistent sessions (QueueHook)
+}
+
+// DefaultPeerPolicy is the policy of an unset PeerLink.Receive section.
+func DefaultPeerPolicy() PeerPolicy { return PeerPolicy{Bus: true, Archive: true} }
+
+// NewPeerPolicy reads the policy from the PeerLink receive settings.
+func NewPeerPolicy(r config.PeerLinkReceive) PeerPolicy {
+	return PeerPolicy{Bus: r.GetBus(), Archive: r.GetArchive(), Queue: r.Queue}
+}
+
+// retainedCache is implemented by the WinCC OA retained store.
+type retainedCache interface {
+	ApplyCached(msgs []stores.BrokerMessage)
 }
 
 // ArchiveDispatcher receives every published message for archive-group fanout.
@@ -52,11 +86,21 @@ type ArchiveDispatcher interface {
 type MetricsCounter interface {
 	IncIn()
 	IncOut()
+	IncBusIn()
 }
 
 func NewStorageHook(s *stores.Storage, bus *pubsub.Bus, subs *topic.SubscriptionIndex, dispatcher ArchiveDispatcher, nodeID string, logger *slog.Logger, m MetricsCounter, retainedInMemory bool, server *mqtt.Server) *StorageHook {
-	return &StorageHook{store: s, bus: bus, subs: subs, archives: dispatcher, logger: logger, nodeID: nodeID, metrics: m, retainedInMemory: retainedInMemory, server: server}
+	return &StorageHook{store: s, bus: bus, subs: subs, archives: dispatcher, logger: logger, nodeID: nodeID, metrics: m, retainedInMemory: retainedInMemory, server: server,
+		peer: DefaultPeerPolicy(), replicas: newReplicaRetained()}
 }
+
+// SetPeerPolicy sets how PeerLink replicas reach the bus and the archives.
+// Call before the server starts.
+func (h *StorageHook) SetPeerPolicy(p PeerPolicy) { h.peer = p }
+
+// SetRetainedViaOA sets the per-source oaRetained predicate of PeerLink.
+// Call before the server starts; it must be cheap (one atomic load).
+func (h *StorageHook) SetRetainedViaOA(fn func(source string) bool) { h.retainedViaOA = fn }
 
 func (h *StorageHook) ID() string { return "monstermq-storage" }
 
@@ -276,6 +320,10 @@ func (h *StorageHook) OnPacketSent(_ *mqtt.Client, pk packets.Packet, _ []byte) 
 }
 
 func (h *StorageHook) OnPublished(cl *mqtt.Client, pk packets.Packet) {
+	if f := pk.Forward; f != nil {
+		h.publishedReplica(&pk, f)
+		return
+	}
 	if h.metrics != nil {
 		h.metrics.IncIn()
 	}
@@ -298,9 +346,46 @@ func (h *StorageHook) OnPublished(cl *mqtt.Client, pk packets.Packet) {
 		ClientID:    cl.ID,
 		Time:        time.Now().UTC(),
 	}
-	if pk.Properties.MessageExpiryInterval > 0 {
-		v := pk.Properties.MessageExpiryInterval
-		msg.MessageExpiryInterval = &v
+	h.dispatch(msg, pk.Properties.MessageExpiryInterval, hasBus, hasArchive)
+}
+
+// publishedReplica dispatches a PeerLink replica with the publisher, time and
+// dup flag of the source. Wills and snapshot values stay off the bus and the
+// archives, as local wills do.
+func (h *StorageHook) publishedReplica(pk *packets.Packet, f *packets.Forward) {
+	if h.metrics != nil {
+		h.metrics.IncBusIn()
+	}
+	if f.Will || f.Snapshot {
+		return
+	}
+	hasBus := h.peer.Bus && h.bus != nil && h.bus.HasSubscribers()
+	hasArchive := h.peer.Archive && h.archives != nil && h.archives.HasGroups()
+	if !hasBus && !hasArchive {
+		return
+	}
+	t := time.Now().UTC()
+	if f.TimeNs > 0 {
+		t = time.Unix(0, f.TimeNs).UTC()
+	}
+	msg := stores.BrokerMessage{
+		MessageUUID: replicaUUID(f),
+		MessageID:   pk.PacketID,
+		TopicName:   pk.TopicName,
+		Payload:     append([]byte(nil), pk.Payload...),
+		QoS:         pk.FixedHeader.Qos,
+		IsRetain:    pk.FixedHeader.Retain,
+		IsDup:       f.Dup,
+		ClientID:    f.ClientID,
+		Time:        t,
+		OriginNode:  f.SourceNode,
+	}
+	h.dispatch(msg, pk.Properties.MessageExpiryInterval, hasBus, hasArchive)
+}
+
+func (h *StorageHook) dispatch(msg stores.BrokerMessage, expiry uint32, hasBus, hasArchive bool) {
+	if expiry > 0 {
+		msg.MessageExpiryInterval = &expiry
 	}
 	if hasBus {
 		h.bus.Publish(msg)
@@ -312,9 +397,15 @@ func (h *StorageHook) OnPublished(cl *mqtt.Client, pk packets.Packet) {
 
 // OnRetainMessage is called when a message with retain=true is published. r=1 set, r=-1 clear.
 func (h *StorageHook) OnRetainMessage(cl *mqtt.Client, pk packets.Packet, r int64) {
-	ctx := context.Background()
+	if f := pk.Forward; f != nil {
+		h.retainReplica(&pk, f, r)
+		return
+	}
+	// A local write wins over a replica value of the topic still waiting
+	// for its flush, and lands after a flush already writing it.
+	h.replicas.supersede(pk.TopicName, true)
 	if r == -1 || len(pk.Payload) == 0 {
-		_ = h.store.Retained.DelAll(ctx, []string{pk.TopicName})
+		h.writeRetained(stores.BrokerMessage{TopicName: pk.TopicName})
 		return
 	}
 	clientID, username := "", ""
@@ -322,19 +413,49 @@ func (h *StorageHook) OnRetainMessage(cl *mqtt.Client, pk packets.Packet, r int6
 		clientID = cl.ID
 		username = string(cl.Properties.Username)
 	}
+	msg := retainedMessage(&pk, clientID, username)
+	msg.MessageUUID = uuid.NewString()
+	h.writeRetained(msg)
+}
+
+// retainReplica stores a retained PeerLink replica. The row keeps the source
+// publisher and the backdated receiver-frame time, from which the expiry of a
+// later retained delivery is rebuilt. DB stores get the replicas of a source
+// in one write per FlushReplicas.
+func (h *StorageHook) retainReplica(pk *packets.Packet, f *packets.Forward, r int64) {
+	msg := stores.BrokerMessage{TopicName: pk.TopicName, OriginNode: f.SourceNode}
+	if r != -1 && len(pk.Payload) > 0 {
+		msg = retainedMessage(pk, f.ClientID, f.Username)
+		msg.MessageUUID = replicaUUID(f)
+		msg.OriginNode = f.SourceNode
+	}
+	if h.retainedViaOA != nil && h.retainedViaOA(f.SourceNode) {
+		if c, ok := h.store.Retained.(retainedCache); ok {
+			h.replicas.supersede(pk.TopicName, false)
+			c.ApplyCached([]stores.BrokerMessage{msg})
+			return
+		}
+	}
+	if h.retainedInMemory {
+		h.writeRetained(msg)
+		return
+	}
+	h.replicas.add(f.SourceNode, msg)
+}
+
+func retainedMessage(pk *packets.Packet, clientID, username string) stores.BrokerMessage {
 	createdAt := time.Now().UTC()
 	if pk.Created > 0 {
 		createdAt = time.Unix(pk.Created, 0).UTC()
 	}
 	msg := stores.BrokerMessage{
-		MessageUUID: uuid.NewString(),
-		TopicName:   pk.TopicName,
-		Payload:     append([]byte(nil), pk.Payload...),
-		QoS:         pk.FixedHeader.Qos,
-		IsRetain:    true,
-		ClientID:    clientID,
-		Username:    username,
-		Time:        createdAt,
+		TopicName: pk.TopicName,
+		Payload:   append([]byte(nil), pk.Payload...),
+		QoS:       pk.FixedHeader.Qos,
+		IsRetain:  true,
+		ClientID:  clientID,
+		Username:  username,
+		Time:      createdAt,
 	}
 	if pk.Expiry > pk.Created && pk.Created > 0 {
 		v := uint32(pk.Expiry - pk.Created)
@@ -343,9 +464,222 @@ func (h *StorageHook) OnRetainMessage(cl *mqtt.Client, pk packets.Packet, r int6
 		v := pk.Properties.MessageExpiryInterval
 		msg.MessageExpiryInterval = &v
 	}
-	if err := h.store.Retained.AddAll(ctx, []stores.BrokerMessage{msg}); err != nil {
-		h.logger.Warn("retained persist failed", "topic", pk.TopicName, "err", err)
+	return msg
+}
+
+// writeRetained sets a retained value, or deletes it when the payload is empty.
+func (h *StorageHook) writeRetained(msg stores.BrokerMessage) {
+	ctx := context.Background()
+	if len(msg.Payload) == 0 {
+		_ = h.store.Retained.DelAll(ctx, []string{msg.TopicName})
+		return
 	}
+	if err := h.store.Retained.AddAll(ctx, []stores.BrokerMessage{msg}); err != nil {
+		h.logger.Warn("retained persist failed", "topic", msg.TopicName, "err", err)
+	}
+}
+
+// FlushReplicas writes the retained replicas of source collected since its
+// last flush: the last value per topic, with one AddAll and one DelAll. The
+// PeerLink injector calls it before every COMMIT. When a write fails, its
+// values go back to the pending set, unless a newer local or replica value of
+// the topic arrived meanwhile, and the next flush retries them; the error is
+// returned for the caller to count and log.
+func (h *StorageHook) FlushReplicas(source string) error {
+	h.replicas.flushMu.Lock()
+	defer h.replicas.flushMu.Unlock()
+	pending := h.replicas.take(source)
+	if len(pending) == 0 {
+		return nil
+	}
+	var setsFailed, delsFailed bool
+	defer func() {
+		h.replicas.done(source, pending, func(msg stores.BrokerMessage) bool {
+			if len(msg.Payload) == 0 {
+				return delsFailed
+			}
+			return setsFailed
+		})
+	}()
+	var sets []stores.BrokerMessage
+	var dels []string
+	for t, msg := range pending {
+		if len(msg.Payload) == 0 {
+			dels = append(dels, t)
+		} else {
+			sets = append(sets, msg)
+		}
+	}
+	ctx := context.Background()
+	var errs []error
+	if len(sets) > 0 {
+		if err := h.store.Retained.AddAll(ctx, sets); err != nil {
+			setsFailed = true
+			errs = append(errs, fmt.Errorf("%d retained sets: %w", len(sets), err))
+		}
+	}
+	if len(dels) > 0 {
+		if err := h.store.Retained.DelAll(ctx, dels); err != nil {
+			delsFailed = true
+			errs = append(errs, fmt.Errorf("%d retained deletes: %w", len(dels), err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// PendingReplicas reports how many retained replica topics of source wait
+// for FlushReplicas.
+func (h *StorageHook) PendingReplicas(source string) int {
+	return h.replicas.pendingCount(source)
+}
+
+// replicaUUID derives the message UUID of a replica from its global record
+// id (source, epoch, offset) instead of reading crypto/rand per message:
+// fnv64a(source) xor epoch, then the offset, as a version 8 (custom) UUID.
+// Snapshot values have no offset and get a random one.
+func replicaUUID(f *packets.Forward) string {
+	if f.Offset == 0 {
+		return uuid.NewString()
+	}
+	h := uint64(14695981039346656037)
+	for i := 0; i < len(f.SourceNode); i++ {
+		h ^= uint64(f.SourceNode[i])
+		h *= 1099511628211
+	}
+	var u uuid.UUID
+	binary.BigEndian.PutUint64(u[:8], h^f.Epoch)
+	binary.BigEndian.PutUint64(u[8:], f.Offset)
+	u[6] = u[6]&0x0f | 0x80
+	u[8] = u[8]&0x3f | 0x80
+	return u.String()
+}
+
+// replicaRetained holds the retained replica writes of each source in DB
+// modes until FlushReplicas. The newest arrival of a topic wins: a replica
+// drops older pending values of other sources, a local write drops all, and
+// flushes run one at a time, so a running flush cannot overwrite a value that
+// arrived after it started. Local retained writes check active first, so they
+// cost one atomic load while nothing is pending.
+type replicaRetained struct {
+	flushMu  sync.Mutex // serializes flushes
+	mu       sync.Mutex
+	flushed  *sync.Cond                                 // a flush finished
+	pending  map[string]map[string]stores.BrokerMessage // source -> topic -> last value
+	flushing map[string]int                             // topic -> flushes writing it
+	newer    map[string]struct{}                        // flushing topics a local write superseded
+	active   atomic.Int64                               // pending entries + flushing entries
+}
+
+func newReplicaRetained() *replicaRetained {
+	r := &replicaRetained{
+		pending:  map[string]map[string]stores.BrokerMessage{},
+		flushing: map[string]int{},
+		newer:    map[string]struct{}{},
+	}
+	r.flushed = sync.NewCond(&r.mu)
+	return r
+}
+
+func (r *replicaRetained) add(source string, msg stores.BrokerMessage) {
+	r.mu.Lock()
+	for src, m := range r.pending {
+		if _, ok := m[msg.TopicName]; ok && src != source {
+			delete(m, msg.TopicName)
+			r.active.Add(-1)
+		}
+	}
+	m := r.pending[source]
+	if m == nil {
+		m = map[string]stores.BrokerMessage{}
+		r.pending[source] = m
+	}
+	if _, ok := m[msg.TopicName]; !ok {
+		r.active.Add(1)
+	}
+	m[msg.TopicName] = msg
+	r.mu.Unlock()
+}
+
+// supersede drops the pending replica values of topic and, with wait, waits
+// for flushes that are writing it, so the write that follows lands last.
+func (r *replicaRetained) supersede(topic string, wait bool) {
+	if r.active.Load() == 0 {
+		return
+	}
+	r.mu.Lock()
+	for _, m := range r.pending {
+		if _, ok := m[topic]; ok {
+			delete(m, topic)
+			r.active.Add(-1)
+		}
+	}
+	if r.flushing[topic] > 0 {
+		// A failed flush must not put its older value back after this write.
+		r.newer[topic] = struct{}{}
+	}
+	for wait && r.flushing[topic] > 0 {
+		r.flushed.Wait()
+	}
+	r.mu.Unlock()
+}
+
+func (r *replicaRetained) take(source string) map[string]stores.BrokerMessage {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	m := r.pending[source]
+	if len(m) == 0 {
+		return nil
+	}
+	delete(r.pending, source)
+	for t := range m {
+		r.flushing[t]++
+	}
+	return m
+}
+
+// done ends a flush of source. Values whose write failed go back to the
+// pending set of source unless a newer value of the topic is pending or a
+// local write superseded it during the flush.
+func (r *replicaRetained) done(source string, m map[string]stores.BrokerMessage, failed func(stores.BrokerMessage) bool) {
+	r.mu.Lock()
+	requeued := 0
+	for t, msg := range m {
+		if r.flushing[t]--; r.flushing[t] <= 0 {
+			delete(r.flushing, t)
+		}
+		_, superseded := r.newer[t]
+		if r.flushing[t] == 0 {
+			delete(r.newer, t)
+		}
+		if !failed(msg) || superseded || r.pendingTopic(t) {
+			continue
+		}
+		p := r.pending[source]
+		if p == nil {
+			p = map[string]stores.BrokerMessage{}
+			r.pending[source] = p
+		}
+		p[t] = msg
+		requeued++
+	}
+	r.active.Add(-int64(len(m) - requeued))
+	r.flushed.Broadcast()
+	r.mu.Unlock()
+}
+
+func (r *replicaRetained) pendingTopic(t string) bool {
+	for _, m := range r.pending {
+		if _, ok := m[t]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *replicaRetained) pendingCount(source string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.pending[source])
 }
 
 // OnSelectRetainedMessages returns matching retained messages from the store.

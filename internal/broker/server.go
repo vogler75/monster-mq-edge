@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"path/filepath"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -29,6 +30,7 @@ import (
 	"monstermq.io/edge/internal/mcp"
 	"monstermq.io/edge/internal/metrics"
 	"monstermq.io/edge/internal/oahost"
+	"monstermq.io/edge/internal/peerlink"
 	"monstermq.io/edge/internal/pubsub"
 	"monstermq.io/edge/internal/redfish"
 	"monstermq.io/edge/internal/restapi"
@@ -66,7 +68,17 @@ type Server struct {
 	hmiSync     *hmi.SyncService
 	storageHook *StorageHook
 	native      *winccoanative.Service
+	peer        *peerlink.Manager
 	refreshStop context.CancelFunc
+	// peerStatus wakes the native status refresher after a PeerLink state
+	// change; nil unless PeerLink and the native namespace are both on.
+	peerStatus     chan struct{}
+	peerStatusStop context.CancelFunc
+	peerStatusDone chan struct{}
+	// publishersStopped/gqlStopped keep the PeerLink shutdown order from
+	// stopping a subsystem twice.
+	publishersStopped bool
+	gqlStopped        bool
 	// stopMu guards the stop functions set by Serve and read by Close,
 	// which run on different goroutines.
 	stopMu       sync.Mutex
@@ -114,6 +126,13 @@ func NewWithOptions(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus, o
 
 func build(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus, opts Options, undo *[]func()) (*Server, error) {
 	ctx := context.Background()
+
+	// Process-wide soft limit; set here so the standalone binary and the
+	// embedded manager (which inherits its environment) both honour it.
+	if limit := cfg.Runtime.MemoryLimitBytes(); limit > 0 {
+		debug.SetMemoryLimit(limit)
+		logger.Info("runtime memory limit", "mb", cfg.Runtime.MemoryLimitMB)
+	}
 
 	// 1. Storage — picks the backend based on DefaultStoreType.
 	// SQLITE additionally exposes a *DB handle so the archive manager can
@@ -269,6 +288,25 @@ func build(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus, opts Optio
 		}
 	}
 
+	// PeerLink (plan-peerlink 6.2). Resolved before the native service so
+	// its status object can be wired; the manager is built after the stores
+	// and the engine exist.
+	var peerSetup *config.PeerLinkSetup
+	var pl *peerlink.Manager
+	if cfg.PeerLink.Enabled {
+		setup, err := cfg.ResolvePeerLink()
+		if err != nil {
+			return nil, err
+		}
+		for _, msg := range setup.Infos {
+			logger.Info(msg)
+		}
+		for _, msg := range setup.Warnings {
+			logger.Warn(msg)
+		}
+		peerSetup = setup
+	}
+
 	// Native WinCC OA namespace. Added before the storage hook so accepted
 	// commands are consumed (not archived or delivered) and rejected
 	// filters never reach persistence.
@@ -281,6 +319,7 @@ func build(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus, opts Optio
 			ReconcileInterval: opts.NativeReconcile,
 			AllowRootWildcard: cfg.AllowRootWildcard(),
 			TopicDPNames:      cfg.WinCCOaNative.TopicDpNames == config.WinCCOaTopicDpName,
+			PeerLinkStatus:    peerLinkNativeStatus(peerSetup != nil, &pl),
 			SessionExists: func(clientID string) bool {
 				if _, ok := server.Clients.Get(clientID); ok {
 					return true
@@ -318,13 +357,66 @@ func build(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus, opts Optio
 	if nativeOn && cfg.WinCCOaNative.Namespace {
 		storageHook.replicated = func(t string) bool { return names.Classify(t) == winccoanative.KindTopics }
 	}
+	var queueOpts []QueueHookOption
+	var peerStatus chan struct{}
+	if peerSetup != nil {
+		policy := NewPeerPolicy(cfg.PeerLink.Receive)
+		storageHook.SetPeerPolicy(policy)
+		queueOpts = append(queueOpts, WithPeerLink(policy, cfg.NodeID, peerSetup.NodeID))
+		deps := peerlink.Deps{
+			Config:           cfg.PeerLink,
+			Setup:            peerSetup,
+			Server:           server,
+			MaxMessageSize:   cfg.MaxMessageSize,
+			HMISyncBaseTopic: cfg.HMI.SyncBaseTopic,
+			RetainedClass:    peerLinkRetainedClass(cfg.RetainedStore()),
+			NamespaceRoot:    peerLinkNamespaceRoot(nativeOn && cfg.WinCCOaNative.Namespace, names.Root),
+			Retained: &peerRetained{
+				engine: server,
+				store:  storage.Retained,
+				hook:   storageHook,
+				memory: retainedInMemory,
+			},
+			Logger: logger,
+		}
+		if native != nil {
+			deps.OASystem = native.LocalSystem
+			peerStatus = make(chan struct{}, 1)
+			deps.OnStateChange = func() {
+				select {
+				case peerStatus <- struct{}{}:
+				default:
+				}
+			}
+		}
+		if collector != nil {
+			deps.Metrics = collector
+		}
+		m, err := peerlink.New(deps)
+		if err != nil {
+			return nil, err
+		}
+		*undo = append(*undo, func() { _ = m.Close() })
+		pl = m
+		storageHook.SetRetainedViaOA(pl.RetainedViaOA)
+		// Before StorageHook and QueueHook: the capture append runs ahead of
+		// the potentially blocking queue write in OnPublished.
+		if err := server.AddHook(pl.Hook(), nil); err != nil {
+			return nil, fmt.Errorf("add peerlink hook: %w", err)
+		}
+		if addr := pl.Addr(); addr != "" {
+			logger.Info("peerlink listener", "address", addr, "nodeId", pl.NodeID())
+		}
+		warnPeerLinkDevices(ctx, cfg, storage, peerSetup, logger)
+	}
+
 	if err := server.AddHook(storageHook, nil); err != nil {
 		return nil, fmt.Errorf("add storage hook: %w", err)
 	}
 
 	if cfg.QueuedMessagesEnabled {
 		logger.Info("queued messages: enabled", "store", cfg.QueueStore(), "max", cfg.GetMaxQueueMessages())
-		if err := server.AddHook(NewQueueHook(storage, subs, server, logger, cfg.GetMaxQueueMessages()), nil); err != nil {
+		if err := server.AddHook(NewQueueHook(storage, subs, server, logger, cfg.GetMaxQueueMessages(), queueOpts...), nil); err != nil {
 			return nil, fmt.Errorf("add queue hook: %w", err)
 		}
 	} else {
@@ -399,7 +491,8 @@ func build(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus, opts Optio
 	}
 	var bridges *mqttclient.Manager
 	if cfg.Features.MqttClient {
-		bridges = mqttclient.NewManager(storage.DeviceConfig, publishFn, &mqttclient.BusAdapter{Bus: bus}, cfg.NodeID, logger)
+		busAdapter := &mqttclient.BusAdapter{Bus: bus, BridgeOutbound: cfg.PeerLink.Enabled && cfg.PeerLink.Receive.BridgeOutbound}
+		bridges = mqttclient.NewManager(storage.DeviceConfig, publishFn, busAdapter, cfg.NodeID, logger)
 		if collector != nil {
 			bridges.SetCounters(collector.IncBridgeIn, collector.IncBridgeOut)
 		}
@@ -507,7 +600,7 @@ func build(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus, opts Optio
 		storage: storage, bus: bus, subs: subs, archives: archives, authCache: authCache,
 		collector: collector, bridges: bridges, winCCUa: winCCUa, winCCOa: winCCOa, rtspCameras: rtspCameras, scripts: scripts, gqlSrv: gqlSrv,
 		mcpSrv: mcpSrv, redfishMgr: redfishMgr, hostMonitor: hostMonitor, hmiSync: hmiSync,
-		storageHook: storageHook, native: native, refreshStop: refreshStop,
+		storageHook: storageHook, native: native, peer: pl, peerStatus: peerStatus, refreshStop: refreshStop,
 	}, nil
 }
 
@@ -676,6 +769,14 @@ func (s *Server) Serve() error {
 			return fmt.Errorf("winccoa native start: %w", err)
 		}
 	}
+	if s.peer != nil {
+		// After startNative: the local OA system name is known before any
+		// HELLO is sent or answered. Start does not block.
+		if err := s.peer.Start(); err != nil {
+			return fmt.Errorf("peerlink start: %w", err)
+		}
+		s.startPeerStatus()
+	}
 	if s.collector != nil {
 		metricsCtx, metricsStop := context.WithCancel(context.Background())
 		s.stopMu.Lock()
@@ -756,11 +857,72 @@ func (s *Server) Serve() error {
 }
 
 func (s *Server) Close() error {
+	if s.peer != nil {
+		s.closePeerLink()
+	}
 	if s.native != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		s.native.Stop(ctx)
 		cancel()
 	}
+	s.stopPublishers()
+	s.stopMu.Lock()
+	metricsStop, retainedStop := s.metricsStop, s.retainedStop
+	s.stopMu.Unlock()
+	if metricsStop != nil {
+		metricsStop()
+	}
+	if s.collector != nil {
+		s.collector.Stop()
+	}
+	s.stopGraphQL()
+	if s.archives != nil {
+		s.archives.Stop()
+	}
+	if retainedStop != nil {
+		retainedStop()
+	}
+	if s.refreshStop != nil {
+		s.refreshStop()
+	}
+	if err := s.mqtt.Close(); err != nil {
+		return err
+	}
+	if s.storage != nil {
+		return s.storage.Close()
+	}
+	return nil
+}
+
+// closePeerLink runs PeerLink shutdown steps 1-6 of plan 6.2: pullers stop
+// gracefully, wills are no longer captured, the MQTT listeners close so
+// clients fail over, the internal publishers stop, the log drains to a fixed
+// target, and the peer server closes.
+func (s *Server) closePeerLink() {
+	stopCtx, cancelStop := context.WithTimeout(context.Background(), 10*time.Second)
+	s.peer.StopPullers(stopCtx)
+	cancelStop()
+	s.peer.BeginDrain()
+	s.mqtt.CloseListeners()
+	s.stopPublishers()
+	s.stopGraphQL()
+	s.stopPeerStatus()
+	// Drain has its own budget: Log.DrainOnShutdownMs plus a margin for the
+	// GOAWAYs, independent of how long the pullers took to stop.
+	drain := time.Duration(s.cfg.PeerLink.Log.GetDrainOnShutdownMs())*time.Millisecond + 5*time.Second
+	drainCtx, cancelDrain := context.WithTimeout(context.Background(), drain)
+	s.peer.Drain(drainCtx)
+	cancelDrain()
+	_ = s.peer.Close()
+}
+
+// stopPublishers stops the subsystems that publish through the inline
+// client. It runs once.
+func (s *Server) stopPublishers() {
+	if s.publishersStopped {
+		return
+	}
+	s.publishersStopped = true
 	if s.bridges != nil {
 		s.bridges.Stop()
 	}
@@ -787,36 +949,18 @@ func (s *Server) Close() error {
 		defer cancel()
 		_ = s.redfishMgr.Stop(ctx)
 	}
-	s.stopMu.Lock()
-	metricsStop, retainedStop := s.metricsStop, s.retainedStop
-	s.stopMu.Unlock()
-	if metricsStop != nil {
-		metricsStop()
+}
+
+// stopGraphQL stops the GraphQL/HTTP server, which also serves the REST and
+// MCP publish APIs. It runs once.
+func (s *Server) stopGraphQL() {
+	if s.gqlStopped || s.gqlSrv == nil {
+		return
 	}
-	if s.collector != nil {
-		s.collector.Stop()
-	}
-	if s.gqlSrv != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = s.gqlSrv.Stop(ctx)
-	}
-	if s.archives != nil {
-		s.archives.Stop()
-	}
-	if retainedStop != nil {
-		retainedStop()
-	}
-	if s.refreshStop != nil {
-		s.refreshStop()
-	}
-	if err := s.mqtt.Close(); err != nil {
-		return err
-	}
-	if s.storage != nil {
-		return s.storage.Close()
-	}
-	return nil
+	s.gqlStopped = true
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = s.gqlSrv.Stop(ctx)
 }
 
 // Storage exposes the store stack for GraphQL resolvers (M6+).
@@ -832,3 +976,6 @@ func (s *Server) WinCCOa() *winccoa.Manager { return s.winCCOa }
 
 // Native returns the WinCC OA namespace service (nil when not embedded).
 func (s *Server) Native() *winccoanative.Service { return s.native }
+
+// PeerLink returns the PeerLink manager (nil when PeerLink is disabled).
+func (s *Server) PeerLink() *peerlink.Manager { return s.peer }

@@ -12,11 +12,12 @@ Recorded 2026-09-29 by the repository owner.
 | Decision | Outcome |
 |---|---|
 | CGO exception | Approved for the opt-in embedding library only (`embed/cabi`, build tag `winccoa_embed`). `make build`, `build-arm64`, `build-armv7` stay `CGO_ENABLED=0` and must not import that package. |
-| Dual-node exception | Not granted. M6 (AC-27..AC-33) is deferred. No redundancy ABI is exported. |
+| Dual-node exception | Not required since 2026-10-03 (AGENTS.md rule removed); PeerLink is M6a; AC-27..AC-33 stay deferred. No redundancy ABI is exported. |
 | Scope | M0..M5: embedding, native queries, native datapoint stores, namespace/subscriptions, typed writes. |
 | Native storage | New OA datapoint layout (`MMQConfigs`, `MMQSessions`) is approved as an opt-in store for device config, archive/database-connection config and sessions. Existing SQLite/Postgres/MongoDB layouts are unchanged. The Java broker is not required to read the OA layout. |
 | GraphQL contract | Unchanged. No SDL or resolver change. Native transport is selected by host bootstrap configuration (section 6), not by a GraphQL field. |
-| Availability/durability | Single node. No failover RPO/RTO applies. Store success means OA-confirmed `dpSet` answer (section 5). |
+| Availability/durability | Native scope single node; non-OA publishes may be forwarded by PeerLink (M6a, RPO per plan-peerlink 15.4). Store success means OA-confirmed `dpSet` answer (section 5). |
+| PeerLink (M6a, recorded 2026-10-03) | In-memory, pull-based forwarding of publishes between MonsterMQ Edge brokers ([plan-peerlink.md](plan-peerlink.md)). It supersedes only the "non-OA publishes" paragraph of [plan-winccoa-broker-embedded-manager.md](plan-winccoa-broker-embedded-manager.md) §7.2, and only for in-memory forwarding. AC-27..AC-33 stay deferred; AC-28 (PUBACK barrier) and AC-30 (full recovery on overflow) are explicitly replaced by plan-peerlink sections 15 and 8.5. While native mode is active, `<TopicRoot>` is never forwarded and each node's status stays local. The entry also covers the optional `peerLink` object in the native status JSON (plan-peerlink 20.2). No ABI, C++ manager or SDL change. |
 
 ## 2. Verified SDK target (AC-02)
 

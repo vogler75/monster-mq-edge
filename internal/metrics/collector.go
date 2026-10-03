@@ -23,6 +23,8 @@ type Collector struct {
 	out           atomic.Int64
 	mqttBridgeIn  atomic.Int64
 	mqttBridgeOut atomic.Int64
+	busIn         atomic.Int64
+	busOut        atomic.Int64
 
 	mu     sync.RWMutex
 	latest BrokerSnapshot
@@ -35,6 +37,8 @@ type BrokerSnapshot struct {
 	MessagesOut       float64 `json:"messagesOut"`
 	MqttClientIn      float64 `json:"mqttClientIn"`
 	MqttClientOut     float64 `json:"mqttClientOut"`
+	MessageBusIn      float64 `json:"messageBusIn"`
+	MessageBusOut     float64 `json:"messageBusOut"`
 	NodeSessionCount  int     `json:"nodeSessionCount"`
 	SubscriptionCount int     `json:"subscriptionCount"`
 	QueuedMessages    int64   `json:"queuedMessagesCount"`
@@ -54,6 +58,13 @@ func (c *Collector) IncIn()             { c.in.Add(1) }
 func (c *Collector) IncOut()            { c.out.Add(1) }
 func (c *Collector) IncBridgeIn(n int)  { c.mqttBridgeIn.Add(int64(n)) }
 func (c *Collector) IncBridgeOut(n int) { c.mqttBridgeOut.Add(int64(n)) }
+
+// IncBusIn counts one PeerLink replica applied on this node (messageBusIn);
+// replicas do not count as messagesIn.
+func (c *Collector) IncBusIn() { c.busIn.Add(1) }
+
+// IncBusOut counts n PeerLink records served to peers (messageBusOut).
+func (c *Collector) IncBusOut(n int) { c.busOut.Add(int64(n)) }
 
 func (c *Collector) Latest() BrokerSnapshot {
 	c.mu.RLock()
@@ -83,6 +94,8 @@ func (c *Collector) Start(ctx context.Context, counts func() (sessions, subs int
 				outN := c.out.Swap(0)
 				biN := c.mqttBridgeIn.Swap(0)
 				boN := c.mqttBridgeOut.Swap(0)
+				busInN := c.busIn.Swap(0)
+				busOutN := c.busOut.Swap(0)
 				sessions, subs, queued := 0, 0, int64(0)
 				if counts != nil {
 					sessions, subs, queued = counts()
@@ -92,6 +105,8 @@ func (c *Collector) Start(ctx context.Context, counts func() (sessions, subs int
 					MessagesOut:       float64(outN) / c.interval.Seconds(),
 					MqttClientIn:      float64(biN) / c.interval.Seconds(),
 					MqttClientOut:     float64(boN) / c.interval.Seconds(),
+					MessageBusIn:      float64(busInN) / c.interval.Seconds(),
+					MessageBusOut:     float64(busOutN) / c.interval.Seconds(),
 					NodeSessionCount:  sessions,
 					SubscriptionCount: subs,
 					QueuedMessages:    queued,

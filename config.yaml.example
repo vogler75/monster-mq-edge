@@ -128,3 +128,85 @@ QueueBatchSize: 1000
 # QueueFlushIntervalMs -> flush interval in milliseconds for buffered queue writes
 QueueFlushIntervalMs: 250
 
+
+# Runtime -> Go runtime settings of the whole process.
+Runtime:
+  MemoryLimitMB: 0                  # soft memory limit (debug.SetMemoryLimit); 0 = Go default
+
+# PeerLink -> pull-based in-memory forwarding of publishes between MonsterMQ
+# Edge brokers. Configure it on both sides: the consumer lists the source with
+# an Address, the source lists the consumer with Serve: true. Every topic is
+# forwarded except $-topics, Capture.Exclude and, when the broker runs with
+# WinCC OA native mode, the WinCC OA namespace. Unknown keys in this section
+# fail startup even while it is disabled. Peers must be authenticated (mTLS or
+# SharedSecrets over TLS) unless AllowUnauthenticatedPeers is set.
+PeerLink:
+  Enabled: false
+  AllowUnauthenticatedPeers: false  # only with Listener.AllowedNetworks and UserManagement disabled
+  Listener:                         # bound when any peer has Serve: true
+    Address: 0.0.0.0
+    Port: 1890
+    AllowedNetworks: []             # CIDR allow-list checked before TLS, e.g. ["10.10.0.0/24"]
+    MaxPreAuthPerIp: 2
+    AllowPlaintext: false           # TLS listener also accepts plaintext (TLS migration only)
+  Tls:                              # this node's identity and trust; paths may contain {NodeId}
+    Enabled: false                  # listener TLS and the default for dialers
+    CertPath: certs/peer-{NodeId}.pem
+    KeyPath: certs/peer-{NodeId}.key
+    TrustStorePath: certs/peer-ca.pem  # dedicated peer CA; empty = pins or secrets only
+    TrustStoreType: PEM             # PEM | PKCS12 (legacy ciphers only)
+    TrustStorePassword: ""
+    ClientAuth: NONE                # NONE | REQUEST | REQUIRED
+    IdentityFallback: NONE          # NONE | DNS | CN (identity is the URI SAN urn:monstermq:node:<NodeId>)
+    AutoGenerate: false             # create a self-signed peer certificate when the files are missing
+  SharedSecrets: []                 # group secrets (base64, >= 16 bytes), first = current; require TLS
+  KeepAliveSeconds: 10
+  Log:                              # in-memory log of the publishes offered to peers
+    MaxMessages: 2000000
+    MaxBytes: 268435456             # 256 MiB; the oldest records are dropped (and counted) when full
+    MaxRecordBytes: 0               # 0 = MaxMessageSize + 64 KiB
+    DrainOnShutdownMs: 2000         # on shutdown, wait for connected peers to catch up; 0 = off
+    NeverConnectedWarnSec: 300
+  Capture:
+    Wills: true                     # never the wills of this broker's own shutdown
+    Include: ["#"]
+    Exclude: null                   # null = [<HMI.SyncBaseTopic>/#]; [] forwards the HMI sync channel too
+    EchoSuppressMs: 0               # skip publishes that echo a replica within this window; 0 = off
+  Snapshot:
+    Mode: FILL                      # FILL (retained messages fill-if-absent on first contact) | OFF
+    MaxTopics: 1000000
+  Fetch:
+    MaxRecords: 4096
+    MaxBytes: 1048576
+    MaxWaitMs: 1000                 # long poll; 10 .. KeepAliveSeconds*1000-1
+    LingerMs: 0
+    Pipeline: 1                     # 1 | 2
+    CrcOnTls: false
+    ReconnectMaxMs: 30000
+  Receive:                          # how replicas from peers are applied here
+    Bus: true                       # scripts, REST SSE, GraphQL subscriptions, Redfish
+    BridgeOutbound: false           # MQTT bridges forward replicas (loop risk)
+    Archive: true                   # false if both nodes archive into one shared database
+    Queue: false                    # offline persistent sessions get replicas
+    SharedSubscriptions: SKIP       # SKIP | DELIVER
+    MarkReplicas: false             # add user property mmq-peer-src=<NodeId>
+    CatchUpRateFactor: 3            # 0 = no pacing while catching up
+    MaxApplyRate: 0                 # messages/s; 0 = off
+    MaxRecordAgeMs: 0               # 0 = off
+    MaxFrameBytes: 16842752         # 16 MiB + 64 KiB
+    InjectWorkers: 1                # reserved; values above 1 only log a WARN
+  Peers:                            # the entry whose NodeId equals this node's is ignored
+    - NodeId: edge-rpi-02
+      Address: "edge-rpi-02.local:1890"  # present: this node pulls from it
+      Serve: true                        # it may pull from this node
+      SharedSecrets: []                  # per-peer secrets; replace the group secrets
+      Tls:
+        Enabled: null                    # dialer TLS; null = PeerLink.Tls.Enabled
+        PinnedSha256: []                 # hex SHA-256 of the peer's SPKI or certificate
+        CertificateIdentity: ""
+        ServerName: ""                   # SNI only
+        RequireClientCert: false
+        InsecureSkipVerify: false        # the pull direction is then unauthenticated
+      Receive:
+        Include: ["#"]
+        Exclude: []

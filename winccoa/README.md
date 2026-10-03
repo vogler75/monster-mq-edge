@@ -321,6 +321,197 @@ published:
 - The broker's own retained store is not used for these topics. Shared
   subscriptions are not supported below `topics/`.
 
+## PeerLink for redundant pairs
+
+[PeerLink](../README.md#peerlink-forwarding-between-brokers) forwards MQTT
+publishes between the brokers of the two hosts of a redundant pair, in memory
+and in both directions. It is independent of the WinCC OA role: both brokers
+accept clients and forward (active-active), and nothing switches on a
+switchover.
+
+> The WinCC OA specific parts (the `oaRetained` link mode, the `peerLink`
+> status object and the device warnings) are implemented but not yet tested
+> against a live WinCC OA project. The general
+> [limitations](../README.md#limitations) apply; in particular, synchronise
+> both hosts with NTP, and with `RetainedStoreType: WINCCOA` concurrent
+> retained publishes of one topic are not serialized with their capture.
+
+**The namespace is never forwarded** while native mode is active
+(`WinCCOaNative.Enabled` and `Namespace`): WinCC OA mirrors `<TopicRoot>`
+itself (tag values, the topics branch), and each host's status topic stays
+local. Each broker also drops topics under the root the other host announces.
+Every other topic is forwarded, except `$` topics and `Capture.Exclude`.
+
+| | Topics branch (`winccoa/topics/...`) | PeerLink (all other topics) |
+|---|---|---|
+| Carried by | WinCC OA (`MMQTopic` datapoints) | Broker to broker, in memory |
+| Survives a restart of both hosts | Yes | No |
+| PUBACK | After WinCC OA confirmed the write | When the local broker accepted the message |
+| Throughput and latency | Bound by WinCC OA | Bound by the brokers |
+
+Use the topics branch for messages that must survive the loss of both hosts.
+
+### Configuration
+
+The same `PeerLink` block serves both hosts; only `NodeId` differs (see
+`monstermq.yaml.example`):
+
+```yaml
+NodeId: edge-oa-1                   # edge-oa-2 on the other host
+PeerLink:
+  Enabled: true
+  Tls: { Enabled: true, AutoGenerate: true, CertPath: "certs/peer-{NodeId}.pem", KeyPath: "certs/peer-{NodeId}.key" }
+  SharedSecrets: ["<base64 of 32 random bytes, same on both hosts: openssl rand -base64 32>"]
+  Log: { DrainOnShutdownMs: 5000 }  # planned stops: let the other host catch up
+  Peers:
+    - { NodeId: edge-oa-1, Address: "oa-host-a:1890" }
+    - { NodeId: edge-oa-2, Address: "oa-host-b:1890" }
+```
+
+- The `NodeId` must differ per host. Devices run on the host their `NodeId`
+  names, so changing a NodeId changes which devices run where: move device
+  and archive-group assignments in the same maintenance step.
+- The peers must authenticate each other: TLS with a shared secret as above,
+  or mTLS (main README). With `UserManagement.Enabled: true` there is no
+  unauthenticated option. Relative certificate paths resolve against the
+  project directory.
+- `DrainOnShutdownMs: 5000`: when `WCCOAmmq` stops, it waits up to 5 s for
+  the other host to pull what is left.
+- PeerLink is in memory. A planned stop of one host is lossless for
+  everything published before it, as long as the other host is connected and
+  catches up within `DrainOnShutdownMs`. A crash loses what the other host
+  had not pulled yet. The full table is in the main README under "Delivery
+  guarantees (RPO)".
+
+### Stores
+
+- **`RetainedStoreType: WINCCOA`** stays as it is: WinCC OA stores the
+  `MMQRetained` datapoints and replicates them between the two hosts. Both
+  hosts have the same system name, so their link runs in `oaRetained` mode: a
+  forwarded retained message updates only the receiver's in-memory view and
+  is not written a second time, and the retained snapshot on first contact is
+  skipped. After a restart each host loads `MMQRetained`, which WinCC OA kept
+  in sync. Between WinCC OA distributed systems (different system names) the
+  receiver writes its own `MMQRetained`. Two independent projects linked by
+  PeerLink need different system names: with the same name they are taken
+  for one system, and forwarded retained messages are not stored.
+- **`SessionStoreType: WINCCOA`** mirrors `MMQSessions` to both hosts. With
+  PeerLink enabled, a broker restores offline queueing at startup only for
+  persistent sessions that were last connected to it, not for clients that
+  are online on the other host.
+- **`ConfigStoreType: WINCCOA`** mirrors `MMQConfigs`: both hosts see the
+  same device configurations, which is why devices are assigned to one host
+  (below).
+
+### Writes on the passive host
+
+WinCC OA receives value changes made on the passive host but does not
+execute them. Every datapoint write of the broker on the passive host
+therefore has no effect:
+
+- a retained message published to the passive broker is not stored in
+  `MMQRetained`. It lives in the memory of both brokers (the active one gets
+  it through PeerLink) and is lost when both restart;
+- native writes (`.../set`) and topics-branch publishes
+  (`winccoa/topics/...`) sent to the passive broker are not executed;
+- writes of the other WINCCOA stores (`MMQSessions`, `MMQConfigs`,
+  `MMQUsers`) on the passive host are lost as well.
+
+Clients that write into WinCC OA, and configuration changes, have to use the
+broker on the active host. Forwarding these writes from the passive to the
+active host is a possible follow-up.
+
+### Devices and clients
+
+- Assign every device that publishes into the broker (MQTT bridges with
+  inbound subscriptions, WinCC UA/OA bridges, RTSP cameras, scripts) to one
+  host's `NodeId`. With `ConfigStoreType: WINCCOA` (or a shared PostgreSQL or
+  MongoDB database) a device with `local` or `*` runs on both hosts, and its
+  output arrives twice. If that host fails, the device's output stops until
+  the device is reassigned.
+- Outbound-only MQTT bridges run on both hosts (`*`) with
+  `Receive.BridgeOutbound: false` (the default): each host's bridge forwards
+  that host's own publishes. A bridge with both directions on one host needs
+  `BridgeOutbound: true` and a remote that is not the other host. That
+  setting applies to every bridge of the host, so a host with
+  `BridgeOutbound: true` must not also run `*` outbound-only bridges, or the
+  other host's publishes reach the remote twice.
+- Never bridge one host's broker to the other's.
+- Redfish gateways ignore `NodeId`: enable Redfish on one host only. Host
+  monitoring may run on both hosts as long as its `BaseTopic` contains
+  `{NodeId}` (the default).
+- An archive group that writes to a shared database belongs to one host, or
+  set `Receive.Archive: false`.
+- The broker logs a WARN at startup for devices that break these rules.
+- Clients may connect to both brokers at the same time. Keep a persistent
+  session on one host where possible, and give shared subscription groups
+  members on both hosts (`Receive.SharedSubscriptions: SKIP`). Use MQTT 5: on
+  a planned stop, clients get reason 0x8B (server shutting down) and can fail
+  over at once. After a network partition, retained values can differ between
+  the hosts (on each host the retained message applied last wins).
+
+### Monitoring
+
+The native status (`winccoa/systems/<System>`, retained JSON) gets a
+`peerLink` object, updated at most every 5 s and on every state change:
+
+```json
+{ "enabled": true,
+  "consumers": [{ "nodeId": "edge-oa-2", "state": "CONNECTED", "lag": 0, "lostTotal": 0 }],
+  "sources":   [{ "nodeId": "edge-oa-2", "state": "STREAMING", "lagRecords": 0, "gapLostTotal": 0,
+                 "sourceResets": 0, "retainedDiverged": 0, "lastError": "" }] }
+```
+
+`consumers` are the peers that pull from this host, `sources` the peers this
+host pulls from. The status topic is not forwarded, so each host reports its
+own view; it is the alarm surface for WinCC OA operators. The full counters
+are at `curl -s http://127.0.0.1:1890/peerlink/v1/status` on each host.
+
+### Rolling upgrade
+
+Upgrade one host at a time. Versions with the same major protocol version
+(`mmq-peer/1`) work together; every minor release is tested against the
+previous one.
+
+1. Check on both hosts that both links are up and the lag is 0 (`peerLink`
+   status: consumers `CONNECTED`, sources `STREAMING`).
+2. Stop `WCCOAmmq` on host A. The broker closes its MQTT listeners (clients
+   fail over to host B), stops its bridges and scripts, waits up to
+   `DrainOnShutdownMs` until host B has pulled the rest, and logs what it
+   could not serve (`shutdownUnserved`).
+3. Replace the manager on host A and start it. Host B pulls from A's new log;
+   A pulls what B collected while A was down.
+4. Wait until both links are up and the lag is 0 again, then repeat for
+   host B.
+
+While host A is down, host B keeps A's share in its log, bounded by
+`Log.MaxBytes` (`capacitySeconds` in the status); older records are dropped
+and counted. A new major protocol version must reach both hosts within that
+window: until then the link is refused (`GOAWAY version`).
+
+### Enabling TLS without losing the link
+
+A pair that links in plaintext (`AllowUnauthenticatedPeers` with
+`Listener.AllowedNetworks`, only possible with `UserManagement.Enabled:
+false`) moves to TLS in three steps. Each step is applied on host A, then on
+host B, with one restart at a time; each restart drains the connected peer,
+and both directions are never down at once.
+
+1. Enable listener TLS (`Tls.Enabled: true` with a certificate, or
+   `AutoGenerate: true`) together with `Listener.AllowPlaintext: true`. Keep
+   dialing in plaintext with `Tls: { Enabled: false }` on the peer entry.
+2. Switch the dialer to TLS: drop the peer's `Tls.Enabled: false` and give it
+   a way to verify the other host (`PinnedSha256` with the `spkiSha256` the
+   other host logs at startup, or `Tls.TrustStorePath`).
+3. Set `Listener.AllowPlaintext: false`.
+
+A shared secret is introduced in one go: a host that has it refuses a peer
+without it, in both directions, so the link is down until both hosts run with
+the secret; meanwhile each host keeps the other's share in its log.
+`SharedSecrets` and `PinnedSha256` are lists, so later rotations are lossless:
+add the new value on both hosts, move it to the first position on both, then
+remove the old one.
+
 ## Load and soak
 
 - `go build -o build/mmqload ./cmd/mmqload`, create the load datapoints with
@@ -339,7 +530,11 @@ published:
   sizes, interest limit) are in spec section 7.
 - Commands: `confirmed` means OA accepted the value, not that the process
   acted on it. Commands without an `id` are not retry-safe.
-- Single node only; the redundancy milestone (M6) is not implemented.
+- The native scope is single node: sessions, subscriptions, offline queues
+  and inflight state are not shared between hosts, and there is no failover
+  or write forwarding (M6, AC-27..AC-33, stays deferred). Publishes outside
+  `<TopicRoot>` can be forwarded to the other host of a pair with PeerLink,
+  in memory (see "PeerLink for redundant pairs").
 
 ## Rollback
 

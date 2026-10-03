@@ -1,0 +1,114 @@
+# Every PeerLink key set, Enabled: true. Schema-validated and loaded through
+# config.Load (certificate files are not opened at validation time).
+NodeId: oa-host-a
+TCP: { Enabled: true, Port: 1883 }
+TCPS:
+  Enabled: false
+  Port: 8883
+  TrustStorePath: certs/mqtt-client-ca.pem
+DefaultStoreType: SQLITE
+RetainedStoreType: MEMORY
+SQLite:
+  Path: ./data/monstermq.db
+UserManagement:
+  Enabled: true
+  AnonymousEnabled: false
+HMI:
+  SyncBaseTopic: monstermq/hmi/sync
+Runtime:
+  MemoryLimitMB: 1024
+PeerLink:
+  Enabled: true
+  AllowUnauthenticatedPeers: false
+  Listener:
+    Address: 0.0.0.0
+    Port: 1890
+    AllowedNetworks: ["10.10.0.0/24", "192.168.10.0/24", "fd00:10::/64"]
+    MaxPreAuthPerIp: 4
+    AllowPlaintext: false
+  Tls:
+    Enabled: true
+    CertPath: certs/peer-{NodeId}.pem
+    KeyPath: certs/peer-{NodeId}.key
+    TrustStorePath: certs/peer-ca.pem
+    TrustStoreType: PEM
+    TrustStorePassword: ""
+    ClientAuth: REQUIRED
+    IdentityFallback: NONE
+    AutoGenerate: false
+  SharedSecrets:
+    - cGVlcmxpbmstdGVzdC1ncm91cC1zZWNyZXQtdjEtMDEyMw==
+    - cGVlcmxpbmstdGVzdC1ncm91cC1zZWNyZXQtdjAtMDEyMw==
+  KeepAliveSeconds: 15
+  Log:
+    MaxMessages: 1000000
+    MaxBytes: 134217728
+    MaxRecordBytes: 2162688
+    DrainOnShutdownMs: 5000
+    NeverConnectedWarnSec: 600
+  Capture:
+    Wills: true
+    Include: ["#"]
+    Exclude: ["monstermq/hmi/sync/#", "cameras/+/capture/#"]
+    EchoSuppressMs: 2000
+  Snapshot:
+    Mode: FILL
+    MaxTopics: 500000
+  Fetch:
+    MaxRecords: 2048
+    MaxBytes: 2097152
+    MaxWaitMs: 2000
+    LingerMs: 5
+    Pipeline: 2
+    CrcOnTls: true
+    ReconnectMaxMs: 10000
+  Receive:
+    Bus: true
+    BridgeOutbound: false
+    Archive: false
+    Queue: true
+    SharedSubscriptions: DELIVER
+    MarkReplicas: true
+    CatchUpRateFactor: 2.5
+    MaxApplyRate: 50000
+    MaxRecordAgeMs: 60000
+    MaxFrameBytes: 8454144
+    InjectWorkers: 4
+  Peers:
+    # This node; ignored (NodeIds compare in lower case).
+    - NodeId: OA-Host-A
+      Address: "oa-host-a.plant.local:1890"
+    - NodeId: oa-host-b
+      Address: "oa-host-b.plant.local:1890"
+      Serve: true
+      SharedSecrets: ["cGVlcmxpbmstdGVzdC1zZWNyZXQtYS1iLTAwMDEtMDEyMw=="]
+      Tls:
+        Enabled: true
+        PinnedSha256:
+          - b6572a5c1146070ae6af4d3cf7a308a2bb0038b20f06081cf726a56c20434f2c
+          - "6A:83:94:FB:60:35:EF:9C:36:64:7D:01:C8:A2:79:2B:B5:F8:E9:19:73:B1:3E:51:4A:5B:23:64:F3:22:77:55"
+        CertificateIdentity: "urn:monstermq:node:oa-host-b"
+        ServerName: oa-host-b.plant.local
+        RequireClientCert: true
+        InsecureSkipVerify: false
+      Receive:
+        Include: ["plant/#", "site/+/status"]
+        Exclude: ["plant/debug/#"]
+    # Pull only, over the node TLS default, group secrets.
+    - NodeId: oa-host-c
+      Address: "[fd00:10::12]:1890"
+      Serve: false
+      Tls:
+        Enabled: null
+        PinnedSha256: [ce8d1ad8ff9c3cf4f70794a8dfa38796a49d7ed0038aab5825739a52e591e468]
+        CertificateIdentity: ""
+        ServerName: ""
+        RequireClientCert: false
+        InsecureSkipVerify: false
+      Receive:
+        Include: []
+        Exclude: []
+    # Serve only: it pulls from this node, mTLS against the peer CA.
+    - NodeId: oa-host-d
+      Tls:
+        RequireClientCert: true

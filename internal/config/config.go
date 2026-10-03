@@ -1,10 +1,18 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"net"
 	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"unicode/utf8"
 
 	"go.yaml.in/yaml/v3"
+
+	"monstermq.io/edge/internal/tlsutil"
 )
 
 type StoreType string
@@ -374,6 +382,8 @@ type Config struct {
 	Redfish        RedfishConfig        `yaml:"Redfish"`
 	PythonScripts  PythonScriptsConfig  `yaml:"PythonScripts"`
 	WinCCOaNative  WinCCOaNativeConfig  `yaml:"WinCCOaNative"`
+	Runtime        RuntimeConfig        `yaml:"Runtime"`
+	PeerLink       PeerLinkConfig       `yaml:"PeerLink"`
 
 	// QueuedMessagesEnabled selects how messages for offline persistent (clean=false)
 	// sessions are held until the client reconnects.
@@ -390,6 +400,33 @@ type Config struct {
 	MaxQueueMessages              *int  `yaml:"MaxQueueMessages"`
 	QueueBatchSize                *int  `yaml:"QueueBatchSize"`
 	QueueFlushIntervalMs          *int  `yaml:"QueueFlushIntervalMs"`
+
+	// nodeIDOrigin tells where Validate took NodeID from; PeerLink refuses
+	// the "edge" fallback, which is the same on every host.
+	nodeIDOrigin nodeIDOrigin
+}
+
+type nodeIDOrigin int
+
+const (
+	nodeIDExplicit nodeIDOrigin = iota
+	nodeIDHostname
+	nodeIDFallback
+)
+
+// hostname is replaced in tests.
+var hostname = os.Hostname
+
+// resolvedNodeID returns the NodeId and its origin without changing the
+// config, so configs built in code without Validate resolve the same way.
+func (c *Config) resolvedNodeID() (string, nodeIDOrigin) {
+	if c.NodeID != "" {
+		return c.NodeID, c.nodeIDOrigin
+	}
+	if hn, err := hostname(); err == nil && hn != "" {
+		return hn, nodeIDHostname
+	}
+	return "edge", nodeIDFallback
 }
 
 func Default() *Config {
@@ -426,7 +463,7 @@ func Default() *Config {
 			Path:          "./data/hmi",
 			MountPath:     "/hmi",
 			SyncEnabled:   true,
-			SyncBaseTopic: "monstermq/hmi/sync",
+			SyncBaseTopic: defaultHMISyncBaseTopic,
 		},
 		Redfish: RedfishConfig{
 			Enabled:          false,
@@ -508,11 +545,7 @@ func (c *Config) UserStore() StoreType {
 // instead of silently falling back to a default.
 func (c *Config) Validate() error {
 	if c.NodeID == "" {
-		if hn, err := os.Hostname(); err == nil && hn != "" {
-			c.NodeID = hn
-		} else {
-			c.NodeID = "edge"
-		}
+		c.NodeID, c.nodeIDOrigin = c.resolvedNodeID()
 	}
 	if c.MaxMessageSize < 0 {
 		return fmt.Errorf("MaxMessageSize must be non-negative")
@@ -589,7 +622,17 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("invalid ClientAuth %q (must be one of NONE, REQUEST, REQUIRED)", c.EffectiveTCPSClientAuth())
 	}
 	if c.HMI.SyncBaseTopic == "" {
-		c.HMI.SyncBaseTopic = "monstermq/hmi/sync"
+		c.HMI.SyncBaseTopic = defaultHMISyncBaseTopic
+	}
+	if c.Runtime.MemoryLimitMB < 0 {
+		return fmt.Errorf("Runtime.MemoryLimitMB must be non-negative")
+	}
+	// A disabled PeerLink section is only decoded (strictly, in Load), so
+	// the example block with placeholders stays valid.
+	if c.PeerLink.Enabled {
+		if _, err := c.ResolvePeerLink(); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -745,4 +788,774 @@ func (c *Config) EffectiveGraphQLKeyPassword() string {
 
 func (c *Config) EffectiveGraphQLTLSPort() int {
 	return c.GraphQL.TLSPort
+}
+
+const defaultHMISyncBaseTopic = "monstermq/hmi/sync"
+
+// RuntimeConfig holds settings of the Go runtime of the whole process.
+type RuntimeConfig struct {
+	// MemoryLimitMB is passed to debug.SetMemoryLimit; 0 keeps the Go default.
+	MemoryLimitMB int `yaml:"MemoryLimitMB"`
+}
+
+// MemoryLimitBytes returns the soft memory limit in bytes, 0 when unset.
+func (r RuntimeConfig) MemoryLimitBytes() int64 {
+	return int64(r.MemoryLimitMB) << 20
+}
+
+// PeerLink defaults (plan-peerlink 18.1).
+const (
+	PeerLinkDefaultPort           = 1890
+	peerLinkDefaultPreAuthPerIP   = 2
+	peerLinkDefaultKeepAlive      = 10
+	peerLinkDefaultMaxMessages    = 2000000
+	peerLinkDefaultMaxBytes       = 256 << 20
+	peerLinkRecordAllowance       = 64 << 10
+	peerLinkDefaultDrainMs        = 2000
+	peerLinkDefaultNeverConnected = 300
+	peerLinkDefaultSnapshotTopics = 1000000
+	peerLinkDefaultFetchRecords   = 4096
+	peerLinkDefaultFetchBytes     = 1 << 20
+	peerLinkDefaultFetchWaitMs    = 1000
+	peerLinkDefaultPipeline       = 1
+	peerLinkDefaultReconnectMaxMs = 30000
+	peerLinkDefaultCatchUpFactor  = 3.0
+	peerLinkDefaultMaxFrameBytes  = 16<<20 + 64<<10
+	peerLinkDefaultInjectWorkers  = 1
+	peerLinkDefaultCertPath       = "certs/peer-{NodeId}.pem"
+	peerLinkDefaultKeyPath        = "certs/peer-{NodeId}.key"
+)
+
+const (
+	PeerLinkTrustStorePEM    = "PEM"
+	PeerLinkTrustStorePKCS12 = "PKCS12"
+
+	PeerLinkIdentityNone = "NONE"
+	PeerLinkIdentityDNS  = "DNS"
+	PeerLinkIdentityCN   = "CN"
+
+	PeerLinkSnapshotFill = "FILL"
+	PeerLinkSnapshotOff  = "OFF"
+
+	PeerLinkSharedSkip    = "SKIP"
+	PeerLinkSharedDeliver = "DELIVER"
+)
+
+// PeerLinkConfig is the PeerLink section: pull-based in-memory forwarding of
+// publishes between MonsterMQ Edge brokers. Load decodes it strictly, so an
+// unknown key fails startup even while Enabled is false.
+type PeerLinkConfig struct {
+	Enabled                   bool             `yaml:"Enabled"`
+	AllowUnauthenticatedPeers bool             `yaml:"AllowUnauthenticatedPeers"`
+	Listener                  PeerLinkListener `yaml:"Listener"`
+	Tls                       PeerLinkTLS      `yaml:"Tls"`
+	SharedSecrets             []string         `yaml:"SharedSecrets"` // group secrets, base64, first = current
+	KeepAliveSeconds          *int             `yaml:"KeepAliveSeconds"`
+	Log                       PeerLinkLog      `yaml:"Log"`
+	Capture                   PeerLinkCapture  `yaml:"Capture"`
+	Snapshot                  PeerLinkSnapshot `yaml:"Snapshot"`
+	Fetch                     PeerLinkFetch    `yaml:"Fetch"`
+	Receive                   PeerLinkReceive  `yaml:"Receive"`
+	Peers                     []PeerConfig     `yaml:"Peers"`
+}
+
+// PeerLinkListener is the peer port, bound when any peer has Serve.
+type PeerLinkListener struct {
+	Address         string   `yaml:"Address"`
+	Port            int      `yaml:"Port"`            // 0 = 1890
+	AllowedNetworks []string `yaml:"AllowedNetworks"` // CIDRs, checked before TLS
+	MaxPreAuthPerIp *int     `yaml:"MaxPreAuthPerIp"`
+	AllowPlaintext  bool     `yaml:"AllowPlaintext"` // TLS listener also accepts plaintext (migration)
+}
+
+// PeerLinkTLS is this node's identity and trust. Paths may contain {NodeId}.
+type PeerLinkTLS struct {
+	Enabled            bool           `yaml:"Enabled"` // listener TLS and the default for dialers
+	CertPath           string         `yaml:"CertPath"`
+	KeyPath            string         `yaml:"KeyPath"`
+	TrustStorePath     string         `yaml:"TrustStorePath"`
+	TrustStoreType     string         `yaml:"TrustStoreType"` // PEM | PKCS12
+	TrustStorePassword string         `yaml:"TrustStorePassword"`
+	ClientAuth         ClientAuthType `yaml:"ClientAuth"`
+	IdentityFallback   string         `yaml:"IdentityFallback"` // NONE | DNS | CN
+	AutoGenerate       bool           `yaml:"AutoGenerate"`
+}
+
+// PeerLinkLog bounds the in-memory log of captured publishes.
+type PeerLinkLog struct {
+	MaxMessages           *int   `yaml:"MaxMessages"`
+	MaxBytes              *int64 `yaml:"MaxBytes"`
+	MaxRecordBytes        int    `yaml:"MaxRecordBytes"` // 0 = MaxMessageSize + 64 KiB
+	DrainOnShutdownMs     *int   `yaml:"DrainOnShutdownMs"`
+	NeverConnectedWarnSec *int   `yaml:"NeverConnectedWarnSec"`
+}
+
+// PeerLinkCapture selects the publishes this node offers to its peers.
+type PeerLinkCapture struct {
+	Wills   *bool    `yaml:"Wills"`
+	Include []string `yaml:"Include"` // empty = ["#"]
+	// Exclude is a pointer so that YAML null (default) and [] (none) survive
+	// a round trip; read it through GetExclude.
+	Exclude        *[]string `yaml:"Exclude"`
+	EchoSuppressMs int       `yaml:"EchoSuppressMs"`
+}
+
+// PeerLinkSnapshot controls the retained snapshot on first contact.
+type PeerLinkSnapshot struct {
+	Mode      string `yaml:"Mode"` // FILL | OFF
+	MaxTopics *int   `yaml:"MaxTopics"`
+}
+
+// PeerLinkFetch controls how this node pulls from its sources.
+type PeerLinkFetch struct {
+	MaxRecords     *int `yaml:"MaxRecords"`
+	MaxBytes       *int `yaml:"MaxBytes"`
+	MaxWaitMs      *int `yaml:"MaxWaitMs"`
+	LingerMs       int  `yaml:"LingerMs"`
+	Pipeline       *int `yaml:"Pipeline"` // 1 | 2
+	CrcOnTls       bool `yaml:"CrcOnTls"`
+	ReconnectMaxMs *int `yaml:"ReconnectMaxMs"`
+}
+
+// PeerLinkReceive controls how replicas are applied on this node.
+type PeerLinkReceive struct {
+	Bus                 *bool    `yaml:"Bus"`
+	BridgeOutbound      bool     `yaml:"BridgeOutbound"`
+	Archive             *bool    `yaml:"Archive"`
+	Queue               bool     `yaml:"Queue"`
+	SharedSubscriptions string   `yaml:"SharedSubscriptions"` // SKIP | DELIVER
+	MarkReplicas        bool     `yaml:"MarkReplicas"`
+	CatchUpRateFactor   *float64 `yaml:"CatchUpRateFactor"` // 0 = no pacing
+	MaxApplyRate        int      `yaml:"MaxApplyRate"`
+	MaxRecordAgeMs      int      `yaml:"MaxRecordAgeMs"`
+	MaxFrameBytes       *int     `yaml:"MaxFrameBytes"`
+	InjectWorkers       *int     `yaml:"InjectWorkers"`
+}
+
+// PeerConfig is one entry of PeerLink.Peers. An Address means this node
+// pulls from the peer; Serve (default true) lets the peer pull from this node.
+type PeerConfig struct {
+	NodeID        string      `yaml:"NodeId"`
+	Address       string      `yaml:"Address"`
+	Serve         *bool       `yaml:"Serve"`
+	SharedSecrets []string    `yaml:"SharedSecrets"` // replaces the group secrets for this peer
+	Tls           PeerTLS     `yaml:"Tls"`
+	Receive       PeerReceive `yaml:"Receive"`
+}
+
+// PeerTLS holds the per-peer TLS overrides.
+type PeerTLS struct {
+	Enabled             *bool    `yaml:"Enabled"`      // dialer TLS; nil = PeerLink.Tls.Enabled
+	PinnedSha256        []string `yaml:"PinnedSha256"` // hex SPKI or certificate SHA-256
+	CertificateIdentity string   `yaml:"CertificateIdentity"`
+	ServerName          string   `yaml:"ServerName"`
+	RequireClientCert   bool     `yaml:"RequireClientCert"`
+	InsecureSkipVerify  bool     `yaml:"InsecureSkipVerify"` // the dialer direction is then unauthenticated
+}
+
+// PeerReceive filters the records accepted from one peer.
+type PeerReceive struct {
+	Include []string `yaml:"Include"` // empty = ["#"]
+	Exclude []string `yaml:"Exclude"`
+}
+
+func intOr(p *int, def int) int {
+	if p != nil {
+		return *p
+	}
+	return def
+}
+
+func boolOr(p *bool, def bool) bool {
+	if p != nil {
+		return *p
+	}
+	return def
+}
+
+func stringOr(s, def string) string {
+	if s != "" {
+		return s
+	}
+	return def
+}
+
+func (p *PeerLinkConfig) GetKeepAliveSeconds() int {
+	return intOr(p.KeepAliveSeconds, peerLinkDefaultKeepAlive)
+}
+
+// DialerTLS reports whether this node dials the peer with TLS.
+func (p *PeerLinkConfig) DialerTLS(peer PeerConfig) bool {
+	return boolOr(peer.Tls.Enabled, p.Tls.Enabled)
+}
+
+// SecretsFor returns the shared secrets used with the peer: its own list, or
+// the group secrets when it has none.
+func (p *PeerLinkConfig) SecretsFor(peer PeerConfig) []string {
+	if len(peer.SharedSecrets) > 0 {
+		return peer.SharedSecrets
+	}
+	return p.SharedSecrets
+}
+
+func (l PeerLinkListener) ListenAddress() string { return stringOr(l.Address, "0.0.0.0") }
+
+func (l PeerLinkListener) GetPort() int {
+	if l.Port == 0 {
+		return PeerLinkDefaultPort
+	}
+	return l.Port
+}
+
+func (l PeerLinkListener) GetMaxPreAuthPerIp() int {
+	return intOr(l.MaxPreAuthPerIp, peerLinkDefaultPreAuthPerIP)
+}
+
+// GetCertPath returns CertPath; with AutoGenerate it defaults to
+// certs/peer-{NodeId}.pem.
+func (t PeerLinkTLS) GetCertPath() string {
+	if t.CertPath == "" && t.AutoGenerate {
+		return peerLinkDefaultCertPath
+	}
+	return t.CertPath
+}
+
+// GetKeyPath returns KeyPath; with AutoGenerate it defaults to
+// certs/peer-{NodeId}.key.
+func (t PeerLinkTLS) GetKeyPath() string {
+	if t.KeyPath == "" && t.AutoGenerate {
+		return peerLinkDefaultKeyPath
+	}
+	return t.KeyPath
+}
+
+func (t PeerLinkTLS) GetTrustStoreType() string {
+	return stringOr(t.TrustStoreType, PeerLinkTrustStorePEM)
+}
+
+func (t PeerLinkTLS) GetClientAuth() ClientAuthType {
+	if t.ClientAuth == "" {
+		return ClientAuthNone
+	}
+	return t.ClientAuth
+}
+
+func (t PeerLinkTLS) GetIdentityFallback() string {
+	return stringOr(t.IdentityFallback, PeerLinkIdentityNone)
+}
+
+func (l PeerLinkLog) GetMaxMessages() int { return intOr(l.MaxMessages, peerLinkDefaultMaxMessages) }
+
+func (l PeerLinkLog) GetMaxBytes() int64 {
+	if l.MaxBytes != nil {
+		return *l.MaxBytes
+	}
+	return peerLinkDefaultMaxBytes
+}
+
+// GetMaxRecordBytes returns the largest record the log accepts. The default
+// is the broker's MaxMessageSize (1 MiB when 0) plus 64 KiB for metadata.
+func (l PeerLinkLog) GetMaxRecordBytes(maxMessageSize int) int {
+	if l.MaxRecordBytes != 0 {
+		return l.MaxRecordBytes
+	}
+	if maxMessageSize <= 0 {
+		maxMessageSize = 1 << 20
+	}
+	return maxMessageSize + peerLinkRecordAllowance
+}
+
+func (l PeerLinkLog) GetDrainOnShutdownMs() int {
+	return intOr(l.DrainOnShutdownMs, peerLinkDefaultDrainMs)
+}
+
+func (l PeerLinkLog) GetNeverConnectedWarnSec() int {
+	return intOr(l.NeverConnectedWarnSec, peerLinkDefaultNeverConnected)
+}
+
+func (c PeerLinkCapture) GetWills() bool { return boolOr(c.Wills, true) }
+
+func (c PeerLinkCapture) GetInclude() []string {
+	if len(c.Include) == 0 {
+		return []string{"#"}
+	}
+	return c.Include
+}
+
+// GetExclude returns the capture exclusions: nil Exclude means the HMI sync
+// tree (<hmiBase>/#), an empty list means none.
+func (c PeerLinkCapture) GetExclude(hmiBase string) []string {
+	if c.Exclude != nil {
+		return *c.Exclude
+	}
+	hmiBase = strings.TrimSuffix(stringOr(hmiBase, defaultHMISyncBaseTopic), "/")
+	return []string{hmiBase + "/#"}
+}
+
+func (s PeerLinkSnapshot) GetMode() string { return stringOr(s.Mode, PeerLinkSnapshotFill) }
+
+func (s PeerLinkSnapshot) GetMaxTopics() int {
+	return intOr(s.MaxTopics, peerLinkDefaultSnapshotTopics)
+}
+
+func (f PeerLinkFetch) GetMaxRecords() int { return intOr(f.MaxRecords, peerLinkDefaultFetchRecords) }
+func (f PeerLinkFetch) GetMaxBytes() int   { return intOr(f.MaxBytes, peerLinkDefaultFetchBytes) }
+func (f PeerLinkFetch) GetMaxWaitMs() int  { return intOr(f.MaxWaitMs, peerLinkDefaultFetchWaitMs) }
+
+// PeerLinkMinFetchWaitMs is the smallest Fetch.MaxWaitMs: an idle link answers EMPTY batches no
+// faster than this.
+const PeerLinkMinFetchWaitMs = 10
+
+func (f PeerLinkFetch) GetPipeline() int { return intOr(f.Pipeline, peerLinkDefaultPipeline) }
+
+func (f PeerLinkFetch) GetReconnectMaxMs() int {
+	return intOr(f.ReconnectMaxMs, peerLinkDefaultReconnectMaxMs)
+}
+
+func (r PeerLinkReceive) GetBus() bool     { return boolOr(r.Bus, true) }
+func (r PeerLinkReceive) GetArchive() bool { return boolOr(r.Archive, true) }
+
+func (r PeerLinkReceive) GetSharedSubscriptions() string {
+	return stringOr(r.SharedSubscriptions, PeerLinkSharedSkip)
+}
+
+func (r PeerLinkReceive) GetCatchUpRateFactor() float64 {
+	if r.CatchUpRateFactor != nil {
+		return *r.CatchUpRateFactor
+	}
+	return peerLinkDefaultCatchUpFactor
+}
+
+func (r PeerLinkReceive) GetMaxFrameBytes() int {
+	return intOr(r.MaxFrameBytes, peerLinkDefaultMaxFrameBytes)
+}
+
+func (r PeerLinkReceive) GetInjectWorkers() int {
+	return intOr(r.InjectWorkers, peerLinkDefaultInjectWorkers)
+}
+
+// GetServe reports whether the peer may pull from this node (default true).
+func (p PeerConfig) GetServe() bool { return boolOr(p.Serve, true) }
+
+// Pulls reports whether this node pulls from the peer.
+func (p PeerConfig) Pulls() bool { return p.Address != "" }
+
+func (r PeerReceive) GetInclude() []string {
+	if len(r.Include) == 0 {
+		return []string{"#"}
+	}
+	return r.Include
+}
+
+// CanonicalNodeID returns the form of a NodeId that PeerLink compares, sends
+// in HELLO and binds to certificates: lower case, [a-z0-9._-], 1-64 bytes.
+func CanonicalNodeID(id string) (string, error) {
+	c := strings.ToLower(id)
+	if len(c) == 0 || len(c) > 64 {
+		return "", fmt.Errorf("NodeId %q must have 1 to 64 characters", id)
+	}
+	for i := 0; i < len(c); i++ {
+		b := c[i]
+		if !(b >= 'a' && b <= 'z' || b >= '0' && b <= '9' || b == '.' || b == '_' || b == '-') {
+			return "", fmt.Errorf("NodeId %q may only contain letters, digits, '.', '_' and '-'", id)
+		}
+	}
+	return c, nil
+}
+
+// PeerLinkSetup is the canonical form of a valid PeerLink section.
+type PeerLinkSetup struct {
+	NodeID   string       // canonical own NodeId
+	Peers    []PeerConfig // without this node's own entry; NodeID canonical
+	Infos    []string     // to log at INFO on start
+	Warnings []string     // to log at WARN on start
+}
+
+// AnyServe reports whether any peer may pull from this node, i.e. whether
+// the peer listener is needed.
+func (s *PeerLinkSetup) AnyServe() bool {
+	for _, peer := range s.Peers {
+		if peer.GetServe() {
+			return true
+		}
+	}
+	return false
+}
+
+// ResolvePeerLink checks the PeerLink section against the rest of the
+// configuration and returns its canonical form. Validate calls it when
+// PeerLink is enabled; the broker calls it again to log the notices. It
+// does not check that certificate files exist.
+func (c *Config) ResolvePeerLink() (*PeerLinkSetup, error) {
+	id, origin := c.resolvedNodeID()
+	hn, err := hostname()
+	if err != nil {
+		hn = ""
+	}
+	return c.PeerLink.validate(peerLinkEnv{
+		nodeID:         id,
+		nodeIDOrigin:   origin,
+		hostname:       hn,
+		userMgmt:       c.UserManagement.Enabled,
+		retainedStore:  c.RetainedStore(),
+		tcpsTrustStore: c.EffectiveTCPSTrustStorePath(),
+		maxMessageSize: c.MaxMessageSize,
+		hmiBase:        c.HMI.SyncBaseTopic,
+		memoryLimitMB:  c.Runtime.MemoryLimitMB,
+	})
+}
+
+type peerLinkEnv struct {
+	nodeID         string
+	nodeIDOrigin   nodeIDOrigin
+	hostname       string
+	userMgmt       bool
+	retainedStore  StoreType
+	tcpsTrustStore string
+	maxMessageSize int
+	hmiBase        string
+	memoryLimitMB  int
+}
+
+func (p *PeerLinkConfig) validate(env peerLinkEnv) (*PeerLinkSetup, error) {
+	var errs []error
+	fail := func(format string, args ...any) {
+		errs = append(errs, fmt.Errorf("PeerLink."+format, args...))
+	}
+	s := &PeerLinkSetup{}
+
+	if env.nodeIDOrigin == nodeIDFallback {
+		errs = append(errs, fmt.Errorf("PeerLink needs a NodeId that differs per host: the hostname is unknown and the fallback %q is the same everywhere; set NodeId", env.nodeID))
+	} else if own, err := CanonicalNodeID(env.nodeID); err != nil {
+		errs = append(errs, fmt.Errorf("PeerLink: %w", err))
+	} else {
+		s.NodeID = own
+	}
+
+	tls := &p.Tls
+	clientAuth := tls.GetClientAuth()
+	switch clientAuth {
+	case ClientAuthNone, ClientAuthRequest, ClientAuthRequired:
+	default:
+		fail("Tls.ClientAuth %q must be NONE, REQUEST or REQUIRED", tls.ClientAuth)
+	}
+	switch tls.GetTrustStoreType() {
+	case PeerLinkTrustStorePEM, PeerLinkTrustStorePKCS12:
+	default:
+		fail("Tls.TrustStoreType %q must be PEM or PKCS12", tls.TrustStoreType)
+	}
+	switch tls.GetIdentityFallback() {
+	case PeerLinkIdentityNone, PeerLinkIdentityDNS, PeerLinkIdentityCN:
+	default:
+		fail("Tls.IdentityFallback %q must be NONE, DNS or CN", tls.IdentityFallback)
+	}
+	if tls.Enabled && !tls.AutoGenerate && (tls.CertPath == "" || tls.KeyPath == "") {
+		fail("Tls.Enabled needs Tls.CertPath and Tls.KeyPath, or Tls.AutoGenerate")
+	}
+	if clientAuth != ClientAuthNone && !tls.Enabled {
+		fail("Tls.ClientAuth %s needs Tls.Enabled", clientAuth)
+	}
+	for i, sec := range p.SharedSecrets {
+		if err := checkPeerSecret(sec); err != nil {
+			fail("SharedSecrets[%d]: %v", i, err)
+		}
+	}
+	if len(p.SharedSecrets) > 0 && !tls.Enabled {
+		fail("SharedSecrets need Tls.Enabled: without TLS the secret cannot be bound to the connection")
+	}
+
+	l := &p.Listener
+	if l.Port < 0 || l.Port > 65535 {
+		fail("Listener.Port %d must be 1..65535 (0 = %d)", l.Port, PeerLinkDefaultPort)
+	}
+	for i, n := range l.AllowedNetworks {
+		if _, _, err := net.ParseCIDR(n); err != nil {
+			fail("Listener.AllowedNetworks[%d] %q is not a CIDR", i, n)
+		}
+	}
+	if l.GetMaxPreAuthPerIp() < 1 {
+		fail("Listener.MaxPreAuthPerIp must be at least 1")
+	}
+
+	waiver := p.AllowUnauthenticatedPeers
+	if waiver {
+		if len(l.AllowedNetworks) == 0 {
+			fail("AllowUnauthenticatedPeers needs a non-empty Listener.AllowedNetworks")
+		}
+		if env.userMgmt {
+			fail("AllowUnauthenticatedPeers is not allowed with UserManagement.Enabled: replicas are injected without ACL checks")
+		}
+	}
+
+	var hostLabel string
+	if env.nodeIDOrigin == nodeIDHostname {
+		first, _, _ := strings.Cut(env.hostname, ".")
+		hostLabel = strings.ToLower(first)
+	}
+	seen := make(map[string]int, len(p.Peers))
+	others, ownMatched, exactOwn := 0, false, false
+	adopted := ""
+	groupSecretUsers := 0
+	for i, peer := range p.Peers {
+		id, err := CanonicalNodeID(peer.NodeID)
+		if err != nil {
+			fail("Peers[%d]: %v", i, err)
+			others++
+			continue
+		}
+		if j, dup := seen[id]; dup {
+			fail("Peers[%d]: NodeId %q is already used by Peers[%d] (NodeIds are compared in lower case)", i, peer.NodeID, j)
+			continue
+		}
+		seen[id] = i
+		if s.NodeID != "" && (id == s.NodeID || (hostLabel != "" && id == hostLabel)) {
+			ownMatched = true
+			if id == s.NodeID {
+				exactOwn = true
+			} else {
+				adopted = id
+			}
+			s.Infos = append(s.Infos, fmt.Sprintf("PeerLink: Peers[%d] %q is this node and is ignored", i, peer.NodeID))
+			continue
+		}
+		others++
+		peer.NodeID = id
+		where := fmt.Sprintf("Peers[%d] (%s)", i, id)
+		serve, pull := peer.GetServe(), peer.Pulls()
+		if !serve && !pull {
+			fail("%s needs an Address (this node pulls from it) or Serve: true (it pulls from this node)", where)
+		}
+		if pull {
+			if err := checkPeerAddress(peer.Address); err != nil {
+				fail("%s.Address: %v", where, err)
+			}
+		}
+		for k, sec := range peer.SharedSecrets {
+			if err := checkPeerSecret(sec); err != nil {
+				fail("%s.SharedSecrets[%d]: %v", where, k, err)
+			}
+		}
+		for k, pin := range peer.Tls.PinnedSha256 {
+			if !validPeerPin(pin) {
+				fail("%s.Tls.PinnedSha256[%d] %q must be 64 hex digits (SHA-256 of the SPKI or certificate)", where, k, pin)
+			}
+		}
+		for k, f := range peer.Receive.GetInclude() {
+			if !validPeerFilter(f) {
+				fail("%s.Receive.Include[%d] %q is not a valid topic filter", where, k, f)
+			}
+		}
+		for k, f := range peer.Receive.Exclude {
+			if !validPeerFilter(f) {
+				fail("%s.Receive.Exclude[%d] %q is not a valid topic filter", where, k, f)
+			}
+		}
+
+		secrets := p.SecretsFor(peer)
+		if len(peer.SharedSecrets) == 0 && len(p.SharedSecrets) > 0 {
+			groupSecretUsers++
+		}
+		dialTLS := pull && p.DialerTLS(peer)
+		listenTLS := serve && tls.Enabled
+		pins := len(peer.Tls.PinnedSha256) > 0
+		trust := tls.TrustStorePath != "" || pins
+
+		if len(secrets) > 0 && ((serve && !tls.Enabled) || (pull && !dialTLS)) {
+			fail("%s: SharedSecrets need TLS in every direction they are used (Tls.Enabled for Serve, the dialer Tls.Enabled for Address)", where)
+		}
+		if pins && !dialTLS && !listenTLS {
+			fail("%s.Tls.PinnedSha256 needs TLS", where)
+		}
+		if peer.Tls.RequireClientCert && clientAuth == ClientAuthNone {
+			fail("%s.Tls.RequireClientCert needs Tls.ClientAuth REQUEST or REQUIRED", where)
+		}
+		if serve && clientAuth != ClientAuthNone && !trust {
+			fail("%s: Tls.ClientAuth %s needs Tls.TrustStorePath or PinnedSha256 for this peer", where, clientAuth)
+		}
+		if dialTLS && !peer.Tls.InsecureSkipVerify && !trust && len(secrets) == 0 {
+			fail("%s: the dialer has no truststore, pin or shared secret to verify the peer; set Tls.InsecureSkipVerify: true to connect unauthenticated", where)
+		}
+		if !waiver {
+			certRequired := clientAuth == ClientAuthRequired || (clientAuth == ClientAuthRequest && peer.Tls.RequireClientCert)
+			if serve && !(listenTLS && (len(secrets) > 0 || (certRequired && trust))) {
+				fail("%s is not authenticated when it pulls from this node: use TLS with a client certificate (Tls.ClientAuth REQUIRED, or REQUEST with RequireClientCert) or SharedSecrets, or set AllowUnauthenticatedPeers", where)
+			}
+			if pull && !(dialTLS && (len(secrets) > 0 || (!peer.Tls.InsecureSkipVerify && trust))) {
+				fail("%s is not authenticated when this node pulls from it: use TLS with Tls.TrustStorePath or PinnedSha256, or SharedSecrets, or set AllowUnauthenticatedPeers", where)
+			}
+		}
+		s.Peers = append(s.Peers, peer)
+	}
+	if others == 0 {
+		fail("Peers: at least one peer other than this node is required")
+	}
+	if adopted != "" && !exactOwn {
+		// The peers of a shared file know this node by its entry, so the link speaks that id
+		// (HELLO, HELLO_OK, MAC, certificate URI SAN, injector ids), not the full hostname.
+		s.Infos = append(s.Infos, fmt.Sprintf("PeerLink: NodeId %q (from the hostname) is used as %q, its Peers entry", s.NodeID, adopted))
+		s.NodeID = adopted
+	}
+	if l.AllowPlaintext && tls.Enabled && s.AnyServe() && !waiver {
+		fail("Listener.AllowPlaintext admits unauthenticated plaintext sessions; it needs AllowUnauthenticatedPeers")
+	}
+	if len(p.Peers) >= 2 && !ownMatched && s.NodeID != "" {
+		s.Warnings = append(s.Warnings, fmt.Sprintf("PeerLink: no Peers entry matches this node (NodeId %q, hostname %q); if this file is shared, no entry matches this host", s.NodeID, env.hostname))
+	}
+
+	maxRecord := p.Log.GetMaxRecordBytes(env.maxMessageSize)
+	maxBytes := p.Log.GetMaxBytes()
+	fetchRecords := p.Fetch.GetMaxRecords()
+	if p.Log.MaxRecordBytes < 0 {
+		fail("Log.MaxRecordBytes must be non-negative (0 = MaxMessageSize + 64 KiB)")
+	}
+	if n := p.Log.GetMaxMessages(); n < max(100, fetchRecords) {
+		fail("Log.MaxMessages %d must be at least 100 and at least Fetch.MaxRecords (%d)", n, fetchRecords)
+	}
+	if maxBytes < 1<<20 || maxBytes < 4*int64(maxRecord) {
+		fail("Log.MaxBytes %d must be at least 1 MiB and at least 4 x MaxRecordBytes (%d)", maxBytes, maxRecord)
+	}
+	if p.Log.GetDrainOnShutdownMs() < 0 {
+		fail("Log.DrainOnShutdownMs must be non-negative")
+	}
+	if p.Log.GetNeverConnectedWarnSec() < 0 {
+		fail("Log.NeverConnectedWarnSec must be non-negative")
+	}
+	keepAlive := p.GetKeepAliveSeconds()
+	if keepAlive < 1 {
+		fail("KeepAliveSeconds must be at least 1")
+	}
+
+	for k, f := range p.Capture.GetInclude() {
+		if !validPeerFilter(f) {
+			fail("Capture.Include[%d] %q is not a valid topic filter", k, f)
+		}
+	}
+	for k, f := range p.Capture.GetExclude(env.hmiBase) {
+		if !validPeerFilter(f) {
+			fail("Capture.Exclude[%d] %q is not a valid topic filter", k, f)
+		}
+	}
+	if p.Capture.EchoSuppressMs < 0 {
+		fail("Capture.EchoSuppressMs must be non-negative")
+	}
+
+	switch p.Snapshot.GetMode() {
+	case PeerLinkSnapshotFill, PeerLinkSnapshotOff:
+	default:
+		fail("Snapshot.Mode %q must be FILL or OFF", p.Snapshot.Mode)
+	}
+	if p.Snapshot.GetMaxTopics() < 1 {
+		fail("Snapshot.MaxTopics must be at least 1")
+	}
+
+	f := &p.Fetch
+	if fetchRecords < 1 {
+		fail("Fetch.MaxRecords must be at least 1")
+	}
+	if f.GetMaxBytes() < 1 {
+		fail("Fetch.MaxBytes must be at least 1")
+	}
+	if w := f.GetMaxWaitMs(); w < PeerLinkMinFetchWaitMs || w >= keepAlive*1000 {
+		fail("Fetch.MaxWaitMs %d must be at least %d and below KeepAliveSeconds*1000 (%d); a shorter long poll turns an idle link into a busy loop",
+			w, PeerLinkMinFetchWaitMs, keepAlive*1000)
+	}
+	if f.LingerMs < 0 {
+		fail("Fetch.LingerMs must be non-negative")
+	}
+	if pl := f.GetPipeline(); pl < 1 || pl > 2 {
+		fail("Fetch.Pipeline %d must be 1 or 2", pl)
+	}
+	if f.GetReconnectMaxMs() < 1 {
+		fail("Fetch.ReconnectMaxMs must be positive")
+	}
+
+	r := &p.Receive
+	switch r.GetSharedSubscriptions() {
+	case PeerLinkSharedSkip, PeerLinkSharedDeliver:
+	default:
+		fail("Receive.SharedSubscriptions %q must be SKIP or DELIVER", r.SharedSubscriptions)
+	}
+	if cf := r.GetCatchUpRateFactor(); cf != 0 && !(cf >= 1.5) {
+		fail("Receive.CatchUpRateFactor %v must be 0 (no pacing) or at least 1.5", cf)
+	}
+	if r.MaxApplyRate < 0 {
+		fail("Receive.MaxApplyRate must be non-negative")
+	}
+	if r.MaxRecordAgeMs < 0 {
+		fail("Receive.MaxRecordAgeMs must be non-negative")
+	}
+	if mf, need := r.GetMaxFrameBytes(), f.GetMaxBytes()+peerLinkRecordAllowance; mf < need {
+		fail("Receive.MaxFrameBytes %d must be at least Fetch.MaxBytes + 64 KiB (%d)", mf, need)
+	}
+	if w := r.GetInjectWorkers(); w < 1 || w > 16 {
+		fail("Receive.InjectWorkers %d must be 1..16", w)
+	}
+
+	if len(errs) > 0 {
+		return nil, errors.Join(errs...)
+	}
+
+	if waiver {
+		s.Warnings = append(s.Warnings, fmt.Sprintf("PeerLink: AllowUnauthenticatedPeers is set; peers are admitted by network address only (%s)", strings.Join(l.AllowedNetworks, ", ")))
+	}
+	if groupSecretUsers > 0 && len(s.Peers)+1 > 2 {
+		s.Warnings = append(s.Warnings, "PeerLink: the group SharedSecrets are used with more than two nodes; any holder can claim any NodeId of the group, prefer per-peer SharedSecrets")
+	}
+	if tls.TrustStorePath != "" && env.tcpsTrustStore != "" &&
+		filepath.Clean(strings.ReplaceAll(tls.TrustStorePath, "{NodeId}", s.NodeID)) == filepath.Clean(env.tcpsTrustStore) {
+		s.Warnings = append(s.Warnings, "PeerLink: Tls.TrustStorePath is the TCPS truststore; a certificate issued for an MQTT client could claim a NodeId, use a dedicated peer CA")
+	}
+	if env.retainedStore == StoreMemory && p.Snapshot.GetMode() == PeerLinkSnapshotOff {
+		s.Warnings = append(s.Warnings, "PeerLink: RetainedStoreType MEMORY with Snapshot.Mode OFF: retained messages of peers are lost when this node restarts")
+	}
+	if env.memoryLimitMB > 0 {
+		if needMB := 2.2*float64(maxBytes)/(1<<20) + 150; needMB > float64(env.memoryLimitMB) {
+			s.Warnings = append(s.Warnings, fmt.Sprintf("PeerLink: Runtime.MemoryLimitMB %d is below 2.2 x Log.MaxBytes + 150 MiB (%.0f MiB); the GC may run continuously while the log is full", env.memoryLimitMB, needMB))
+		}
+	}
+	return s, nil
+}
+
+func checkPeerAddress(addr string) error {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return err
+	}
+	if host == "" {
+		return fmt.Errorf("%q has no host", addr)
+	}
+	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+		return fmt.Errorf("%q: port must be 1..65535", addr)
+	}
+	return nil
+}
+
+// checkPeerSecret validates a base64 shared secret. The error never
+// contains the secret.
+func checkPeerSecret(s string) error {
+	_, err := tlsutil.DecodeSecret(s)
+	return err
+}
+
+func validPeerPin(s string) bool {
+	_, err := tlsutil.ParsePin(s)
+	return err == nil
+}
+
+// validPeerFilter checks MQTT topic filter syntax: '+' and '#' occupy a
+// whole level, '#' only the last one.
+func validPeerFilter(f string) bool {
+	if f == "" || !utf8.ValidString(f) || strings.IndexByte(f, 0) >= 0 || len(f) > 65535 {
+		return false
+	}
+	levels := strings.Split(f, "/")
+	for i, lv := range levels {
+		if strings.ContainsAny(lv, "+#") && lv != "+" && lv != "#" {
+			return false
+		}
+		if lv == "#" && i != len(levels)-1 {
+			return false
+		}
+	}
+	return true
 }

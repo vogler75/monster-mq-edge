@@ -12,8 +12,9 @@ import (
 	"monstermq.io/edge/internal/config"
 )
 
-// The example configurations are live documents: they must validate against
-// yaml-json-schema.json and load through the Go config.
+// The example configurations and the full PeerLink fixture are live
+// documents: they must validate against yaml-json-schema.json and load
+// through the Go config.
 func TestExampleConfigsValidate(t *testing.T) {
 	root := filepath.Join("..", "..")
 	raw, err := os.ReadFile(filepath.Join(root, "yaml-json-schema.json"))
@@ -30,7 +31,7 @@ func TestExampleConfigsValidate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve schema: %v", err)
 	}
-	for _, f := range []string{"config.yaml.example", "winccoa/monstermq.yaml.example"} {
+	for _, f := range []string{"config.yaml.example", "winccoa/monstermq.yaml.example", "test/integration/testdata/peerlink-full.yaml"} {
 		data, err := os.ReadFile(filepath.Join(root, f))
 		if err != nil {
 			t.Fatal(err)
@@ -52,6 +53,13 @@ func TestExampleConfigsValidate(t *testing.T) {
 		}
 		if f == "winccoa/monstermq.yaml.example" && (!cfg.WinCCOaNative.Enabled || cfg.ConfigStore() != config.StoreWinCCOA || cfg.SessionStore() != config.StoreWinCCOA) {
 			t.Errorf("%s: WinCCOaNative not parsed: %+v", f, cfg.WinCCOaNative)
+		}
+		if f == "test/integration/testdata/peerlink-full.yaml" {
+			if !cfg.PeerLink.Enabled {
+				t.Errorf("%s: PeerLink not enabled", f)
+			} else if setup, err := cfg.ResolvePeerLink(); err != nil || len(setup.Peers) != 3 {
+				t.Errorf("%s: ResolvePeerLink: %v %+v", f, err, setup)
+			}
 		}
 	}
 }

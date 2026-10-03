@@ -6,7 +6,15 @@ import (
 )
 
 // BusAdapter wraps the in-process pubsub.Bus to satisfy LocalSubscriber.
-type BusAdapter struct{ Bus *pubsub.Bus }
+//
+// Bus messages that arrived over PeerLink from another broker (OriginNode
+// set) are dropped unless BridgeOutbound is true: an outbound bridge would
+// otherwise forward a peer's publishes too, which loops when its remote is
+// that peer and duplicates when every node runs the bridge.
+type BusAdapter struct {
+	Bus            *pubsub.Bus
+	BridgeOutbound bool // PeerLink.Receive.BridgeOutbound
+}
 
 func (a *BusAdapter) Subscribe(filters []string, buffer int) (int, <-chan LocalMessage) {
 	id, raw := a.Bus.Subscribe(filters, buffer)
@@ -14,6 +22,9 @@ func (a *BusAdapter) Subscribe(filters []string, buffer int) (int, <-chan LocalM
 	go func() {
 		defer close(out)
 		for m := range raw {
+			if !a.forwards(m) {
+				continue
+			}
 			out <- LocalMessage{
 				Topic:   m.TopicName,
 				Payload: m.Payload,
@@ -25,7 +36,8 @@ func (a *BusAdapter) Subscribe(filters []string, buffer int) (int, <-chan LocalM
 	return id, out
 }
 
-func (a *BusAdapter) Unsubscribe(id int) { a.Bus.Unsubscribe(id) }
+func (a *BusAdapter) forwards(m stores.BrokerMessage) bool {
+	return m.OriginNode == "" || a.BridgeOutbound
+}
 
-// Compile-time assertion that BrokerMessage stays compatible with what we map.
-var _ = stores.BrokerMessage{}
+func (a *BusAdapter) Unsubscribe(id int) { a.Bus.Unsubscribe(id) }

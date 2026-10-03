@@ -219,6 +219,8 @@ OA value/config replication does not replicate broker memory. Inventory and reco
 
 For non-OA publishes, use authenticated peer transport (proposed mutual TLS), stable record identities, origin node/epoch, ordered sequence numbers, durable commit acknowledgements, idempotent replay, loop prevention, and bounded buffers. Replicated retained deletes and expiry must survive restart. Do not blindly fan out a replica again or deliver every replica on both nodes to the same logical session.
 
+Superseded for in-memory forwarding (2026-10-03): non-OA publishes are forwarded in memory by PeerLink, with no durable commit acknowledgements (M6a; see `dev/plans/plan-peerlink.md` 15.4 and `dev/plans/spec-winccoa-native.md` §1 M6a). The paragraph above remains the requirement for a future durable mode only.
+
 Gate QoS 1 PUBACK and QoS 2 PUBREC/PUBCOMP at the engine paths identified in section 1.3. `OnPublished` is too late. Define the exact local/peer durability barrier before each positive acknowledgement. Persist the QoS 2 protocol phase and duplicate-handling state, not just payload and PUBREL. Current engine delivery timing must be preserved or deliberately changed with protocol tests. QoS 1 may redeliver; do not promise duplicate-free QoS 1 or exactly-once external effects. [MQTT 5 session state and QoS rules](https://docs.oasis-open.org/mqtt/mqtt/v5.0/mqtt-v5.0.html)
 
 ### 7.3 Degraded operation and recovery

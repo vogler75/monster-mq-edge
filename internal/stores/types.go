@@ -24,6 +24,10 @@ type BrokerMessage struct {
 	ResponseTopic          string            `json:"responseTopic,omitempty"`
 	CorrelationData        []byte            `json:"correlationData,omitempty"`
 	UserProperties         map[string]string `json:"userProperties,omitempty"`
+
+	// OriginNode is the NodeId of the PeerLink source broker for a replica,
+	// empty for a local publish. In memory only: never stored or serialized.
+	OriginNode string `json:"-" bson:"-"`
 }
 
 // MqttSubscription mirrors MonsterMQ's MqttSubscription type.

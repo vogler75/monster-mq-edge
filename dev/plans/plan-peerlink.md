@@ -1,6 +1,6 @@
 # Plan: PeerLink, pull-based in-memory forwarding between MonsterMQ Edge brokers
 
-**Status: decisions recorded (2026-10-03). Nothing implemented.**
+**Status: implemented; WinCC OA parts untested; performance gates G0-G7 (21.2) open (2026-10-03).** The review fixes of 2026-10-03 are recorded in the sections they change, marked "(review 2026-10-03)".
 
 Proposed file: `dev/plans/plan-peerlink.md`. Branch at drafting time: `winccoa-native`.
 
@@ -13,6 +13,8 @@ This plan merges three competing designs (throughput-first, failure-first, simpl
 ### 1.1 Goal
 
 Take a WinCC OA redundant pair, or any small set of MonsterMQ Edge brokers. An MQTT client publishes to one broker on a topic **outside** the WinCC OA namespace (`<TopicRoot>`, default `winccoa`). The other brokers must then deliver that message with the same MQTT semantics.
+
+PeerLink is a generic link between MonsterMQ Edge brokers and works without WinCC OA (owner decision 2026-10-03). The WinCC OA namespace exists, and is excluded, only while the broker runs with WinCC OA native mode active (7.2); a standalone broker forwards every topic except `$` topics and `Capture.Exclude`.
 
 The source broker keeps captured publishes in memory until every configured peer has pulled and applied them. A peer that restarts therefore loses nothing, as long as two conditions hold: the source keeps running, and the outage fits inside the source's memory bound. That holds for both live messages and retained state (section 16.5).
 
@@ -50,12 +52,18 @@ These are listed so that reviewers do not measure this plan against M6 AC-27..AC
 
 The single-node rule ("No clustering — single node only") was removed from `AGENTS.md` by the owner on 2026-10-03, together with "single-node is a product decision" in its never-do-without-asking list (Hazelcast/Kafka-bus dependencies still need sign-off). PeerLink therefore needs no exception from the project rules (S1).
 
-`dev/plans/spec-winccoa-native.md:15` still says "Dual-node exception: Not granted. M6 (AC-27..AC-33) is deferred", and `:19` says "Single node. No failover RPO/RTO applies". Those lines describe the WinCC OA native scope; S2 amends both of them and adds a new row. The owner reviewed and committed this plan and answered every M0 question on 2026-10-03; S2-S8 are accepted (table below) and Q1-Q28 are decided (section 25). Only the S2 text change in `spec-winccoa-native.md` itself is pending (23, M0).
+`dev/plans/spec-winccoa-native.md:15` said "Dual-node exception: Not granted. M6 (AC-27..AC-33) is deferred", and `:19` said "Single node. No failover RPO/RTO applies". Those lines describe the WinCC OA native scope; S2 amends both of them and adds a new row. The owner reviewed and committed this plan and answered every M0 question on 2026-10-03; S2-S8 are accepted (table below) and Q1-Q28 are decided (section 25). The S2 text change in `spec-winccoa-native.md` and the §7.2 cross-reference in `plan-winccoa-broker-embedded-manager.md` landed on 2026-10-03.
+
+**Implementation decisions (owner, 2026-10-03):**
+
+- PeerLink is a generic link between MonsterMQ Edge brokers; it works without WinCC OA.
+- The WinCC OA namespace (`<TopicRoot>`, default `winccoa`) is excluded only while the broker runs with WinCC OA native mode active: embedded in WinCC OA (`broker.Options.OA != nil`), with `WinCCOaNative.Enabled` and `WinCCOaNative.Namespace`. A standalone broker, or one with native mode off, captures every topic except `$` topics and `Capture.Exclude`. One predicate decides this for capture, snapshot, the receiver filter and the announced root, so that it can later depend on the WinCC OA host role (7.2, 9.4, 12.2).
+- The WinCC OA specific parts (`oaRetained` and `ApplyCached`, the native status `peerLink` object, the device WARNs that need the WINCCOA config store) are implemented but not tested in this round; there are no live WinCC OA tests yet.
 
 | # | Sign-off | Proposed text / outcome |
 |---|---|---|
 | S1 | Single-node rule | **Done (2026-10-03):** the rule was removed from `AGENTS.md`. PeerLink is pure Go, in memory and pull based, between explicitly configured, independent brokers; it shares no sessions, subscriptions, ownership or fencing. |
-| S2 | Spec decision entry | **Accepted 2026-10-03 (plan committed); spec amendment pending** (the text change below lands with M1 or as a separate small commit). Amend two rows of `spec-winccoa-native.md` §1: `:15` becomes "Dual-node exception: not required since 2026-10-03 (AGENTS.md rule removed); PeerLink is M6a; AC-27..AC-33 stay deferred", and `:19` (Availability/durability) becomes "Native scope single node; non-OA publishes may be forwarded by PeerLink (M6a, RPO per plan-peerlink 15.4)". Add a new row to §1. PeerLink is M6a. It supersedes only the "non-OA publishes" paragraph of `plan-winccoa-broker-embedded-manager.md` §7.2 (`:220`), and only for in-memory forwarding. AC-27..AC-33 stay deferred. AC-28 (PUBACK barrier, `:327`) and AC-30 (full recovery on overflow, `:329`) are explicitly replaced by sections 15 and 8.5. The same entry covers the optional `peerLink` object in the native status JSON (20.2). Add a cross-reference in §7.2. |
+| S2 | Spec decision entry | **Accepted 2026-10-03 (plan committed); spec amended 2026-10-03** (§1 rows, the M6a row and the §7.2 cross-reference in the embedded-manager plan). Amend two rows of `spec-winccoa-native.md` §1: `:15` becomes "Dual-node exception: not required since 2026-10-03 (AGENTS.md rule removed); PeerLink is M6a; AC-27..AC-33 stay deferred", and `:19` (Availability/durability) becomes "Native scope single node; non-OA publishes may be forwarded by PeerLink (M6a, RPO per plan-peerlink 15.4)". Add a new row to §1. PeerLink is M6a. It supersedes only the "non-OA publishes" paragraph of `plan-winccoa-broker-embedded-manager.md` §7.2 (`:220`), and only for in-memory forwarding. AC-27..AC-33 stay deferred. AC-28 (PUBACK barrier, `:327`) and AC-30 (full recovery on overflow, `:329`) are explicitly replaced by sections 15 and 8.5. The same entry covers the optional `peerLink` object in the native status JSON (20.2). Add a cross-reference in §7.2. |
 | S3 | RPO / durability statement | **Accepted 2026-10-03 (Q2).** Section 15.4: PUBACK means "accepted locally"; records not yet pulled are lost if the source process crashes; a graceful source stop closes the MQTT listeners, stops the internal publishers, drains to a fixed `drainTarget` (15.6), and logs exactly what it could not serve (`shutdownUnserved`) or no longer captured (`uncapturedAtShutdown`); overflow drops the oldest records and counts them on both sides; across a consumer crash delivery is at-least-once, with at most one batch duplicated; otherwise exactly-once. |
 | S4 | GraphQL | **Granted 2026-10-03 (Q15).** No SDL change. The resolver fills the existing `BrokerMetrics.messageBusIn/messageBusOut` (`internal/graphql/schema/schema.graphqls:32-33`, today never set by `snapshotToBrokerMetrics`, `internal/graphql/resolvers/resolver.go:1832-1843`) from the new snapshot fields, in v1 (M5). This is the explicit owner commitment that `AGENTS.md:42-49` requires for a resolver change. |
 | S5 | Engine changes | **Accepted 2026-10-03 (plan committed).** E1, E2, E4, E5 and E6 in the inlined mochi engine (section 13): preset `Origin`/`Created` for inline injections, `Packet.Forward`, `Server.RetainOnly`, `Server.CloseListeners`, and `Packet.Will`. E3 and E7 are optional. |
@@ -131,6 +139,7 @@ Naming: the feature is **PeerLink** (package `internal/peerlink`, config section
 | Retained after a consumer restart | Automatic `SNAPSHOT` (fill-if-absent) on first contact and after a source reset, skipped when both sides keep retained messages in one WinCC OA system (16.5); operator-triggered newer-wins resync | review | Leaving MEMORY-retained receivers empty after a restart (it violates R4). |
 | Retained record expired before pull | Drop and count (`retainedDiverged`). M6: conditional silent clear. | failure | "Inject with 1 s" violates MQTT 5; an unconditional clear can wipe a newer local value. |
 | Wills | Captured, except during the source's own shutdown. Dropped on the receiver while the client is or became connected there. Kept off bus, archive and queue there, matching local behaviour. | review | Applying wills as ordinary publishes: a stale "offline" would overwrite a failed-over client's live state. |
+| Namespace exclusion | `<TopicRoot>` is excluded (capture, snapshot, receiver, announced root) only while WinCC OA native mode is active (embedded, `WinCCOaNative.Enabled` and `Namespace`). One predicate decides it, so it can later depend on the WinCC OA host role. A standalone broker forwards every topic except `$` topics and `Capture.Exclude`. | owner decision 2026-10-03 | Excluding `<TopicRoot>` whenever it is configured: the key is defaulted to `winccoa` even without native mode (`WinCCOaNativeConfig.validate`, `internal/config/config.go`), so a standalone broker would silently drop ordinary `winccoa/...` topics. |
 | Inline capture | Every internal publish is captured like a client publish | owner decision 2026-10-03 | Capturing only some internal publishers (the earlier API/service split): a device's output would never reach the peer unless the device also ran there. Duplicates are avoided by assigning each device to one node (19). |
 | Receiver gating | Defaults: bus on (bridge outbound off), archive on, offline queue off, shared subscriptions skip replicas | failure + review | Delivering replicas to every subsystem: it causes duplicate floods for persistent sessions and duplicate shared-group processing. |
 | Retained writes on the receiver (DB modes) | Coalesced per batch into one `AddAll`/`DelAll` before the commit | review | One synchronous transaction per retained replica on the inject goroutine. |
@@ -312,7 +321,7 @@ func (h *Hook) capture(cl *mqtt.Client, pk *packets.Packet, will bool) {
 
 1. Replicas (split horizon).
 2. `pk.Ignore`: WinCC OA native commands and topics-branch publishes (`internal/broker/hook_winccoa.go:112-160`). QueueHook uses the same rule (`hook_queue.go:106`).
-3. The own namespace: `t == root || strings.HasPrefix(t, rootSlash)`, with `rootSlash` precomputed. For topic names this equals `Names.Classify(t) != KindOther` (`internal/winccoanative/namespace.go:132-171`). `TopicRoot` is defaulted even when native mode is off (`internal/config/config.go:262-268`).
+3. The own namespace, **only while WinCC OA native mode is active** (owner decision 2026-10-03): `t == root || strings.HasPrefix(t, rootSlash)`, with `rootSlash` precomputed. For topic names this equals `Names.Classify(t) != KindOther` (`internal/winccoanative/namespace.go:132-171`). Native mode is active when the broker is embedded in WinCC OA (`broker.Options.OA != nil`) with `WinCCOaNative.Enabled` and `WinCCOaNative.Namespace`. `TopicRoot` is defaulted even when native mode is off (`WinCCOaNativeConfig.validate`, `internal/config/config.go`), so the key alone does not decide. One predicate (`Deps.NamespaceRoot`: the root while native mode is active, "" otherwise) serves capture, the snapshot (16.5), the receiver filter (12.2) and the root announced in the handshake (9.4); it can later depend on the WinCC OA host role. A standalone broker, or one with native mode off, captures `winccoa/...` like any other topic.
 4. Topics starting with `$`.
 
 **Configurable:** `Capture.Include` (default `["#"]`) and `Capture.Exclude` (default `[<HMI.SyncBaseTopic>/#]`, i.e. `monstermq/hmi/sync/#`), where Exclude wins. The HMI sync channel is a request/response protocol between the `mmq hmi sync` tool and one broker; forwarded, the sync service of every node would answer each command and write the files (`internal/hmi/sync.go:110-130`). `Exclude: []` forwards it anyway. Filters are compiled once into a level trie and matched with an index-walking iterator, with no `strings.Split` (unlike `internal/topic/tree.go:332`). `Include: ["#"]` needs no test. Exclude entries of the form `<prefix>/#` (the default) compile to precomputed prefix tests like the namespace check (`t == prefix || strings.HasPrefix(t, prefixSlash)`); the trie runs only for other filters. `Capture.EchoSuppressMs` is in 14.6.
@@ -333,7 +342,7 @@ func (h *Hook) capture(cl *mqtt.Client, pk *packets.Packet, will bool) {
 
 ### 7.4 Inline sources
 
-Every publish of a broker-internal client is captured exactly like a client publish (owner decision 2026-10-03): the GraphQL/REST/MCP publish APIs, the MQTT, WinCC UA and WinCC OA bridges, scripts, host monitoring, Redfish, RTSP and native command replies. They all use the shared inline client `inline` (`internal/broker/server.go:397-483`); the record carries client id `inline`, no username and the `inline` kind flag. The same filters apply as for client publishes (7.2): the own namespace and `$` topics are never captured, Include/Exclude apply.
+Every publish of a broker-internal client is captured exactly like a client publish (owner decision 2026-10-03): the GraphQL/REST/MCP publish APIs, the MQTT, WinCC UA and WinCC OA bridges, scripts, host monitoring, Redfish, RTSP and native command replies. They all use the shared inline client `inline` (`internal/broker/server.go:397-483`); the record carries client id `inline`, no username and the `inline` kind flag. The same filters apply as for client publishes (7.2): `$` topics and, while native mode is active, the own namespace are never captured; Include/Exclude apply.
 
 - **Devices on both nodes.** Bridges, RTSP cameras and scripts run where their config's `NodeId` matches: the own NodeId, `local` or `*` (`GetEnabledByNode`, `internal/bridge/mqttclient/manager.go:93`, `internal/bridge/winccua/manager.go:42`, `internal/bridge/winccoa/manager.go:64`, `internal/bridge/rtspcamera/manager.go:45`, `internal/scripting/manager.go:78`). With a config store shared by both hosts (`ConfigStoreType: WINCCOA` mirrors MMQConfigs; a shared POSTGRES or MONGODB database does the same), a device with `local` or `*` runs on both nodes. Each node then publishes the device's output itself and also receives the peer's copy, so subscribers get every message twice. Assign each device that publishes into the broker to one node's NodeId; that node forwards its output to the peers. **Exception:** outbound-only MQTT bridges run on every node (`*`) with `Receive.BridgeOutbound: false`, because each node's bridge then forwards exactly that node's own publishes (19). A startup WARN names devices that break the rule (6.2).
 - **Redfish ignores NodeId.** Gateways are loaded by type (`internal/redfish/manager.go:142`, `GetByType`), so an enabled gateway runs on every node where Redfish is on. Each node derives its retained `<topicPrefix>/<chassis>/sensors/<id>` values (default prefix `redfish`) from the bus, replicas included (`internal/redfish/subscriber.go:69,142-147,168`), so every derived value arrives twice. Enable Redfish on one node only, or add its prefix to `Capture.Exclude` (14.6). Startup WARN (6.2).
@@ -363,6 +372,7 @@ const chunkSlots = 1024
 type chunk struct {
     base  uint64                          // first offset in this chunk
     slots [chunkSlots]unsafe.Pointer      // *byte of an immutable frame; length from its recLen prefix; nil = gone
+    cum   [chunkSlots]uint64              // running accounted bytes per slot: trim accounting in O(1) under the lock
 }
 
 type Log struct {
@@ -388,11 +398,10 @@ type consumer struct {
     served     uint64        // S[c]
     acctNext   uint64        // loss accounted below this offset (8.5)
     lostTotal  uint64
-    session    *session
-    instance   uint64
     state      ConsumerState // NEVER_CONNECTED | CONNECTED | DISCONNECTED
-    lastFetch  time.Time
 }
+// As implemented, the per-session fields (session, instance, lastFetch) live in the server's
+// consumer slot; it sets the log state together with its active session under one lock.
 
 type waiter struct { wakeAt uint64; notify chan struct{} } // cap 1, allocated once per session
 ```
@@ -417,7 +426,7 @@ type waiter struct { wakeAt uint64; notify chan struct{} } // cap 1, allocated o
    - store the pointer, `bytes += accounted(size)`;
    - evict while `leo-lso > MaxMessages || bytes > MaxBytes` (8.5);
    - `if leo > minWakeAt`, non-blocking send to each due waiter's `notify` (no allocation).
-4. **Unlock.** If the last chunk is more than 50 % full and `spare` is nil, signal the refill goroutine with a non-blocking send.
+4. **Unlock.** As implemented, four spare chunks are kept; taking one signals the refill goroutine with a non-blocking send (goroutine wake-up latency exceeded the time a saturated burst needs to fill one chunk). A miss allocates under the lock and is counted in `spareMisses`.
 
 The lock is never held across I/O or a blocking send, which is the BatchingQueueStore rule (`dev/done/plan-queue-performance.md:13-15`).
 
@@ -475,13 +484,13 @@ After `maxWaitMs` an empty `BATCH` (flag `EMPTY`) is sent. It doubles as the hea
 ### 8.7 Sizing and accounting
 
 - **Record size** = 44 B header + topic + clientId + username + props + payload. Example: topic 40 B, clientId 16 B, payload 100 B gives 200 B.
-- **Accounted size** = Go size class of the frame (a table copied from `runtime/sizeclasses.go` for ≤ 32 KiB; 8 KiB page rounding above) + 8 B slot. The example accounts 208 + 8 = 216 B. Chunk headers are counted when a chunk is attached. With this, `MaxBytes` bounds the real heap footprint of the log.
+- **Accounted size** = Go size class of the frame (a table copied from `runtime/sizeclasses.go` for ≤ 32 KiB; 8 KiB page rounding above) + 16 B slot (8 B pointer + 8 B running byte total). The example accounts 208 + 16 = 224 B. A chunk (16 KiB) is counted when it is attached. With this, `MaxBytes` bounds the real heap footprint of the log.
 - **Capacity.**
   ```
   capacityRecords = min(MaxMessages, MaxBytes / accountedRecordBytes)
   capacitySeconds = capacityRecords / appendRate
   ```
-  A live gauge `capacitySeconds = (MaxBytes - bytes) / smoothedAppendBytesPerSec` is exported. With 256 MiB and 216 B records: about 1.24 M records, which is about 62 s at 20,000 msg/s and about 12 s at 100,000 msg/s. The count bound only governs records below about 134 B, so the "max queue length" is in practice a byte bound. The docs say so.
+  A live gauge `capacitySeconds = (MaxBytes - bytes) / smoothedAppendBytesPerSec` is exported. With 256 MiB and 224 B records: about 1.2 M records, which is about 60 s at 20,000 msg/s and about 12 s at 100,000 msg/s. The count bound only governs records below about 134 B, so the "max queue length" is in practice a byte bound. The docs say so.
 - **Restart window.** M1 measures `T_restart` (p95) for the standalone broker and for the embedded WCCOAmmq. The default `MaxBytes` is then set so that `referenceRate × accountedBytes × 2 × T_restart` fits. Reference workload: 20,000 msg/s with 200 B records (10× AC-34). If the default would not fit on a 4 GB Pi 4, the docs instead state the lossless outage window per rate.
 - **RSS.** Up to about 2 × `MaxBytes` + baseline under GOGC=100 while the log is full (est.). A new top-level `Runtime.MemoryLimitMB` (Q23) calls `debug.SetMemoryLimit`. The repo has no GC tuning today. A startup WARN fires when `2.2 × MaxBytes + 150 MiB` exceeds the limit. The embedded manager inherits its environment, so the config knob is the supported path. Gate G6.
 
@@ -502,14 +511,14 @@ After `maxWaitMs` an empty `BATCH` (flag `EMPTY`) is sent. It doubles as the hea
 Order of checks on every accepted connection:
 
 1. **`Listener.AllowedNetworks`** (if set), right after `Accept`. A non-matching IP is closed before any read or TLS.
-2. **Pre-auth limits:** at most 16 unauthenticated connections in total, and at most `Listener.MaxPreAuthPerIp` (default 2) per remote IP. Excess connections are closed. A configured peer's IP is never starved by another IP.
-3. **Sniff** the first byte, with a 10 s deadline:
+2. **Pre-auth limits:** at most 16 unauthenticated connections in total, and at most `Listener.MaxPreAuthPerIp` (default 2) per remote IP (per /64 for IPv6). Excess connections are closed **without** `GOAWAY(busy)`: the refusal happens before the first byte is sniffed, so the source cannot know whether the client speaks TLS; it is counted as `admission.refusedBusy` (review 2026-10-03). A configured peer's IP is never starved by another IP: the IPs of peer Addresses (re-resolved every minute) and the IPs that completed a handshake in the last 24 h bypass the global cap.
+3. **Sniff** the first byte, with a 3 s deadline:
 
 | First byte | Meaning | Handling |
 |---|---|---|
 | `0x16` | TLS ClientHello (only when TLS is enabled) | Handshake. Then ALPN `mmq-peer/1` → peer protocol; ALPN `http/1.1` → status endpoint, for **mTLS-authenticated peers only**. |
 | `M` | Plaintext peer protocol preamble | Accepted only when TLS is off, or when `Listener.AllowPlaintext: true` (migration, 17.5) |
-| `G`, `P` | Plaintext `GET`/`POST` | Status and resync endpoints, **loopback only**. A one-shot `net/http` handler serves `GET /peerlink/v1/status` and `POST /peerlink/v1/resync`. |
+| `G`, `P` | Plaintext `GET`/`POST` | Status and resync endpoints, **loopback only**. A one-shot `net/http` handler serves `GET /peerlink/v1/status` and `POST /peerlink/v1/resync`. The connection keeps its pre-auth slot while it is served, the request is limited to 16 KiB, and a request with an `Origin` header or a non-loopback `Host` is refused with 403 (browser and DNS-rebinding guard, review 2026-10-03). |
 | other | — | Close |
 
 ### 9.3 Preamble and framing
@@ -529,13 +538,17 @@ FRAME:                              u32 frameLen (bytes after this field) | u8 t
 | Type | Dir | Body (field: type) |
 |---|---|---|
 | `SERVER_HELLO` 0x01 | S→C | `versionMajor u16`, `versionMinor u16`, `capabilities u64`, `authModes u8` (b0 client cert requested, b1 shared secret configured), `nonceS [32]` |
-| `HELLO` 0x02 | C→S | `flags u16` (b0 MAC present), `capabilities u64`, `instanceId u64`, `lastEpoch u64`, `resumeOffset u64` (consumer `appliedNext`, 0 = none), `lastSeenLeo u64`, `maxRecordBytes u32` (largest record it accepts), `retainedClass u8` (0 MEMORY, 1 DB, 2 WINCCOA), `nonceC [32]`, `mac [32]` (zero if no MAC), `consumerNodeId str8`, `expectedSourceNodeId str8`, `topicRoot str16`, `oaSystem str8` (name of the embedding WinCC OA system; empty when the broker is not embedded in WinCC OA or native mode is off) |
-| `HELLO_OK` 0x03 | S→C | `flags u16` (b0 SOURCE_RESET, b1 CONSUMER_STATE_USED, b2 SNAPSHOT_AVAILABLE), `capabilities u64` (agreed set = intersection), `epoch u64`, `resumeAt u64`, `logStart u64`, `leo u64`, `committed u64`, `lostOnResume u64`, `wallNowMs i64`, `monoNowMs u64`, `maxRecordBytes u32` (source capture cap), `retainedClass u8`, `macS [32]` (zero if no MAC), `sourceNodeId str8`, `topicRoot str16`, `oaSystem str8` (as in HELLO) |
+| `HELLO` 0x02 | C→S | `flags u16` (b0 MAC present), `capabilities u64`, `instanceId u64`, `lastEpoch u64`, `resumeOffset u64` (consumer `appliedNext`, 0 = none), `lastSeenLeo u64`, `maxRecordBytes u32` (largest record it accepts), `retainedClass u8` (0 MEMORY, 1 DB, 2 WINCCOA), `nonceC [32]`, `mac [32]` (zero if no MAC), `consumerNodeId str8`, `expectedSourceNodeId str8`, `topicRoot str16` (empty unless WinCC OA native mode is active, 7.2), `oaSystem str8` (name of the embedding WinCC OA system; empty when the broker is not embedded in WinCC OA or native mode is off) |
+| `HELLO_OK` 0x03 | S→C | `flags u16` (b0 SOURCE_RESET, b1 CONSUMER_STATE_USED, b2 SNAPSHOT_AVAILABLE), `capabilities u64` (agreed set = intersection), `epoch u64`, `resumeAt u64`, `logStart u64`, `leo u64`, `committed u64`, `lostOnResume u64`, `wallNowMs i64`, `monoNowMs u64`, `maxRecordBytes u32` (source capture cap), `retainedClass u8`, `macS [32]` (zero if no MAC), `sourceNodeId str8`, `topicRoot str16` (empty unless the source's native mode is active), `oaSystem str8` (as in HELLO) |
 | `GOAWAY` 0x04 | both | `code u16`, `reason str16` (empty before authentication when auth is configured, 9.5). The sender closes afterwards. |
 | `FETCH` 0x10 | C→S | `fetchId u32`, `flags u16` (b0 SNAPSHOT), `lingerMs u16`, `offset u64`, `commit u64` (0 = unchanged), `maxRecords u32`, `maxBytes u32`, `minRecords u32`, `maxWaitMs u32` |
 | `BATCH` 0x11 | S→C | `fetchId u32`, `flags u16` (b0 GAP, b1 EMPTY, b2 CRC, b3 SNAPSHOT, b4 SNAPSHOT_END, b5 TRUNCATED), `reserved u16`, `baseOffset u64`, `count u32`, `recordsBytes u32`, `logStart u64`, `leo u64`, `lost u64`, `sourceMonoMs u64`, `sourceWallMs i64`, `crc32c u32` (valid if b2) (68 bytes), then `recordsBytes` of records |
 | `COMMIT` 0x12 | C→S | `commit u64` |
 | `PING` 0x13 / `PONG` 0x14 | C→S / S→C | `token u64` |
+
+A BATCH whose `count` exceeds `recordsBytes / 4` (a record frame is at least its `recLen` prefix) is a protocol fault (`GOAWAY(protocol)`); the consumer sizes nothing by `count` before this check. The SNAPSHOT_END batch carries the number of retained topics cut off by `Snapshot.MaxTopics` in its `lost` field (`snapshotTruncated`); on other snapshot batches `lost` is 0 (review 2026-10-03).
+
+The BATCH `crc32c` is CRC-32C (Castagnoli) over the first 64 header bytes (everything before `crc32c`, flags with b2 already set) followed by the `recordsBytes` of records.
 
 **Capability bits (v1.0):**
 
@@ -563,7 +576,7 @@ Bits that are not understood are ignored. The agreed set is the intersection of 
 | 9 | `shutdown` | The source or consumer is stopping (normal backoff, INFO) |
 | 10 | `protocol` | Framing violation, commit > LEO, transport CRC failure (normal backoff, WARN) |
 | 11 | `offset_out_of_range` | FETCH or resume offset > leo in the same epoch. The consumer resets to `lastEpoch=0` and reconnects. |
-| 12 | `busy` | Pre-auth limits exceeded |
+| 12 | `busy` | Reserved. Pre-auth refusals close the connection without a frame (9.2) and are counted as `admission.refusedBusy`. |
 | 13 | `duplicate_node` | A second process uses this NodeId (9.5). Max backoff, and the source refuses that instance for 5 min. |
 
 ### 9.5 Handshake (R13)
@@ -589,7 +602,7 @@ C:   checks sourceNodeId == configured NodeId (and != own), == certificate ident
      on failure: GOAWAY(identity_mismatch | self_connection | wrong_node | auth_failed), close, back off
 ```
 
-**MAC (shared secret, TLS only, 17.3):**
+**MAC (shared secret, TLS only, 17.3).** A plaintext session (`Listener.AllowPlaintext` during migration) for a peer that has `SharedSecrets` is refused with `auth_failed`, also with the waiver: the secret cannot be bound to a plaintext connection, and the waiver must not turn a peer that has a secret into one that needs none (review 2026-10-03).
 
 - `lp(x)` = `u16 len(x)` + `x`. Every field is length-prefixed.
 - `exporter` = `ConnectionState.ExportKeyingMaterial("monstermq-peer/1", nil, 32)`.
@@ -598,7 +611,7 @@ C:   checks sourceNodeId == configured NodeId (and != own), == certificate ident
 - The consumer computes `mac` with its first configured secret. The source verifies against each secret in the peer's list (rotation, 17.5) and computes `macS` with the one that matched. The consumer verifies `macS` against its list.
 - Comparisons use `hmac.Equal`. A relay that terminates TLS separately on each side yields different exporters, so the MAC fails.
 
-**TopicRoot mismatch.** Both sides log a WARN once and set `topicRootMismatch=1`. The receiver filters both its own root and the announced one (12.2).
+**TopicRoot mismatch.** Each side announces its root only while its WinCC OA native mode is active (7.2, decided 2026-10-03). When both announce a non-empty root and the roots differ, both sides log a WARN once and set `topicRootMismatch=1`. The receiver filters its own root (only while its native mode is active) and the announced one when it is non-empty (12.2).
 
 **Retained store class mismatch.** If `retainedClass` differs between the two sides, both log a WARN once. The 24 h in-memory purge applies only to MEMORY (12.3, K10).
 
@@ -617,9 +630,7 @@ oaRetained = consumer.retainedClass == WINCCOA && source.retainedClass == WINCCO
 
 - There is one active session per consumer NodeId. The newest authenticated session wins, and the old one gets `GOAWAY(superseded)`.
 - A crash-restart is the normal case: a new `instanceId` arrives while the dead session is still open. It is not reported.
-- A **duplicate** is declared only when one of these happens:
-  - at least 3 takeovers alternate between two distinct `instanceId`s within 60 s;
-  - a superseded session keeps sending frames after its `GOAWAY`.
+- A **duplicate** is declared only when at least 3 takeovers alternate between two distinct `instanceId`s within 60 s. (The second trigger of the draft, a superseded session that keeps sending frames after its `GOAWAY`, is not implemented: the source closes the superseded connection right after the GOAWAY, so it cannot observe further frames; review 2026-10-03.)
 - The source then:
   - increments `duplicateConsumer` and logs an ERROR with both remote addresses;
   - keeps the earlier-established instance;
@@ -661,7 +672,7 @@ oaRetained = consumer.retainedClass == WINCCOA && source.retainedClass == WINCCO
 
 ### 9.8 Commit semantics
 
-- `commit = c` means: every record with offset < c has been applied locally. The `InjectPacket`/`RetainOnly` call returned, and the batched retained writes for those records have been flushed (13.4).
+- `commit = c` means: every record with offset < c has been applied locally. The `InjectPacket`/`RetainOnly` call returned, and the batched retained writes for those records have been flushed (13.4). When the retained store rejects a flush, the values go back to StorageHook's pending set (unless a newer local or replica value of the topic arrived meanwhile) and are written by the next flush; the commit proceeds, the failure is counted in `retainedFlushErrors` and logged as a rate-limited WARN. The values are in memory only until then (review 2026-10-03).
 - The injector sends `COMMIT` through the writer goroutine:
   - after every applied batch;
   - every 100 ms during a long apply (flushing the retained writer first);
@@ -809,7 +820,7 @@ All failures here are per-record: they increment `dropped{reason}`, the record c
 
 1. **Structure** (`malformed`): the `recLen` invariant; QoS ≤ 2; `topicLen > 0`; topic valid UTF-8 with no NUL, `+` or `#`; strings valid UTF-8; TLV well-formed; `captureMonoMs ≤ batch.sourceMonoMs`.
 2. **Tombstone** (`size_source`): flag `SKIPPED`.
-3. **Namespace** (`namespace`): the topic is under the receiver's **own** `TopicRoot` or under the source's announced root, or it starts with `$`. This check is mandatory, because inline injection bypasses ACL, `IsValidFilter` and the native hook.
+3. **Namespace** (`namespace`): the topic starts with `$`, or it is under the receiver's **own** `TopicRoot` while the receiver's WinCC OA native mode is active, or under the source's announced root when that is non-empty (the source announces it only while its native mode is active, 9.4). The own-root test uses the same predicate as capture (7.2; owner decision 2026-10-03). A standalone receiver therefore accepts `winccoa/...` from a standalone source like any other topic. This check is mandatory, because inline injection bypasses ACL, `IsValidFilter` and the native hook.
 4. **Per-peer filters** (`filtered`): `Receive.Include/Exclude`.
 5. **Size** (`size`): the payload exceeds the receiver's `MaxMessageSize` (inline injection skips the engine's size check).
 6. **Age at injection.** This is computed immediately before injection, not at batch build time:
@@ -824,14 +835,17 @@ All failures here are per-record: they increment `dropped{reason}`, the record c
    - a local client with that client id is connected now (`ClientState.Connected`, i.e. `s.Clients.Get(id)` and not `Closed()`); or
    - such a client established a session on this node at a time ≥ `consumerMonoNow - ageNow`.
 
-   Connect times come from the hook's `OnSessionEstablished`: a sharded map from client id to mono time, pruned of entries older than 24 h. This comparison is skew-free.
+   Connect times come from the hook's `OnSessionEstablished`: a sharded map from a 64-bit hash of the client id to mono time, pruned of entries older than 24 h and capped at 16k entries per shard (the older half goes first). This comparison is skew-free.
+
+   When a superseded will is **retained**, the source has already applied it to its own retained store. The receiver therefore appends its current retained value of the topic to its own log (when the source pulls from it), so the source converges to the receiver's value (PL-29; counted as `supersededWillResent`, review 2026-10-03).
 
 **Retained records that fail a policy step (12.2 steps 2-6):**
 
 | Reason | Retained action |
 |---|---|
 | `stale` | Apply the value **silently** through `Server.RetainOnly` (E4): the retained store is updated, and there is no live delivery. Deletes are applied the same way. |
-| `size`, `size_source`, `expired` | Not applied. Counted in `retainedDiverged{reason}`, with a rate-limited WARN naming the topic. |
+| `expired` delete (empty payload) | Applied silently like `stale`: the expiry of a zero-byte retained publish limits only its delivery; the clear itself is unconditional on the source (review 2026-10-03). |
+| `size`, `size_source`, `expired` | Not applied. Counted in `retainedDiverged{reason}`, with a rate-limited WARN naming the topic. A tombstone (`size_source`) has no topic, so that WARN cannot name it. |
 | `filtered`, `namespace` | Intentional; counted as `dropped` only |
 
 ### 12.3 Building and injecting the packet
@@ -857,7 +871,7 @@ err := server.InjectPacket(inj, pk)        // one injector goroutine per source:
 - `Packet.Copy` deep-copies only `Payload`, `CorrelationData` and `SubscriptionIdentifier`. It copies `TopicName`, `Origin`, `ContentType`, `ResponseTopic` and User key/value by reference (`packets.go:212-217`; `properties.go:131-132,176-184`). The in-memory retained map, inflight entries and the Default archive group's last-value map keep those references (`server.go:1104-1105`; `archive/manager.go:108-118`).
 - **Rule:** every string handed to the engine or to `Forward` is a fresh heap string or an interned string. That covers `TopicName`, `Origin`/`ClientID`, `Username`, `ContentType`, `ResponseTopic`, User key/value and `SourceNode`. None of them may alias the batch buffer.
 - **`Payload` and `CorrelationData`** may alias the batch buffer, because every retaining path deep-copies them. The only inline subscription (`hmi/sync.go:127`) is on the HMI sync tree, which is excluded by default; when it is forwarded, a request payload pins its batch buffer only until the sync worker has processed it (the buffer is allocated per batch and never reused).
-- **Interning.** Topics, client ids and usernames are interned in per-source two-generation caches (64k entries per generation; when the current generation is full it becomes the old one). There is no reset storm above 64k topics.
+- **Interning.** Topics, client ids and usernames are interned in per-source two-generation caches (64k entries or 8 MiB of string data per generation; when the current generation is full it becomes the old one). Strings longer than 256 B are not interned. There is no reset storm above 64k topics, and one source pins at most about 16 MiB of strings (review 2026-10-03).
 - **Allocation budget:** at most 1 allocation per record without properties (amortised), plus 2 per batch (the body buffer and the `[]packets.Forward`). Verified by `BenchmarkDecodeBatch -benchmem`.
 - **Retention test (PL-34):** 100 batches touch 10k retained topics, then GC is forced. `HeapInuse` growth must stay ≤ 2 × (retained topic + payload bytes).
 
@@ -875,7 +889,7 @@ err := server.InjectPacket(inj, pk)        // one injector goroutine per source:
 | QoS | Each subscriber gets `min(QoS, subQoS, MaximumQos)` | `server.go:1155-1249` |
 | Retain | Normal `retainMessage`. An empty retained payload **deletes**. Subscribers see retain=false unless RetainAsPublished is set. DB modes: writes are coalesced per batch (13.4). WINCCOA on a link with `oaRetained` (9.5): in-memory view only, no OA write (13.4). | `server.go:1037-1039,1082-1112`; `topics.go:463-486` |
 | Shared subscriptions | Default `Receive.SharedSubscriptions: SKIP`: the hook's `OnSelectSubscribers` clears `Shared`/`SharedSelected` for replicas, so a group gets each message once, from the node it was published on. `DELIVER`: every node's group gets it, i.e. one delivery per node. | `server.go:1132-1138`; `topics.go:322-327`; `hooks.go:379-383` |
-| Offline sessions | Default `Receive.Queue: false`: QueueHook skips replicas. A persistent client that fails over gets peer-origin messages live on the node it is connected to, and no duplicate backlog on its old node. | `hook_queue.go:105-145` |
+| Offline sessions | Default `Receive.Queue: false`: QueueHook skips replicas, and without a QueueHook (`QueuedMessagesEnabled: false`) the engine does not keep replicas in the inflight store of offline sessions either (`Options.QueueOfflineReplicas`, set from `Receive.Queue`). A persistent client that fails over gets peer-origin messages live on the node it is connected to, and no duplicate backlog on its old node. With `Receive.Queue: true` a replica is never queued for the offline session of its own publisher (NoLocal cannot be checked there, because the subscription index has no NoLocal flag; review 2026-10-03). | `hook_queue.go:105-145` |
 | NoLocal | `Origin = original clientId`, so a client using the same id on both nodes does not receive its own replayed messages | `server.go:1156` |
 | Read ACL | Still checked per subscriber at delivery | `server.go:1160-1162` |
 | Publish ACL | Enforced on the source. The receiver applies peer-level authorization (authentication, `Receive.Include/Exclude`, namespace filter). | — |
@@ -1148,7 +1162,7 @@ The receiver stores a still-valid retained record with its remaining interval an
 
 ### 16.3 Retained record that expired before it was pulled (v1: drop)
 
-The record is dropped and counted in `retainedDiverged{expired}`.
+The record is dropped and counted in `retainedDiverged{expired}`. A retained **delete** (empty payload) is the exception: it is applied silently through E4 (12.2), because the expiry of a zero-byte retained publish only limits its delivery and the source cleared its value unconditionally (review 2026-10-03).
 
 - **Consequence.** The receiver keeps its previous value until that value's own expiry (K4).
 - **Rejected alternatives.** Delivering with 1 s violates MQTT 5. An unconditional clear can wipe a newer local value.
@@ -1168,15 +1182,16 @@ Clients connect to both brokers at the same time (active-active, owner statement
 **Automatic snapshot (FILL), v1.**
 
 - **When.** On `HELLO_OK` with `SNAPSHOT_AVAILABLE`, that is, after a consumer restart or a source reset, if both sides agree `SNAPSHOT_FILL` and `Snapshot.Mode: FILL` (default).
+- **Interrupted snapshots are retried (review 2026-10-03).** The consumer keeps a per-source `snapshotPending` flag: it is set by `SNAPSHOT_AVAILABLE` and cleared only after `SNAPSHOT_END` was applied and flushed. While it is set, every new session runs the snapshot phase again, although its HELLO resumes the same epoch; the source serves `FETCH(SNAPSHOT)` whenever the capability was agreed. A failed scan of the source's retained set ends the session instead of sending a partial set with `SNAPSHOT_END`. Interruptions are counted (`snapshotsInterrupted`) and logged as a WARN. The consumer sends PING every KeepAlive/2 during the snapshot phase, so a slow scan on the source or a slow apply on the consumer does not trip either read deadline; the scan is bound to the session context.
 - **Skipped automatically on a link with `oaRetained`** (both sides `RetainedStoreType: WINCCOA` in one WinCC OA system, 9.5). The source does not set `SNAPSHOT_AVAILABLE`, and the consumer does not request a snapshot: the receiver loaded the MMQRetained datapoints that WinCC OA replicated when it started (13.4). Consequence of a source crash on such a link: a retained record that was captured but never pulled is in the receiver's datapoints (WinCC OA replicated the source's write) but not in its in-memory view until the receiver restarts. It is counted in `resetLostLowerBound`; the operator resync below repairs it without a restart.
 - **Source side.**
   1. The consumer sends `FETCH(flags=SNAPSHOT)`.
-  2. The source materialises the **topic list** of its current retained set through `RetainedAccess.Snapshot`: in-memory `Topics.Retained`, or `store.Retained.FindMatchingMessages("#")` in DB modes.
+  2. The source materialises its current retained set through `RetainedAccess.Snapshot`: in-memory `Topics.Retained`, or `store.Retained.FindMatchingMessages("#")` in DB modes. As implemented it keeps the packets, payloads included, for the session (bounded by `Snapshot.MaxTopics`), instead of a topic list with a per-topic read at batch time: one scan is far cheaper in DB modes than a store round trip per topic. Memory per snapshotting consumer is about the size of the retained set (review 2026-10-03, accepted deviation).
   3. It filters the list exactly like capture: namespace, `$`, Include and the resolved Exclude (`GetExclude`, by default the HMI sync tree, 18.3).
-  4. It streams the current values as `BATCH(SNAPSHOT)` records (record flag `snapshot`; `captureMonoMs` = source mono now minus the value's age; remaining expiry), one batch per FETCH, ending with `SNAPSHOT_END`.
+  4. It streams the current values as `BATCH(SNAPSHOT)` records (record flag `snapshot`; `captureMonoMs` = source mono now minus the value's age, clamped at the epoch start; `publishWallNs` = the value's `Created`; remaining expiry), one batch per FETCH, ending with `SNAPSHOT_END`. A record larger than the consumer's `maxRecordBytes` is sent as a tombstone, like in the log stream (9.7). The receiver backdates `Created` from the skew-corrected `publishWallNs` when that is older than the clamped mono age, and widens the expiry interval by the same amount, so the absolute expiry is unchanged (review 2026-10-03).
   5. `Snapshot.MaxTopics` (default 1,000,000) bounds the set. Anything beyond it is counted as `snapshotTruncated` and logged as a WARN.
 - **Consumer side.**
-  1. At snapshot start, the consumer takes the set of topics that currently have a retained value (`RetainedAccess.Has`: an in-memory map lookup; DB modes preload a topic set once per snapshot).
+  1. At snapshot start, the consumer takes the set of topics that currently have a retained value (MEMORY: an engine map lookup per record; DB modes: one `RetainedAccess.Snapshot` scan preloads topic and `Created` once per snapshot). A local value written during the snapshot is not in the preloaded set and can be overwritten by FILL.
   2. It injects a snapshot record **only if the topic is absent**. It injects through the normal path, so live subscribers on the receiver get the value with retain=false, and the retained store keeps it. `Forward.Snapshot` keeps it off bus, archives and queues.
   3. Present topics are skipped (`snapshotSkippedPresent`).
   4. Snapshot records carry no offsets and are not committed. The log tail starts after `SNAPSHOT_END`, at `resumeAt`, so newer log records overwrite snapshot values in order.
@@ -1261,7 +1276,7 @@ Rules:
 |---|---|---|
 | Rogue consumer claims a configured NodeId | Reads data. Advances `C[c]`, so records are trimmed before the real consumer reads them. | Fail-closed authentication (17.3) |
 | Rogue source, or MITM | Injects arbitrary non-namespace topics, **bypassing ACLs**; drops records while forwarding commits | Dialer verifies identity or pin, or `macS` over TLS with exporter binding. Plaintext only via the explicit waiver. |
-| Forged WinCC OA namespace or `$` topics | Forged native values or status | The receiver drops these regardless of auth state, using both roots (12.2) |
+| Forged WinCC OA namespace or `$` topics | Forged native values or status | The receiver drops these regardless of auth state: `$` always, the namespace using both roots while native mode is active (12.2). A standalone receiver has no namespace to forge. |
 | Shared-CA impersonation (machine or MQTT client certificate whose CN equals a NodeId) | Peer impersonation | URI SAN-only identity by default; WARN on a shared truststore |
 | Misspelled security key (non-strict YAML, `internal/config/load.go:19`) | Silently unauthenticated | Strict decoding of the `PeerLink` subtree (18.4); fail closed |
 | DoS on the peer port | Goroutines, memory | Admission before TLS (9.2); per-IP and global pre-auth limits; 4 KiB pre-auth frame cap; handshake deadlines; no state before auth; one session per NodeId |
@@ -1320,7 +1335,7 @@ PeerLink:
     NeverConnectedWarnSec: 300
   Capture:
     Wills: true                  # never during own shutdown; superseded wills dropped on the receiver
-    Include: ["#"]               # always excluded too: <TopicRoot>/#, $...
+    Include: ["#"]               # always excluded too: $..., and <TopicRoot>/# while WinCC OA native mode is active
     Exclude: null                # null = [<HMI.SyncBaseTopic>/#]; [] forwards the HMI sync channel too
     EchoSuppressMs: 0
   Snapshot:
@@ -1329,7 +1344,7 @@ PeerLink:
   Fetch:
     MaxRecords: 4096
     MaxBytes: 1048576
-    MaxWaitMs: 1000
+    MaxWaitMs: 1000              # 10 .. KeepAliveSeconds*1000-1; shorter would busy-loop an idle link
     LingerMs: 0
     Pipeline: 1                  # 1 | 2
     CrcOnTls: false
@@ -1345,7 +1360,7 @@ PeerLink:
     MaxApplyRate: 0
     MaxRecordAgeMs: 0
     MaxFrameBytes: 16842752      # 16 MiB + 64 KiB
-    InjectWorkers: 1             # contingency (21.3)
+    InjectWorkers: 1             # reserved: contingency (21.3), not implemented; > 1 logs a WARN
   Peers:                         # the entry whose canonical NodeId equals the own one is ignored
     - NodeId: oa-host-a
       Address: oa-host-a.plant.local:1890   # present => we pull from it
@@ -1402,7 +1417,7 @@ The section is a top-level `PeerLink PeerLinkConfig` with its own `Enabled`, lik
   1. If `Enabled` is false, only key names and types are checked, so the example block stays valid.
   2. `Config.Validate` records whether `NodeId` came from the `edge` fallback **before** filling it (`config.go:510-516`). With PeerLink enabled, that fallback is rejected.
   3. **Canonical NodeIds.** The own NodeId and every peer NodeId are lower-cased and must match `^[a-z0-9._-]{1,64}$`. Two peer entries that are equal after lower-casing are an error. The canonical form is used for config lookup, HELLO fields, URI SANs and injector client ids.
-  4. **Own-entry detection.** An entry matches the own node when its canonical NodeId equals the own one. When `NodeId` came from the hostname, an entry also matches when it equals the hostname's first label. The match is dropped (INFO). If the list has two or more entries and none matches, a WARN names the resolved hostname ("if this file is shared, no entry matches this host"). It is not an error, because per-host mesh files list only the other nodes.
+  4. **Own-entry detection.** An entry matches the own node when its canonical NodeId equals the own one. When `NodeId` came from the hostname, an entry also matches when it equals the hostname's first label; the link then uses that entry's id as this node's PeerLink NodeId (HELLO, HELLO_OK, MAC, certificate URI SAN, injector ids), because the peers of a shared file know the node by it (INFO; review 2026-10-03). `QueueHook` hydrates sessions stored under the configured NodeId and under the adopted id. The match is dropped (INFO). If the list has two or more entries and none matches, a WARN names the resolved hostname ("if this file is shared, no entry matches this host"). It is not an error, because per-host mesh files list only the other nodes.
   5. **Peers:** at least one remains. Each entry has an `Address` or `Serve: true`. An `Address` parses with `net.SplitHostPort`.
   6. **Listener:** if any peer has `Serve`, `Listener.Port` must be 1..65535 (0 → 1890). `AllowedNetworks` entries parse as CIDR. No MQTT listener may have the id `peerlink`.
   7. **Authentication (17.3):**
@@ -1417,7 +1432,7 @@ The section is a top-level `PeerLink PeerLinkConfig` with its own `Enabled`, lik
      - `MaxMessages ≥ max(100, Fetch.MaxRecords)`;
      - `MaxBytes ≥ 1 MiB` and `≥ 4 × MaxRecordBytes`;
      - `1 ≤ Pipeline ≤ 2`;
-     - `Fetch.MaxWaitMs < KeepAliveSeconds*1000`;
+     - `10 ≤ Fetch.MaxWaitMs < KeepAliveSeconds*1000` (the floor keeps an idle link from answering EMPTY batches in a busy loop; review 2026-10-03);
      - `CatchUpRateFactor` is 0 or ≥ 1.5;
      - `1 ≤ InjectWorkers ≤ 16`;
      - every Include/Exclude entry is a valid filter.
@@ -1447,7 +1462,7 @@ The section is a top-level `PeerLink PeerLinkConfig` with its own `Enabled`, lik
 
 - **Independent of the OA role.** Both brokers accept clients and forward, active-active. Nothing switches on an OA switchover. Role reporting stays in `plan-winccoa-node-redundancy-status.md`.
 - **NodeId must differ per host.** Changing a NodeId changes device assignment (`internal/bridge/mqttclient/manager.go:93`). Move device and archive-group assignments to the new NodeId in the same maintenance step.
-- **The namespace is never forwarded.** WinCC OA mirrors `<TopicRoot>` itself, and each node's status topic stays node-local. This resolves `plan-winccoa-node-redundancy-status.md:160-165` and matches `plan-winccoa-broker-cns-mqtt-namespace.md:140`.
+- **The namespace is never forwarded** (native mode is active on both hosts, 7.2). WinCC OA mirrors `<TopicRoot>` itself, and each node's status topic stays node-local. This resolves `plan-winccoa-node-redundancy-status.md:160-165` and matches `plan-winccoa-broker-cns-mqtt-namespace.md:140`.
 
 | | Topics branch (`winccoa/topics/...`) | PeerLink (all other topics) |
 |---|---|---|
@@ -1506,9 +1521,9 @@ The section is a top-level `PeerLink PeerLinkConfig` with its own `Enabled`, lik
 
 1. **slog** (reaches the dashboard log viewer via the log bus):
    - INFO: connect, disconnect, state changes.
-   - WARN, rate-limited per peer to 1 per 10 s with aggregate counts: gaps, source resets, never connected, skew, retained divergence, `shutdownUnserved > 0`, `uncapturedAtShutdown > 0`.
+   - WARN, rate-limited per peer to 1 per 10 s with aggregate counts: gaps, source resets, never connected, skew (`|clockSkewMs| > 1000`, at most every 10 min, with the NTP recommendation), retained divergence, `shutdownUnserved > 0`, `uncapturedAtShutdown > 0`. Rate-limiter keys are built from codes and configured NodeIds only, never from unauthenticated input (review 2026-10-03).
    - ERROR: identity mismatch, self connection, wrong node, duplicate NodeId, poison batch.
-2. **Status endpoint** `GET /peerlink/v1/status`: plaintext from loopback, or over TLS to mTLS-authenticated peers only. There is no HMAC-signed remote status in v1. It returns JSON with `nodeId`, `epoch`, `listen`, `tls`, `log{...}`, `consumers[...]` and `sources[...]`, e.g. `curl -s http://127.0.0.1:1890/peerlink/v1/status`. The integration tests assert counters through it. `POST /peerlink/v1/resync` is loopback only (16.5).
+2. **Status endpoint** `GET /peerlink/v1/status`: plaintext from loopback, or over TLS to mTLS-authenticated peers only. A pull-only node (no Serve peer) binds `127.0.0.1:<Listener.Port>` for the status and resync endpoints only; a port conflict there is a WARN, not a startup error (review 2026-10-03). There is no HMAC-signed remote status in v1. It returns JSON with `nodeId`, `epoch`, `listen`, `tls`, `log{...}`, `consumers[...]` and `sources[...]`, e.g. `curl -s http://127.0.0.1:1890/peerlink/v1/status`. The integration tests assert counters through it. `POST /peerlink/v1/resync` is loopback only (16.5).
 3. **Metrics collector.** `messageBusIn` (records injected) and `messageBusOut` (records served) are added to the persisted `BrokerSnapshot` JSON under the Java keys (`MetricsStoreSQLite.kt:351-352`; meaning per `SessionHandler.kt:58-60`). `snapshotToBrokerMetrics` (`internal/graphql/resolvers/resolver.go:1832-1843`) maps them to the existing `BrokerMetrics.messageBusIn/messageBusOut` fields in v1 (M5; S4 granted 2026-10-03, no SDL change).
 4. **Native status JSON (M5, covered by S2).** When native mode is on, the retained status on `<TopicRoot>/...` (`internal/winccoanative/service.go:1149-1173`) gets a `peerLink` object:
 
@@ -1543,6 +1558,8 @@ The ceiling is the receiver's apply path on one goroutine. Section 9.1 no longer
 ### 21.2 Gates
 
 All gates are measured per GOARCH (arm64, armv7, amd64). The load generator runs on a **separate host**. Results are recorded in this plan before acceptance and stored as baselines in `dev/bench/peerlink/`.
+
+**Status (2026-10-03): all gates open.** No gate has been measured on the reference hardware, the load harness and `dev/bench/peerlink/` do not exist yet, and `Log.MaxBytes` (256 MiB) stays provisional until `T_restart` is measured (8.7, Q13). Development-VM figures (4 vCPU arm64, not reference hardware): G1 misses the 350 CPU ns budget at 16 goroutines in the committing variant (about 400-480 ns), meets it at 1 and mostly at 4 goroutines and in every evicting run; G1b cannot be judged on the VM (its noise floor exceeds the targets). `BenchmarkInjectPublish` (test/integration): about 1.16 µs/op, 16 allocs without PeerLink and 1.28 µs/op, 17 allocs with capture, 200 B payload. Acceptance (M1, M5) waits for these runs.
 
 | Gate | Measurement | Pass |
 |---|---|---|
@@ -1596,7 +1613,7 @@ All black-box tests live in `test/integration/peerlink_*_test.go` and drive real
 | PL-03 | Publisher and time | Bus and archive rows on B carry the A client id and the A capture time in ns. The DB-retained row on B carries the A client id and username, and `Created` equal to the A capture second (±1). |
 | PL-04 | Bidirectional, no echo | One publish on A gives exactly one delivery on A and one on B. `A.log.appended{client}` unchanged by B's injections. `skipPeer == injectedViaInjectPacket` on both nodes, including a pull-only node. Stable after 10 s idle. **Variant:** an external client on B republishes every received message on the same topic: with `EchoSuppressMs: 2000` the message count stays bounded; with `MarkReplicas: true` the user property is present. |
 | PL-05 | Three nodes: full mesh, chain, ring | Mesh: exactly once per node. Chain A–B–C: C gets nothing from A. Ring: no loop. |
-| PL-06 | Namespace and `$` exclusion | `winccoa/...` and `$x/...` on A are not captured, nor is `monstermq/hmi/sync/...` with the default Exclude. The test peer sends root, `$` and announced-root topics, and B drops them with `reason=namespace`. A TopicRoot mismatch sets `topicRootMismatch`. |
+| PL-06 | Namespace and `$` exclusion | `$x/...` on A is not captured, nor is `monstermq/hmi/sync/...` with the default Exclude; `winccoa/...` is not captured while A's native mode is active, and is captured like any topic on a standalone A (decided 2026-10-03). The test peer sends root, `$` and announced-root topics, and B drops them with `reason=namespace`. A TopicRoot mismatch sets `topicRootMismatch`. |
 | PL-07 | Inline sources | A GraphQL/REST publish, a script publish and an MQTT bridge inbound publish on A are forwarded with client id `inline`. The HMI sync tree is not forwarded by default and is forwarded with `Exclude: []`. Replicas are never re-forwarded. Startup WARNs (6.2 `build()` step 5): a script with NodeId `*` under a shared config store, tested with `ConfigStoreType: WINCCOA` through the simulated WinCC OA host (`internal/oahost/simhost`, set up like `withOAStores` and `startNative` in `test/integration/winccoa_native_store_test.go:25-35`); an enabled Redfish gateway; an MQTT bridge whose `brokerUrl` host is a peer address. An outbound-only bridge with `*` raises no WARN. |
 | PL-08 | Consumer restart | Stop B, publish 10k on A, start B: all 10k arrive in order. Crash B (subprocess kill) during apply: duplicates ≤ one commit window. |
 | PL-09 | Connection drop | The proxy kills the connection mid-stream: zero loss, zero duplicates |
@@ -1632,7 +1649,7 @@ All black-box tests live in `test/integration/peerlink_*_test.go` and drive real
 | PL-39 | NodeId canonicalisation | Config `OA-Host-A` vs hostname `oa-host-a`: own entry dropped, link up. Shared file with an FQDN hostname matches the short entry. A WARN when no entry matches. |
 | PL-40 | Operator resync | After an overflow, `POST /peerlink/v1/resync` restores newer values on B; present newer local values are kept |
 | PL-41 | TLS migration | Steps of 17.5 executed with one node restart at a time: no interval in which both directions are down; zero loss for connected consumers |
-| PL-42 | Admission | 3 parallel pre-auth connections from one IP: the third is refused (`busy`), and the configured peer from another IP still connects |
+| PL-42 | Admission | 3 parallel pre-auth connections from one IP: the third is refused (closed, `refusedBusy`), and the configured peer from another IP still connects |
 | PL-43 | Retained capture order | A retained publish whose PUBACK write blocks (client with a tiny receive window) and a concurrent same-topic retained publish: final retained value identical on A and B |
 | PL-44 | WINCCOA retained across one or two OA systems | A and B each run on their own simulated WinCC OA host (`simhost.New(<system>, 0)`, `internal/oahost/simhost/simhost.go:93`) with `RetainedStoreType: WINCCOA`, set up like `newSim` and `startNative` (`test/integration/winccoa_native_test.go:37-39,82`) and `TestNativeStoreRetained` (`test/integration/winccoa_native_store_test.go:381-385`). **Same system** (both `System1`): `oaRetained` is 1 on both sides, no snapshot is requested; a retained set and then a delete on A reach B's live subscribers, and a subscriber that connects to B after the set receives the value; on B's host the MMQRetained datapoint of that topic does not exist (`sim.Get` fails, as at `winccoa_native_store_test.go:397`) and `sim.Calls(oahost.OpDpCreate/OpDpSet/OpDpDelete)` do not change while the replicas are applied. **Different systems** (`System1`, `System2`): `oaRetained` is 0; B creates and writes the datapoint (`OpDpSet` count rises, `sim.Get` returns the payload) and deletes it on the retained delete. |
 
@@ -1658,7 +1675,7 @@ All black-box tests live in `test/integration/peerlink_*_test.go` and drive real
 
 | M | Scope | Exit criteria |
 |---|---|---|
-| **M0** Decisions | **Done 2026-10-03, except the spec amendment.** S1-S8 accepted (section 2); Q1-Q28 decided (section 25); this plan committed. Spec amendment pending: the S2 text change in `spec-winccoa-native.md` (§1 `:15` and `:19`, M6a row, §7.2 cross-reference) lands with M1 or as a separate small commit. | Owner sign-off recorded (2026-10-03); spec amendment committed |
+| **M0** Decisions | **Done 2026-10-03.** S1-S8 accepted (section 2); Q1-Q28 decided (section 25); this plan committed. The S2 text change in `spec-winccoa-native.md` (§1 `:15` and `:19`, M6a row) and the §7.2 cross-reference in `plan-winccoa-broker-embedded-manager.md` landed 2026-10-03. | Owner sign-off recorded (2026-10-03); spec amendment committed |
 | **M1** Core, no network | E1, E2, E4, E5, E6 with tests; `wire` codec (header, TLV, tombstone); chunked `Log`; `Hook` (capture paths, striped counters); `BenchmarkInjectPublish`; verify `BrokerMessage.OriginNode` is not persisted by any store; verify `mqtt.Close` after `CloseListeners`; verify that `SessionInfo.NodeID` is populated by every session store (moved from M0) | G0 (incl. `T_restart`) and G1/G1b recorded and met; default `MaxBytes` fixed from `T_restart`; fuzz clean |
 | **M2** One-way link, plain TCP | Protocol and handshake (incl. `oaSystem` and the `oaRetained` decision, 9.5), server, puller (three goroutines), injector, receiver filters and failure classes, StorageHook/QueueHook/bus-adapter changes, batched retained writer, `RetainedStore.ApplyCached` (13.4), config + strict decode + schema + examples + fixture, lifecycle wiring incl. shutdown order | PL-01, 02, 03, 06, 07, 12, 14, 22, 26, 33, 34, 37, 44 green |
 | **M3** Failure semantics | Epochs and resume, commit and trim, loss accounting, overflow/GAP, keepalive and progress deadlines, backoff, takeover and duplicate detection, drain, wills with supersession, snapshot FILL, catch-up pacing, shared-subscription skip, bidirectional links and meshes, versioning | PL-04, 05, 08-11, 13, 15, 17-20, 23, 27-32, 35, 38, 39, 43 green; G5 |

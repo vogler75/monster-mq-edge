@@ -13,12 +13,13 @@ on devices like the Raspberry Pi 4/5.
 - **GraphQL API** with subscriptions, schema-parity with the existing dashboard.
 - **REST API** for publishing, bodyless current/retained/history reads, bulk and Influx writes, and SSE subscriptions.
 - **MQTT bridge** — forward local topics to a remote broker and vice versa.
+- **PeerLink** — pull-based, in-memory forwarding of publishes between MonsterMQ Edge brokers (pairs and full meshes), with QoS, retain, MQTT 5 properties, publisher and publish time preserved. See [PeerLink](#peerlink-forwarding-between-brokers).
 - **Camera snapshots** — RTSP MJPEG and H.264 I/P/B streams to MQTT JPEG topics; [native Go decoder API and current limits](pkg/h264/README.md).
 - **Users + ACL** with bcrypt password hashing.
 - **Periodic metrics** surfaced via `Broker.metrics`/`metricsHistory`; history can be persisted or kept in memory.
 - **WinCC Unified bridge** — GraphQL/WebSocket or Open Pipe transport into local MQTT topics.
 - **WinCC Open Architecture bridge** — GraphQL/WebSocket subscriptions from `dpQueryConnectSingle` into local MQTT topics.
-- No clustering, no OPC UA / Kafka / Sparkplug / GenAI / flows.
+- No OPC UA / Kafka / Sparkplug / GenAI / flows.
 
 ## Getting Started
 
@@ -344,6 +345,225 @@ strictly from IPv4 `127.0.0.1` (localhost) to connect without authentication, ev
 Connections or requests arriving from any other IP address continue to require valid
 credentials or tokens.
 
+## PeerLink: forwarding between brokers
+
+PeerLink links MonsterMQ Edge brokers so that a message published on one of
+them is also delivered by the others, with the same MQTT semantics. It is
+generic: any two or more brokers can be linked, with or without WinCC OA. For
+WinCC OA redundant pairs see
+[winccoa/README.md](winccoa/README.md#peerlink-for-redundant-pairs).
+
+- **Pull-based, in memory.** Every broker keeps the publishes it accepted in
+  an in-memory log (nothing is written to disk). Each peer pulls from that log
+  over one TCP connection (port 1890 by default, optional TLS), applies the
+  records locally and commits its offset. A record is freed once every
+  configured peer has applied it; when the log is full, the oldest records
+  are dropped and counted.
+- **Message fidelity.** QoS, retain (an empty retained payload deletes), the
+  MQTT 5 publish properties (payload format, content type, response topic,
+  correlation data, user properties), the remaining message expiry, the
+  publisher's client id and username, and the publish time. Broker-internal
+  publishes (bridges, scripts, publish APIs) carry the client id `inline`.
+- **One hop.** A broker never forwards what it received from a peer (split
+  horizon), so PeerLink alone cannot form a loop. The two directions of a pair
+  are separate links. With more than two brokers configure a full mesh, in
+  which every broker lists every other one; a chain or ring delivers one hop
+  only.
+- **Restart-safe within bounds.** A peer that restarts resumes where it
+  stopped, and missing retained messages come back through a snapshot
+  (fill-if-absent, `Snapshot.Mode: FILL`), as long as the source kept running
+  and the outage fits into the source's log.
+
+### What is forwarded
+
+Every publish a broker accepts: from network clients, wills, and from
+broker-internal publishers (REST/GraphQL publish APIs, MQTT and WinCC bridges,
+scripts, host monitoring, cameras). Not forwarded:
+
+- topics starting with `$`;
+- topics outside `Capture.Include` (default `["#"]`) or inside
+  `Capture.Exclude` (default: the HMI sync channel `<HMI.SyncBaseTopic>/#`,
+  i.e. `monstermq/hmi/sync/#`; `[]` forwards it too);
+- the WinCC OA namespace (`<TopicRoot>/...`), but only while the broker runs
+  embedded in WinCC OA with native mode active (`WinCCOaNative.Enabled` and
+  `Namespace`). A standalone broker forwards `winccoa/...` like any topic;
+- wills fired because the broker itself shuts down.
+
+`Peers[].Receive.Include` / `Exclude` filter what this node accepts from a
+peer. Replicas always reach local subscribers and the retained store. The other
+subsystems are set under `PeerLink.Receive`: the pubsub bus (GraphQL
+`topicUpdates`, scripts, REST SSE) and archive groups get replicas (`Bus`,
+`Archive`: true); MQTT bridges do not forward them (`BridgeOutbound: false`,
+loop guard); offline queues of persistent sessions skip them (`Queue: false`);
+shared subscription groups get each message once, on the broker it was
+published on (`SharedSubscriptions: SKIP`, or `DELIVER`). Network clients may
+not use the client ids `inline` or `peerlink:*`.
+
+### Configuration
+
+A link is configured on both sides: a broker pulls from a peer that has an
+`Address`, and lets a peer pull from it when that peer has `Serve: true` (the
+default). Every broker needs its own `NodeId` (default: the hostname; with
+PeerLink enabled the `edge` fallback is rejected). One file can serve every
+host, because the `Peers` entry whose `NodeId` equals the own one is ignored.
+Unknown keys under `PeerLink` fail startup. `config.yaml.example` lists every
+key with its default.
+
+Peers must authenticate each other; otherwise startup fails. A pair with TLS
+and a shared secret:
+
+```yaml
+NodeId: edge-a                      # edge-b on the other host; the rest is identical
+PeerLink:
+  Enabled: true
+  Tls:
+    Enabled: true
+    AutoGenerate: true              # self-signed certs/peer-{NodeId}.pem and .key on first start
+  SharedSecrets: ["<base64, at least 16 bytes: openssl rand -base64 32>"]   # same on both hosts
+  Peers:
+    - { NodeId: edge-a, Address: "edge-a.local:1890" }
+    - { NodeId: edge-b, Address: "edge-b.local:1890" }
+```
+
+The secret is bound to the TLS session (TLS 1.3), so the self-signed
+certificates need not be verified. With more than two brokers, prefer
+per-peer `Peers[].SharedSecrets`: a group secret lets any holder claim any
+NodeId of the group.
+
+mTLS, recommended for production and for meshes. Each broker has a certificate
+with the URI SAN `urn:monstermq:node:<NodeId>` and the extended key usages
+serverAuth and clientAuth, issued by a dedicated peer CA:
+
+```yaml
+NodeId: edge-a
+PeerLink:
+  Enabled: true
+  Tls:
+    Enabled: true
+    CertPath: certs/peer-{NodeId}.pem
+    KeyPath: certs/peer-{NodeId}.key
+    TrustStorePath: certs/peer-ca.pem   # dedicated peer CA; system roots are never used
+    ClientAuth: REQUIRED
+  Peers:
+    - { NodeId: edge-a, Address: "edge-a.local:1890" }
+    - { NodeId: edge-b, Address: "edge-b.local:1890" }
+    - { NodeId: edge-c, Address: "edge-c.local:1890" }
+```
+
+Without a CA, pin the self-signed certificates instead: `AutoGenerate: true`
+and `ClientAuth: REQUIRED` on every broker, and per peer
+`Tls: { PinnedSha256: ["<SPKI SHA-256>"] }` with the `spkiSha256` value the
+peer logs at startup. `SharedSecrets` and `PinnedSha256` are lists, so they
+can be rotated without losing the link: add the new value on both sides, move
+it to the first position on both, then remove the old one.
+Plain TCP without authentication is accepted only on a trusted network:
+`AllowUnauthenticatedPeers: true` together with `Listener.AllowedNetworks`
+and `UserManagement.Enabled: false`; it logs a WARN on every start.
+
+Memory: `Log.MaxBytes` (default 256 MiB) bounds the log. A 200-byte record
+(topic, client id and payload) takes about 224 bytes, so the default holds
+about 1.2 million records, about 60 s at 20,000 msg/s; the status reports the
+remaining `capacitySeconds`. While the log is full the process can use about
+twice `MaxBytes`; `Runtime.MemoryLimitMB` sets a soft Go memory limit.
+
+### Delivery guarantees (RPO)
+
+PeerLink is not synchronous replication: a PUBACK means that the local broker
+accepted the message, not that a peer has it. With the link up on a LAN, the
+data at risk is the replication lag.
+
+| Event | Result |
+|---|---|
+| Connection drop, both brokers running | No loss and no duplicates (resume by offset), while the backlog fits into the source's log |
+| Peer graceful restart | No loss and no duplicates; missing retained values come back through the snapshot |
+| Peer crash | The records applied after the last commit, at most one batch, are delivered again (at least once) |
+| Source graceful stop | The MQTT listeners close first (MQTT 5 clients get reason 0x8B and can fail over), bridges and scripts stop, then the source waits up to `Log.DrainOnShutdownMs` (default 2000) for connected peers to catch up. What it could not serve is logged exactly (`shutdownUnserved`, `uncapturedAtShutdown`). |
+| Source crash | Records not yet pulled are lost; the peer counts `sourceResets` and a lower bound in `resetLostLowerBound` |
+| Peer down longer than the log holds | The oldest records are dropped and counted on both sides (`lostTotal`, `gapLostTotal`) |
+
+QoS 2 is not exactly-once across a peer crash. Clients connected to several
+brokers at once can end up with swapped retained values after a network
+partition: on each broker the retained message applied last wins. No loss is
+silent; every drop is counted in the status.
+
+### Loop guards
+
+PeerLink never forwards a replica again, but other components can turn a
+replica into a new publish, which is then forwarded like any other:
+
+- Never point an MQTT bridge, inbound or outbound, at a peer broker.
+- Assign every device that publishes into the broker (MQTT bridges with
+  inbound subscriptions, WinCC UA/OA bridges, RTSP cameras, scripts) to one
+  broker's `NodeId`. With a config store the brokers share (`ConfigStoreType:
+  WINCCOA`, or one PostgreSQL/MongoDB database), a device with `local` or `*`
+  runs on every broker and its output arrives twice.
+- Outbound-only MQTT bridges are the exception: run them on every broker (`*`)
+  with `Receive.BridgeOutbound: false` (the default), so that each bridge
+  forwards exactly its own broker's publishes. A broker with
+  `BridgeOutbound: true` must not also run such bridges.
+- Redfish gateways ignore `NodeId`: enable Redfish on one broker only, or add
+  its prefix (`redfish/#`) to `Capture.Exclude`.
+- Keep `{NodeId}` in `HostMonitoring.BaseTopic` (the default).
+- An archive group that writes into a database shared by several brokers
+  belongs to one broker, or set `Receive.Archive: false`.
+- For external clients that republish what they receive, set
+  `Receive.MarkReplicas: true` (adds the user property `mmq-peer-src=<NodeId>`
+  to replicas) or `Capture.EchoSuppressMs`.
+- Shared subscription groups need members on every broker.
+
+At startup the broker logs a WARN for devices that run on every broker under a
+shared config store, Redfish gateways, bridges whose remote host is a peer, and
+a host-monitoring topic without `{NodeId}`.
+
+### Status
+
+The peer port serves a JSON status to loopback clients, and over TLS to
+mTLS-authenticated peers:
+
+```bash
+curl -s http://127.0.0.1:1890/peerlink/v1/status
+```
+
+It shows this broker's log (`lso`, `leo`, `records`, `bytes`,
+`capacitySeconds`, evictions, capture drops), every peer that pulls from it
+(`consumers`: `state`, `committed`, `lag`, `lostTotal`, `shutdownUnserved`) and
+every peer it pulls from (`sources`: `state`, `lagRecords`, `injected`,
+`dropped` per reason, `gapLostTotal`, `sourceResets`, `retainedDiverged`,
+`lastError`, `applyDelayMs`). `POST /peerlink/v1/resync?source=<NodeId>`
+(loopback only) fetches the retained messages of that source again and
+overwrites local values that are more than 1 s older. The peer port is bound
+on `Listener.Address` when a peer has `Serve: true`; a broker that only pulls
+binds `127.0.0.1:<Listener.Port>` for these two endpoints. With
+`Listener.AllowedNetworks`, include `127.0.0.1/32`. Requests that carry an
+`Origin` header or a non-loopback `Host` are refused (browser guard), so call
+the endpoints with `curl` and `127.0.0.1` or `localhost`. Link events are logged (connects at INFO, gaps and resets at
+WARN, identity and configuration errors at ERROR), and `Broker.metrics`
+reports the records injected and served as `messageBusIn` and
+`messageBusOut`.
+
+### Limitations
+
+- The `$SYS` counters `messages/received` and `packets/received` include the
+  replicas a broker applied.
+- A snapshot (`FILL`) after a peer restart can bring back a retained value that
+  was deleted on that peer while the source was unreachable.
+- In a mesh, a snapshot also carries retained values the source itself received
+  from other peers (harmless with `FILL`, which only fills absent topics).
+- A resync snapshot has no tombstones: values the source deleted are not
+  removed on the peer. After an outage longer than the log, run the resync,
+  then clear or republish the remaining topics by hand.
+- Retained values from snapshots and archive rows of replicas are dated with
+  the source's clock. Synchronise the brokers with NTP; a clock difference
+  above 1 s is logged as a WARN (`clockSkewMs` in the status).
+- `Fetch.MaxWaitMs` is at least 10 ms. `Receive.InjectWorkers` is reserved:
+  each source is applied by one injector in order, and values above 1 only log
+  a WARN.
+- A network client whose CONNECT username is not valid UTF-8 is forwarded
+  without its username (`log.usernameStripped`).
+- With a `WINCCOA` retained store, concurrent retained publishes of one topic
+  from different clients are not serialized with their capture, so the two
+  brokers can keep different values until the topic is published again.
+
 ## Dashboard
 
 Set `Dashboard.Path` to a built `dashboard/dist` directory to serve the existing
@@ -377,6 +597,8 @@ internal/
   auth/                  → user+ACL cache
   metrics/               → in-memory counters + periodic snapshot writer
   pubsub/                → in-process bus for GraphQL topicUpdates
+  peerlink/              → PeerLink broker-to-broker forwarding (log, protocol, injection)
+  tlsutil/               → TLS helpers for PeerLink (trust, pins, NodeId identity)
   graphql/               → gqlgen-generated server, resolvers, dashboard handler
 pkg/
   h264/                  → pure-Go H.264/AVC depacketizer & picture decoder
@@ -396,8 +618,10 @@ payload formatting.
 
 ## Status
 
-Single-node. No clustering. Production-ready for edge use on Pi 4/5;
-PostgreSQL/MongoDB backends compile but require a live DB to integration test.
+Production-ready for edge use on Pi 4/5; PostgreSQL/MongoDB backends compile
+but require a live DB to integration test. Brokers can forward publishes to
+each other with [PeerLink](#peerlink-forwarding-between-brokers) (in memory);
+sessions, subscriptions and offline queues are not shared between brokers.
 
 ## License
 

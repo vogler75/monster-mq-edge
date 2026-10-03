@@ -1833,6 +1833,7 @@ func snapshotToBrokerMetrics(s metrics.BrokerSnapshot) *generated.BrokerMetrics 
 	return &generated.BrokerMetrics{
 		MessagesIn: s.MessagesIn, MessagesOut: s.MessagesOut,
 		MqttClientIn: s.MqttClientIn, MqttClientOut: s.MqttClientOut,
+		MessageBusIn: s.MessageBusIn, MessageBusOut: s.MessageBusOut,
 		NodeSessionCount:    s.NodeSessionCount,
 		ClusterSessionCount: s.NodeSessionCount,
 		QueuedMessagesCount: s.QueuedMessages,

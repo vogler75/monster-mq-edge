@@ -68,6 +68,9 @@ type Options struct {
 	// SessionExists reports whether a client session still exists; used to
 	// drop interests of sessions that expired while not in memory.
 	SessionExists func(clientID string) bool
+	// PeerLinkStatus, when set, adds the compact PeerLink status object
+	// ("peerLink") to the retained broker status.
+	PeerLinkStatus func() any
 }
 
 func (o *Options) defaults() {
@@ -1155,6 +1158,9 @@ func (s *Service) PublishStatus() {
 		"ready":     s.ready.Load() && s.oaUp.Load(),
 		"role":      "STANDALONE",
 		"timestamp": time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
+	}
+	if s.opts.PeerLinkStatus != nil {
+		st["peerLink"] = s.opts.PeerLinkStatus()
 	}
 	b, _ := json.Marshal(st)
 	if s.localSystem != "" {

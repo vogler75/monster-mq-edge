@@ -128,6 +128,7 @@ type Packet struct {
 	Filters         Subscriptions // a list of subscription filters and their properties (subscribe, unsubscribe)
 	TopicName       string        // the topic a payload is being published to
 	Origin          string        // client id of the client who is issuing the packet (mostly internal use)
+	Forward         *Forward      // set on a publish injected by the peer link; never encoded, not copied by Copy
 	FixedHeader     FixedHeader   // -
 	Created         int64         // unix timestamp indicating time packet was created/received on the server
 	Expiry          int64         // unix timestamp indicating when the packet will expire and should be deleted
@@ -138,6 +139,23 @@ type Packet struct {
 	ReasonCode      byte          // reason code for a packet response (acks, etc)
 	ReservedBit     byte          // reserved, do not use (except in testing)
 	Ignore          bool          // if true, do not perform any message forwarding operations
+	Will            bool          // the publish is a client's will message; never encoded, not copied by Copy
+}
+
+// Forward describes a publish injected by the peer link. OnPublish,
+// OnRetainMessage, OnSelectSubscribers and OnPublished receive the same
+// packet, so they all see it. Copy does not copy it: retained and inflight
+// copies must not keep the injector's per-batch slice alive.
+type Forward struct {
+	SourceNode string // canonical NodeId of the broker the message was published on
+	ClientID   string // original publisher on the source
+	Username   string // original publisher's username on the source
+	TimeNs     int64  // publish time on the source, unix nanoseconds
+	Epoch      uint64 // source log epoch
+	Offset     uint64 // record offset within Epoch
+	Dup        bool   // DUP flag of the original publish
+	Will       bool   // the record is a will message
+	Snapshot   bool   // the record comes from a retained snapshot, not the live log
 }
 
 // Mods specifies certain values required for certain mqtt v5 compliance within packet encoding/decoding.

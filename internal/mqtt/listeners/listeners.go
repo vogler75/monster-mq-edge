@@ -46,6 +46,12 @@ type Listeners struct {
 	ClientsWg sync.WaitGroup      // a waitgroup that waits for all clients in all listeners to finish.
 	internal  map[string]Listener // a map of active listeners.
 	sync.RWMutex
+
+	// clientsMu orders AddClient against the Wait in CloseAll: a WaitGroup
+	// Add from zero must happen before Wait, and connections are accepted on
+	// their own goroutines.
+	clientsMu sync.Mutex
+	closing   bool
 }
 
 // New returns a new instance of Listeners.
@@ -120,7 +126,20 @@ func (l *Listeners) Close(id string, closer CloseFn) {
 	}
 }
 
-// CloseAll iterates and closes all registered listeners.
+// AddClient registers a client connection in ClientsWg. It returns false once
+// CloseAll has started; the caller must then drop the connection.
+func (l *Listeners) AddClient() bool {
+	l.clientsMu.Lock()
+	defer l.clientsMu.Unlock()
+	if l.closing {
+		return false
+	}
+	l.ClientsWg.Add(1)
+	return true
+}
+
+// CloseAll iterates and closes all registered listeners. Connections that
+// arrive afterwards are refused by AddClient.
 func (l *Listeners) CloseAll(closer CloseFn) {
 	l.RLock()
 	i := 0
@@ -131,6 +150,9 @@ func (l *Listeners) CloseAll(closer CloseFn) {
 	}
 	l.RUnlock()
 
+	l.clientsMu.Lock()
+	l.closing = true
+	l.clientsMu.Unlock()
 	for _, id := range ids {
 		l.Close(id, closer)
 	}

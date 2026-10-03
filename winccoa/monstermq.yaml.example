@@ -1,6 +1,8 @@
 # Bootstrap configuration of the broker embedded in the WinCC OA manager
 # (WCCOAmmq). Copy to <project>/config/monstermq.yaml; the manager
 # reads it through the [monstermq] brokerConfig entry.
+# NodeId must differ per host of a redundant pair (edge-oa-1, edge-oa-2). Devices
+# run on the node their NodeId names, so changing it changes which devices run here.
 NodeId: edge-oa-1
 Logging:
   Level: INFO                   # DEBUG logs every WinCC OA call (dpConnect, dpQueryConnectSingle with the query, dpSetWait, ...)
@@ -42,3 +44,14 @@ WinCCOaNative:
 UserManagement:
   Enabled: true                 # recommended: ACLs gate native reads and writes
   AnonymousEnabled: false
+# PeerLink forwards every topic outside <TopicRoot> between the hosts of a
+# redundant pair (WinCC OA keeps <TopicRoot> in sync itself). One list for both
+# hosts: the entry matching this host's NodeId is ignored.
+PeerLink:
+  Enabled: false
+  Tls: { Enabled: true, AutoGenerate: true, CertPath: "certs/peer-{NodeId}.pem", KeyPath: "certs/peer-{NodeId}.key" }
+  SharedSecrets: ["<base64 of 32 random bytes, same on both hosts: openssl rand -base64 32>"]
+  Log: { DrainOnShutdownMs: 5000 }  # planned switchovers: let the other host catch up
+  Peers:
+    - { NodeId: edge-oa-1, Address: "oa-host-a:1890" }
+    - { NodeId: edge-oa-2, Address: "oa-host-b:1890" }

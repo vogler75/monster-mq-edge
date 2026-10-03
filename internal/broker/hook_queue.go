@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -43,9 +45,43 @@ type QueueHook struct {
 
 	pendingByPacketID map[string]map[uint16]string // clientID -> packetID -> messageUUID
 	pendingByUUID     map[string]map[string]uint16 // clientID -> messageUUID -> packetID
+
+	// Set by WithPeerLink: hydrate only sessions of ownNode; queue replicas
+	// only with peer.Queue.
+	peerLink bool
+	ownNodes []string
+	peer     PeerPolicy
 }
 
-func NewQueueHook(s *stores.Storage, subs *topic.SubscriptionIndex, server *mqtt.Server, logger *slog.Logger, maxQueue int) *QueueHook {
+// QueueHookOption configures NewQueueHook.
+type QueueHookOption func(*QueueHook)
+
+// WithPeerLink is set when PeerLink is enabled. A session store that is
+// shared or mirrored between the nodes (WINCCOA, a shared POSTGRES or
+// MONGODB database) also holds the sessions of clients connected to a peer,
+// so only sessions of nodeID are hydrated as offline persistent; otherwise
+// this node would queue every message for clients online elsewhere.
+// Replicas are queued only when p.Queue is set. nodeIDs are the ids this
+// node's sessions are stored under: the configured NodeId and, when they
+// differ, the canonical PeerLink NodeId.
+func WithPeerLink(p PeerPolicy, nodeIDs ...string) QueueHookOption {
+	return func(h *QueueHook) {
+		h.peerLink = true
+		h.ownNodes = nodeIDs
+		h.peer = p
+	}
+}
+
+func (h *QueueHook) ownNode(id string) bool {
+	for _, n := range h.ownNodes {
+		if strings.EqualFold(id, n) {
+			return true
+		}
+	}
+	return false
+}
+
+func NewQueueHook(s *stores.Storage, subs *topic.SubscriptionIndex, server *mqtt.Server, logger *slog.Logger, maxQueue int, opts ...QueueHookOption) *QueueHook {
 	h := &QueueHook{
 		store:             s,
 		subs:              subs,
@@ -58,6 +94,9 @@ func NewQueueHook(s *stores.Storage, subs *topic.SubscriptionIndex, server *mqtt
 		pendingByPacketID: make(map[string]map[uint16]string),
 		pendingByUUID:     make(map[string]map[string]uint16),
 	}
+	for _, o := range opts {
+		o(h)
+	}
 	h.hydratePersistentClients()
 	return h
 }
@@ -65,6 +104,9 @@ func NewQueueHook(s *stores.Storage, subs *topic.SubscriptionIndex, server *mqtt
 func (h *QueueHook) hydratePersistentClients() {
 	ctx := context.Background()
 	err := h.store.Sessions.IterateSessions(ctx, func(info stores.SessionInfo) bool {
+		if h.peerLink && !h.ownNode(info.NodeID) {
+			return true
+		}
 		if !info.CleanSession {
 			h.mu.Lock()
 			h.persistent[info.ClientID] = true
@@ -106,6 +148,11 @@ func (h *QueueHook) OnPublished(_ *mqtt.Client, pk packets.Packet) {
 	if pk.Ignore {
 		return // not delivered to online subscribers either
 	}
+	// Replicated wills are kept out like local ones, which never reach
+	// OnPublished; snapshot values only fill the retained store.
+	if f := pk.Forward; f != nil && (!h.peer.Queue || f.Will || f.Snapshot) {
+		return
+	}
 	h.mu.RLock()
 	noneOffline := len(h.offline) == 0
 	h.mu.RUnlock()
@@ -118,6 +165,13 @@ func (h *QueueHook) OnPublished(_ *mqtt.Client, pk packets.Packet) {
 	if err != nil {
 		h.logger.Warn("queue hook: collect offline subs failed", "topic", pk.TopicName, "err", err)
 		return
+	}
+	if pk.Forward != nil {
+		// The publisher of a replica was connected to the peer; its own offline
+		// session here must not replay its message to it (plan 12.4, NoLocal).
+		// The subscription index has no NoLocal flag, so the publisher is
+		// skipped unconditionally.
+		subs = slices.DeleteFunc(subs, func(id string) bool { return id == pk.Origin })
 	}
 	if len(subs) == 0 {
 		return

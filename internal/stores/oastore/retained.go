@@ -55,6 +55,9 @@ type RetainedStore struct {
 type retainedEntry struct {
 	dp  string // empty for topics kept in memory only
 	msg stores.BrokerMessage
+	// cached marks an entry set by ApplyCached: the datapoint was written by
+	// the PeerLink source and may not have been replicated here yet.
+	cached bool
 }
 
 // KeepInMemory makes retained topics at and below root memory-only: they
@@ -240,12 +243,13 @@ func (s *RetainedStore) put(parent context.Context, m stores.BrokerMessage) erro
 	s.wmu.Lock()
 	defer s.wmu.Unlock()
 	s.mu.RLock()
-	_, exists := s.data[m.TopicName]
+	e, exists := s.data[m.TopicName]
+	confirmed := exists && !e.cached
 	s.mu.RUnlock()
 	dp := retainedDP(m.TopicName)
 	ctx, cancel := s.ctx(parent)
 	defer cancel()
-	if !exists {
+	if !confirmed {
 		// Lifecycle calls take the DP name without a trailing dot.
 		if err := s.api.DpCreate(ctx, dp, RetainedType, s.timeout); err != nil && !isExists(err) {
 			return fmt.Errorf("%w: create %s for %s: %v", oahost.ErrPersist, dp, m.TopicName, err)
@@ -298,6 +302,38 @@ func (s *RetainedStore) del(parent context.Context, topic string) error {
 	delete(s.data, topic)
 	s.mu.Unlock()
 	return nil
+}
+
+// ApplyCached updates only the in-memory view with retained messages that
+// another host of the same WinCC OA system already wrote to MMQRetained
+// (PeerLink replicas on a link with oaRetained): WinCC OA stores and
+// replicates the datapoints, so no OA call is made. An empty payload removes
+// the topic. It does not wait for a local write in progress (wmu); a local
+// write that completes later wins.
+func (s *RetainedStore) ApplyCached(msgs []stores.BrokerMessage) {
+	if len(msgs) == 0 {
+		return
+	}
+	now := time.Now().UTC()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, m := range msgs {
+		if len(m.Payload) == 0 {
+			delete(s.data, m.TopicName)
+			continue
+		}
+		if m.Time.IsZero() {
+			m.Time = now
+		}
+		m.IsRetain = true
+		m.Payload = append([]byte(nil), m.Payload...)
+		e := &retainedEntry{msg: m}
+		if !s.inMemoryOnly(m.TopicName) {
+			e.dp = retainedDP(m.TopicName)
+			e.cached = true
+		}
+		s.data[m.TopicName] = e
+	}
 }
 
 // DelAll removes the datapoints of the given topics.

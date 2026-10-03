@@ -109,6 +109,11 @@ internal/
                            # oahost/simhost is an in-process OA stand-in for tests
   winccoanative/           # native winccoa/systems/<system> namespace, interests, writes
   stores/oastore/          # MMQConfigs / MMQSessions datapoint stores
+  peerlink/                # PeerLink broker-to-broker forwarding: in-memory
+                           # log, capture hook, source/consumer sessions;
+                           # peerlink/wire/ is the mmq-peer/1 codec
+  tlsutil/                 # TLS helpers (key pairs, truststores, pins, NodeId
+                           # identity, self-signed peer certificates)
 embed/cabi/                # cgo C ABI (c-archive) for the WinCC OA manager
 embed/harness/             # plain C host exercising the ABI (make embed-test)
 winccoa/manager/           # C++ WinCC OA API manager embedding the broker

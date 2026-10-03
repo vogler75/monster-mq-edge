@@ -39,6 +39,7 @@ var (
 	DefaultServerCapabilities = NewDefaultServerCapabilities()
 
 	ErrListenerIDExists       = errors.New("listener id already exists")                               // a listener with the same id already exists
+	ErrListenersClosed        = errors.New("listeners closed")                                         // a connection arrived after the listeners were closed
 	ErrConnectionClosed       = errors.New("connection not open")                                      // connection is closed
 	ErrInlineClientNotEnabled = errors.New("please set Options.InlineClient=true to use this feature") // inline client is not enabled by default
 	ErrOptionsUnreadable      = errors.New("unable to read options from bytes")
@@ -130,6 +131,16 @@ type Options struct {
 	// Enable Inline client to allow direct subscribing and publishing from the parent codebase,
 	// with negligible performance difference (disabled by default to prevent confusion in statistics).
 	InlineClient bool `yaml:"inline_client" json:"inline_client"`
+
+	// SerializeRetained holds a per-topic lock across the retained store update and the
+	// OnRetainMessage hooks, so hooks observe retained writes of one topic in the order they were
+	// applied (PeerLink capture). Set before Serve.
+	SerializeRetained bool `yaml:"-" json:"-"`
+
+	// QueueOfflineReplicas keeps PeerLink replicas (pk.Forward != nil) in the inflight store of
+	// offline sessions. When false they are not delivered to offline sessions; a QueueHook, when
+	// present, decides on its own. Set before Serve.
+	QueueOfflineReplicas bool `yaml:"-" json:"-"`
 }
 
 // Server is an MQTT broker server. It should be created with server.New()
@@ -146,6 +157,7 @@ type Server struct {
 	Log          *slog.Logger         // minimal no-alloc logger
 	hooks        *Hooks               // hooks contains hooks for extra functionality such as auth and persistent storage
 	inlineClient *Client              // inlineClient is a special client used for inline subscriptions and inline Publish
+	retainLocks  [64]sync.Mutex       // per-topic stripes for Options.SerializeRetained
 }
 
 // loop contains interval tickers for the system events loop.
@@ -404,7 +416,10 @@ func (s *Server) eventLoop() {
 
 // EstablishConnection establishes a new client when a listener accepts a new connection.
 func (s *Server) EstablishConnection(listener string, c net.Conn) error {
-	s.Listeners.ClientsWg.Add(1)
+	if !s.Listeners.AddClient() {
+		_ = c.Close()
+		return ErrListenersClosed
+	}
 	cl := s.NewClient(c, listener, "", false)
 	return s.attachClient(cl, listener)
 }
@@ -977,13 +992,7 @@ func (s *Server) processPublish(cl *Client, pk packets.Packet) error {
 		return cl.WritePacket(ack)
 	}
 
-	pk.Origin = cl.ID
-	pk.Created = time.Now().Unix()
-
-	if expiry := minimum(s.Options.Capabilities.MaximumMessageExpiryInterval,
-		int64(pk.Properties.MessageExpiryInterval)); expiry > 0 {
-		pk.Expiry = pk.Created + expiry
-	}
+	s.stampPublish(cl, &pk)
 
 	if !cl.Net.Inline {
 		if pki, ok := cl.State.Inflight.Get(pk.PacketID); ok {
@@ -1077,6 +1086,66 @@ func (s *Server) processPublish(cl *Client, pk packets.Packet) error {
 	return nil
 }
 
+// stampPublish sets Origin, Created and Expiry of an inbound publish. An inline
+// client may preset Origin and a Created time that is not in the future: a
+// peer-link replica keeps its original publisher (so NoLocal holds per logical
+// client) and its capture time (so the remaining expiry is right).
+func (s *Server) stampPublish(cl *Client, pk *packets.Packet) {
+	now := time.Now().Unix()
+	if !cl.Net.Inline || pk.Origin == "" {
+		pk.Origin = cl.ID
+	}
+	if !cl.Net.Inline || pk.Created <= 0 || pk.Created > now {
+		pk.Created = now
+	}
+
+	if expiry := minimum(s.Options.Capabilities.MaximumMessageExpiryInterval,
+		int64(pk.Properties.MessageExpiryInterval)); expiry > 0 {
+		pk.Expiry = pk.Created + expiry
+	}
+}
+
+// RetainOnly updates the retained message for the packet's topic (an empty
+// payload deletes it) without delivering the packet to subscribers, without
+// OnPublish or OnPublished and without counting it as received. The packet is
+// validated like an inbound publish and stamped like one; OnRetainMessage fires
+// as usual.
+func (s *Server) RetainOnly(cl *Client, pk packets.Packet) error {
+	if pk.FixedHeader.Type != packets.Publish {
+		return packets.ErrProtocolViolation
+	}
+	if code := pk.PublishValidate(s.Options.Capabilities.TopicAliasMaximum); code != packets.CodeSuccess {
+		return code
+	}
+	if s.Options.Capabilities.RetainAvailable == 0 {
+		return packets.ErrRetainNotSupported
+	}
+	if pk.Properties.TopicAliasFlag && pk.Properties.TopicAlias > 0 {
+		pk.TopicName = cl.State.TopicAliases.Inbound.Set(pk.Properties.TopicAlias, pk.TopicName)
+	}
+	if pk.TopicName == "" {
+		return packets.ErrTopicNameInvalid
+	}
+	if !cl.Net.Inline {
+		if !IsValidFilter(pk.TopicName, true) {
+			return packets.ErrTopicNameInvalid
+		}
+		if !s.hooks.OnACLCheck(cl, pk.TopicName, true) {
+			return packets.ErrNotAuthorized
+		}
+	}
+
+	pk.ProtocolVersion = cl.Properties.ProtocolVersion
+	pk.FixedHeader.Retain = true
+	if pk.FixedHeader.Qos > s.Options.Capabilities.MaximumQos {
+		pk.FixedHeader.Qos = s.Options.Capabilities.MaximumQos
+	}
+	s.stampPublish(cl, &pk)
+
+	s.retainMessage(cl, pk)
+	return nil
+}
+
 // retainMessage adds a message to a topic, and if a persistent store is provided,
 // adds the message to the store to be reloaded if necessary.
 func (s *Server) retainMessage(cl *Client, pk packets.Packet) {
@@ -1095,6 +1164,12 @@ func (s *Server) retainMessage(cl *Client, pk packets.Packet) {
 		}
 	}
 
+	if s.Options.SerializeRetained {
+		mu := &s.retainLocks[retainStripe(pk.TopicName)]
+		mu.Lock()
+		defer mu.Unlock()
+	}
+
 	if s.hooks.Provides(OnSelectRetainedMessages) {
 		var r int64
 		if len(pk.Payload) == 0 {
@@ -1109,6 +1184,15 @@ func (s *Server) retainMessage(cl *Client, pk packets.Packet) {
 		s.hooks.OnRetainMessage(cl, pk, r)
 		atomic.StoreInt64(&s.Info.Retained, int64(s.Topics.Retained.Len()))
 	}
+}
+
+func retainStripe(topic string) int {
+	h := uint32(2166136261)
+	for i := 0; i < len(topic); i++ {
+		h ^= uint32(topic[i])
+		h *= 16777619
+	}
+	return int(h % 64)
 }
 
 // publishToSubscribers publishes a publish packet to all subscribers with matching topic filters.
@@ -1195,6 +1279,11 @@ func (s *Server) publishToClient(cl *Client, sub packets.Subscription, pk packet
 	if out.FixedHeader.Qos > 0 {
 		if (cl.Net.Conn == nil || cl.Closed()) && s.hooks.Provides(StoredQueuedMessages) {
 			return out, packets.CodeDisconnect
+		}
+		if pk.Forward != nil && !s.Options.QueueOfflineReplicas && (cl.Net.Conn == nil || cl.Closed()) {
+			// A PeerLink replica is not backlogged for a session that is offline here: the client
+			// may have received it live on the peer it moved to (plan 12.4, Receive.Queue).
+			return out, nil
 		}
 
 		if cl.State.Inflight.Len() >= int(s.Options.Capabilities.MaximumInflight) {
@@ -1659,6 +1748,22 @@ func (s *Server) Close() error {
 	return nil
 }
 
+// CloseListeners closes every listener and disconnects its clients with reason
+// 0x8B (server shutting down), returning once their connection goroutines, wills
+// included, have finished. Unlike Close it leaves the server running: hooks, the
+// event loop and inline publishing keep working. Closed listeners are removed,
+// so a later Close does not close them a second time.
+func (s *Server) CloseListeners() {
+	var closed []string
+	s.Listeners.CloseAll(func(id string) {
+		closed = append(closed, id)
+		s.closeListenerClients(id)
+	})
+	for _, id := range closed {
+		s.Listeners.Delete(id)
+	}
+}
+
 // closeListenerClients closes all clients on the specified listener.
 func (s *Server) closeListenerClients(listener string) {
 	clients := s.Clients.GetByListener(listener)
@@ -1688,6 +1793,7 @@ func (s *Server) sendLWT(cl *Client) {
 		},
 		Origin:  cl.ID,
 		Created: time.Now().Unix(),
+		Will:    true,
 	}
 
 	if cl.Properties.Will.WillDelayInterval > 0 {
