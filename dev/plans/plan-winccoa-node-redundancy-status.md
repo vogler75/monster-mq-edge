@@ -72,7 +72,9 @@ Behavior documented for redundant systems: the same managers run on both
 hosts; the passive event manager only synchronizes with the active one and
 discards changes coming from its side (UI, drivers). Consequence for the
 broker: reads work on both hosts, **writes (`.../set`) through the broker on
-the passive host are expected to be discarded** (to be verified, see 7).
+the passive host are discarded** (confirmed by the owner 2026-10-03: the
+passive host receives value changes but does not execute them). Forwarding
+them to the active host is a follow-up idea (`plan-peerlink.md`, Q29).
 
 In Test321 (not redundant) all these values are unset or false; that is the
 expected non-redundant state.

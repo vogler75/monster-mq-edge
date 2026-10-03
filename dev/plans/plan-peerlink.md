@@ -1,6 +1,6 @@
 # Plan: PeerLink, pull-based in-memory forwarding between MonsterMQ Edge brokers
 
-**Status: draft for review (2026-10-03). Nothing implemented.**
+**Status: decisions recorded (2026-10-03). Nothing implemented.**
 
 Proposed file: `dev/plans/plan-peerlink.md`. Branch at drafting time: `winccoa-native`.
 
@@ -34,7 +34,7 @@ The source broker keeps captured publishes in memory until every configured peer
 These are listed so that reviewers do not measure this plan against M6 AC-27..AC-33:
 
 - Replication or takeover of sessions, subscriptions, offline queues (`QueueStore`) or inflight state (AC-27).
-- PUBACK/PUBREC/PUBCOMP gated on peer durability (AC-28); a crash matrix with RPO 0 (AC-29); forced full recovery on overflow (AC-30); fencing or role ownership (AC-31); forwarded writes to the active OA host (AC-32).
+- PUBACK/PUBREC/PUBCOMP gated on peer durability (AC-28); a crash matrix with RPO 0 (AC-29); forced full recovery on overflow (AC-30); fencing or role ownership (AC-31); forwarded writes to the active OA host (AC-32; follow-up idea, Q29).
 - Status isolation (AC-33) is met by construction, because `<TopicRoot>` is never forwarded.
 - A durable log, or spilling to disk.
 - Transitive multi-hop forwarding. More than two nodes need a full mesh (section 14).
@@ -46,22 +46,22 @@ These are listed so that reviewers do not measure this plan against M6 AC-27..AC
 
 ---
 
-## 2. Governance and required sign-offs (milestone M0, blocking)
+## 2. Governance and required sign-offs (milestone M0, recorded 2026-10-03)
 
 The single-node rule ("No clustering — single node only") was removed from `AGENTS.md` by the owner on 2026-10-03, together with "single-node is a product decision" in its never-do-without-asking list (Hazelcast/Kafka-bus dependencies still need sign-off). PeerLink therefore needs no exception from the project rules (S1).
 
-`dev/plans/spec-winccoa-native.md:15` still says "Dual-node exception: Not granted. M6 (AC-27..AC-33) is deferred", and `:19` says "Single node. No failover RPO/RTO applies". Those lines describe the WinCC OA native scope; S2 amends both of them and adds a new row. The remaining decisions are recorded before any code is written.
+`dev/plans/spec-winccoa-native.md:15` still says "Dual-node exception: Not granted. M6 (AC-27..AC-33) is deferred", and `:19` says "Single node. No failover RPO/RTO applies". Those lines describe the WinCC OA native scope; S2 amends both of them and adds a new row. The owner reviewed and committed this plan and answered every M0 question on 2026-10-03; S2-S8 are accepted (table below) and Q1-Q28 are decided (section 25). Only the S2 text change in `spec-winccoa-native.md` itself is pending (23, M0).
 
 | # | Sign-off | Proposed text / outcome |
 |---|---|---|
 | S1 | Single-node rule | **Done (2026-10-03):** the rule was removed from `AGENTS.md`. PeerLink is pure Go, in memory and pull based, between explicitly configured, independent brokers; it shares no sessions, subscriptions, ownership or fencing. |
-| S2 | Spec decision entry | Amend two rows of `spec-winccoa-native.md` §1: `:15` becomes "Dual-node exception: not required since 2026-10-03 (AGENTS.md rule removed); PeerLink is M6a; AC-27..AC-33 stay deferred", and `:19` (Availability/durability) becomes "Native scope single node; non-OA publishes may be forwarded by PeerLink (M6a, RPO per plan-peerlink 15.4)". Add a new row to §1. PeerLink is M6a. It supersedes only the "non-OA publishes" paragraph of `plan-winccoa-broker-embedded-manager.md` §7.2 (`:220`), and only for in-memory forwarding. AC-27..AC-33 stay deferred. AC-28 (PUBACK barrier, `:327`) and AC-30 (full recovery on overflow, `:329`) are explicitly replaced by sections 15 and 8.5. The same entry covers the optional `peerLink` object in the native status JSON (20.2). Add a cross-reference in §7.2. |
-| S3 | RPO / durability statement | Section 15.4: PUBACK means "accepted locally"; records not yet pulled are lost if the source process crashes; a graceful source stop closes the MQTT listeners, stops the internal publishers, drains to a fixed `drainTarget` (15.6), and logs exactly what it could not serve (`shutdownUnserved`) or no longer captured (`uncapturedAtShutdown`); overflow drops the oldest records and counts them on both sides; across a consumer crash delivery is at-least-once, with at most one batch duplicated; otherwise exactly-once. |
-| S4 | GraphQL | No SDL change. Optionally fill the existing `BrokerMetrics.messageBusIn/messageBusOut` (`internal/graphql/schema/schema.graphqls:32-33`, never set by `resolver.go:1832-1842`). That is a resolver-only mapping, which AGENTS.md:43-50 still asks to commit explicitly. |
-| S5 | Engine changes | E1, E2, E4, E5 and E6 in the inlined mochi engine (section 13): preset `Origin`/`Created` for inline injections, `Packet.Forward`, `Server.RetainOnly`, `Server.CloseListeners`, and `Packet.Will`. E3 and E7 are optional. |
-| S6 | Topology | One hop only. More than two nodes need a full mesh. |
-| S7 | Default policies and partial requirements | The defaults in section 25, in particular: every publish is captured like a client publish, including those of bridges, scripts, host monitoring and the publish APIs (decided 2026-10-03); `$` topics are never captured, and the HMI sync tree is excluded by the default `Capture.Exclude`; wills are captured, but the receiver suppresses a will while the client is connected locally; shared subscriptions on the receiver skip replicas; offline queues skip replicas. The requirements marked "partial" in section 3 are accepted with these limitations. |
-| S8 | Security posture | PeerLink fails closed. An unauthenticated peer is refused unless `AllowUnauthenticatedPeers: true` is set together with `AllowedNetworks`, and never when `UserManagement.Enabled` is true (17.3). |
+| S2 | Spec decision entry | **Accepted 2026-10-03 (plan committed); spec amendment pending** (the text change below lands with M1 or as a separate small commit). Amend two rows of `spec-winccoa-native.md` §1: `:15` becomes "Dual-node exception: not required since 2026-10-03 (AGENTS.md rule removed); PeerLink is M6a; AC-27..AC-33 stay deferred", and `:19` (Availability/durability) becomes "Native scope single node; non-OA publishes may be forwarded by PeerLink (M6a, RPO per plan-peerlink 15.4)". Add a new row to §1. PeerLink is M6a. It supersedes only the "non-OA publishes" paragraph of `plan-winccoa-broker-embedded-manager.md` §7.2 (`:220`), and only for in-memory forwarding. AC-27..AC-33 stay deferred. AC-28 (PUBACK barrier, `:327`) and AC-30 (full recovery on overflow, `:329`) are explicitly replaced by sections 15 and 8.5. The same entry covers the optional `peerLink` object in the native status JSON (20.2). Add a cross-reference in §7.2. |
+| S3 | RPO / durability statement | **Accepted 2026-10-03 (Q2).** Section 15.4: PUBACK means "accepted locally"; records not yet pulled are lost if the source process crashes; a graceful source stop closes the MQTT listeners, stops the internal publishers, drains to a fixed `drainTarget` (15.6), and logs exactly what it could not serve (`shutdownUnserved`) or no longer captured (`uncapturedAtShutdown`); overflow drops the oldest records and counts them on both sides; across a consumer crash delivery is at-least-once, with at most one batch duplicated; otherwise exactly-once. |
+| S4 | GraphQL | **Granted 2026-10-03 (Q15).** No SDL change. The resolver fills the existing `BrokerMetrics.messageBusIn/messageBusOut` (`internal/graphql/schema/schema.graphqls:32-33`, today never set by `snapshotToBrokerMetrics`, `internal/graphql/resolvers/resolver.go:1832-1843`) from the new snapshot fields, in v1 (M5). This is the explicit owner commitment that `AGENTS.md:42-49` requires for a resolver change. |
+| S5 | Engine changes | **Accepted 2026-10-03 (plan committed).** E1, E2, E4, E5 and E6 in the inlined mochi engine (section 13): preset `Origin`/`Created` for inline injections, `Packet.Forward`, `Server.RetainOnly`, `Server.CloseListeners`, and `Packet.Will`. E3 and E7 are optional. |
+| S6 | Topology | **Accepted 2026-10-03 (Q10).** One hop only. More than two nodes need a full mesh, which has to be configured. |
+| S7 | Default policies and partial requirements | **Accepted 2026-10-03.** Clients connect to both brokers at the same time (active-active); PeerLink handles the consequences with no special mechanism (16.4). The defaults in section 25, in particular: every publish is captured like a client publish, including those of bridges, scripts, host monitoring and the publish APIs (decided 2026-10-03); `$` topics are never captured, and the HMI sync tree is excluded by the default `Capture.Exclude`; wills are captured, but the receiver suppresses a will while the client is connected locally; shared subscriptions on the receiver skip replicas; offline queues skip replicas. The requirements marked "partial" in section 3 are accepted with these limitations. |
+| S8 | Security posture | **Accepted 2026-10-03 (plan committed).** PeerLink fails closed. An unauthenticated peer is refused unless `AllowUnauthenticatedPeers: true` is set together with `AllowedNetworks`, and never when `UserManagement.Enabled` is true (17.3). |
 
 Naming: the feature is **PeerLink** (package `internal/peerlink`, config section `PeerLink`). "Replicated" and "replication" already refer to the WinCC OA topics branch (`internal/broker/hook_storage.go:36-39,282`; `winccoa/README.md:273`), so this plan does not reuse them.
 
@@ -74,13 +74,13 @@ Naming: the feature is **PeerLink** (package `internal/peerlink`, config section
 | R1 | Forward topics that are not in the winccoa namespace to another MonsterMQ broker | Yes | 7.2 (capture filter), 7.4 (sources), 12.2 (receiver filter), 18 | All publishes are forwarded, including bridges, scripts and the publish APIs (7.4). Not forwarded: any `$` topic, wills fired by the source's own shutdown, and by default `<HMI.SyncBaseTopic>/#` (`Capture.Exclude`, changeable). Devices that run on both nodes produce their output twice (19); Redfish gateways ignore NodeId and run on every node (7.4). S7. |
 | R2 | "Super high performant" | Yes, gated | 8 (chunked log), 9.7 (batched long-poll fetch, writev), 11.1 (split reader/injector), 13.4 (batched retained writes), 21 (budget, gates G0-G7) | Throughput ceiling is the receiver's apply path; measured per GOARCH (21.2). armv7 has a documented lower rate. |
 | R3 | Pull-driven: the source collects value changes until another node pulls them | Yes | 8, 9 | — |
-| R4 | A restart of another node does not lose values | Yes, within bounds | 8.3 (consumers pin from epoch start), 9.6 (resume rules), 15.5, 16.5 (retained snapshot on first contact), 12.6 (catch-up pacing) | Lossless only while the source keeps running and the outage fits the log (`capacitySeconds`, 8.7). S3. |
+| R4 | A restart of another node does not lose values | Yes, within bounds | 8.3 (consumers pin from epoch start), 9.6 (resume rules), 15.5, 16.5 (retained snapshot on first contact), 13.4 (`RetainedStoreType: WINCCOA` in one WinCC OA system: WinCC OA replicates MMQRetained, and the restarted receiver loads it), 12.6 (catch-up pacing) | Lossless only while the source keeps running and the outage fits the log (`capacitySeconds`, 8.7). S3. |
 | R5 | Kafka-like, but in memory only (no disk) | Yes | 8 (offsets, epochs, committed offsets), 15.4 | — |
 | R6 | Multiple brokers can connect; the source queue serves multiple clients | **Partial** | 8.3, 14 | Only a full mesh gives every node every message; a chain delivers one hop only. S6. |
 | R7 | A high-water mark per connected broker; free the queue when the last consumer has read | Yes | 8.4 | — |
 | R8 | Configure the connection on both parties | Yes | 18.2 | — |
 | R9 | Max queue length; when reached, remove older values | Yes | 8.5 (count and byte bounds, counted eviction) | In practice the byte bound governs for records above about 130 B (8.7). |
-| R10 | Replicate the full MQTT message: QoS, retain, MQTT 5 values, publisher, publish timestamp | **Partial** | 7.3, 10, 12.3, 13 | Pre-existing engine limits: will properties other than User are lost (`server.go:1685-1687`); DB-retained rows and offline queues store no MQTT 5 properties; user properties are suppressed for subscribers with RequestProblemInfo=0. On the receiver, the retained row time is the backdated capture time in whole seconds (bus and archive rows carry the source ns time). Broker-internal publishes (bridges, scripts, publish APIs) carry client id `inline` and no username. S7. |
+| R10 | Replicate the full MQTT message: QoS, retain, MQTT 5 values, publisher, publish timestamp | **Partial** | 7.3, 10, 12.3, 13 | Pre-existing engine limits: will properties other than User are lost (`server.go:1685-1687`); DB-retained rows and offline queues store no MQTT 5 properties; user properties are suppressed for subscribers with RequestProblemInfo=0. On the receiver, the retained row time is the backdated capture time in whole seconds (bus and archive rows carry the source ns time); with `RetainedStoreType: WINCCOA` in one WinCC OA system the MMQRetained row is the source's own write, replicated by WinCC OA (13.4). Broker-internal publishes (bridges, scripts, publish APIs) carry client id `inline` and no username. S7. |
 | R11 | Bidirectional: both brokers can connect to each other | Yes | 14.3, 18 | — |
 | R12 | The receiver must not send received values back to the source | Yes for PeerLink injections; partial for internal publishers | 14.1, 14.2, 14.6 (bridge outbound skips replicas) | Scripts/bridges that republish replicas and MQTT bridges subscribed to a peer are captured like any publish (7.4) and can loop, as can external republishing clients. Guards (14.6): one-node device assignment, bridge-outbound skip, peer-host WARN, `Capture.Exclude`, `Capture.EchoSuppressMs` (network and internal publishes), `Receive.MarkReplicas`. |
 | R13 | Identify connections by broker NodeId | Yes | 9.5, 17.2, 18.4 (canonical NodeId) | — |
@@ -128,12 +128,13 @@ Naming: the feature is **PeerLink** (package `internal/peerlink`, config section
 | Duplicate suppression | O(1) per `(source, epoch)` `appliedNext`; HELLO carries the resume offset | all three | A UUID LRU as in Kotlin Zenoh (`MessageBusZenoh.kt:241-251`, O(n) per message). |
 | Loop prevention | Split horizon (injector clients and `pk.Forward` never captured). Replicas are marked on the bus, and the MQTT bridge outbound skips them by default. | failure + review | Transitive forwarding with an origin path (deferred; can be added as a TLV). |
 | Retained capture point | Retained publishes are captured in `OnRetainMessage` (before the PUBACK write); everything else in `OnPublished` | review | Capturing everything in `OnPublished`: a retained race across a blocking ack write can diverge the nodes permanently. |
-| Retained after a consumer restart | Automatic `SNAPSHOT` (fill-if-absent) on first contact and after a source reset; operator-triggered newer-wins resync | review | Leaving MEMORY-retained receivers empty after a restart (it violates R4). |
+| Retained after a consumer restart | Automatic `SNAPSHOT` (fill-if-absent) on first contact and after a source reset, skipped when both sides keep retained messages in one WinCC OA system (16.5); operator-triggered newer-wins resync | review | Leaving MEMORY-retained receivers empty after a restart (it violates R4). |
 | Retained record expired before pull | Drop and count (`retainedDiverged`). M6: conditional silent clear. | failure | "Inject with 1 s" violates MQTT 5; an unconditional clear can wipe a newer local value. |
 | Wills | Captured, except during the source's own shutdown. Dropped on the receiver while the client is or became connected there. Kept off bus, archive and queue there, matching local behaviour. | review | Applying wills as ordinary publishes: a stale "offline" would overwrite a failed-over client's live state. |
 | Inline capture | Every internal publish is captured like a client publish | owner decision 2026-10-03 | Capturing only some internal publishers (the earlier API/service split): a device's output would never reach the peer unless the device also ran there. Duplicates are avoided by assigning each device to one node (19). |
 | Receiver gating | Defaults: bus on (bridge outbound off), archive on, offline queue off, shared subscriptions skip replicas | failure + review | Delivering replicas to every subsystem: it causes duplicate floods for persistent sessions and duplicate shared-group processing. |
 | Retained writes on the receiver (DB modes) | Coalesced per batch into one `AddAll`/`DelAll` before the commit | review | One synchronous transaction per retained replica on the inject goroutine. |
+| Retained replicas with `RetainedStoreType: WINCCOA` on both sides of one WinCC OA system | The receiver updates only its in-memory retained view (`ApplyCached`, 13.4); WinCC OA stores and replicates the source's MMQRetained write | owner decision 2026-10-03 | A confirmed `dpSet`/`dpDelete` per replica on the receiver: it duplicates the replication WinCC OA already does between the hosts of a redundant pair. |
 | Shutdown | Close MQTT listeners first (clients fail over), stop the internal publishers (bridges, scripts, host monitoring, Redfish, RTSP, HMI sync, publish APIs), drain to the fixed `drainTarget`, then stop the other subsystems; shutdown wills are not captured (decided 2026-10-03) | review | Draining before `native.Stop` while clients keep publishing for seconds into a closed link; draining while internal publishers keep publishing (a moving target, and their later publishes would be lost uncounted). |
 | Security default | Fail closed (S8); a shared secret requires TLS and is bound to the TLS exporter; identity is the URI SAN by default | review | A WARN only; plaintext HMAC (relayable); CN fallback by default. |
 | TLS helpers | New leaf package `internal/tlsutil`; `broker.LoadTLS` untouched in v1 | simplicity | Refactoring `LoadTLS` now touches the TCPS path for no v1 benefit. |
@@ -183,8 +184,10 @@ Naming: the feature is **PeerLink** (package `internal/peerlink`, config section
 | `internal/peerlink/inject.go` | Receiver validation, packet build, will suppression, `InjectPacket` / `RetainOnly` |
 | `internal/peerlink/status.go` | Counters (striped), status JSON, loopback HTTP status and resync handlers |
 | `internal/tlsutil/tlsutil.go` (new leaf) | `LoadKeyPair`, `LoadCertPool` (PEM, legacy-PKCS12 truststore, never system roots), `ServerConfig`, `ClientConfig`, `VerifyConnection` NodeId binding, pins, `EnsurePeerCertificate`. No `cert:key` split. |
-| `internal/broker/server.go` | Manager field; wiring in `build()` (including the device WARN step, 6.2), `Serve()`, `Close()` (including the internal-publisher stop before the drain, 6.2); the `RetainedAccess` adapter for snapshots |
-| `internal/broker/hook_storage.go` | `Forward`-aware publisher and time, derived message UUID, receive gating, will skip, `IncBusIn`, batched retained writer for replicas |
+| `internal/broker/server.go` | Manager field; wiring in `build()` (including the device WARN step and the `retainedViaOA` predicate, 6.2), `Serve()`, `Close()` (including the internal-publisher stop before the drain, 6.2); the `RetainedAccess` adapter for snapshots |
+| `internal/broker/hook_storage.go` | `Forward`-aware publisher and time, derived message UUID, receive gating, will skip, `IncBusIn`, batched retained writer for replicas, `ApplyCached` path for replicas whose retained store WinCC OA replicates (13.4) |
+| `internal/stores/oastore/retained.go` | `RetainedStore.ApplyCached`: in-memory update of the retained view without an OA call (13.4) |
+| `internal/graphql/resolvers/resolver.go` | `snapshotToBrokerMetrics` fills `messageBusIn`/`messageBusOut` (S4 granted, M5); no SDL change |
 | `internal/broker/hook_queue.go` | Skip replicas unless `Receive.Queue`; skip replicated wills; hydrate only own-node sessions when PeerLink is enabled |
 | `internal/bridge/mqttclient/bus_adapter.go` | Skip peer-origin bus messages unless `Receive.BridgeOutbound` |
 | `internal/stores/types.go` | `BrokerMessage.OriginNode string` with `json:"-" bson:"-"`. It is in memory only and never persisted; M1 verifies that no store marshals the struct generically. |
@@ -196,6 +199,7 @@ Naming: the feature is **PeerLink** (package `internal/peerlink`, config section
 
 - `RetainedAccess{ Snapshot(func(packets.Packet) bool); Has(topic string) bool; FlushReplicas(source string) error }`
 - `ClientState{ Connected(id string) bool }`
+- `oaSystem func() string`: the native service's `LocalSystem()` (`internal/winccoanative/service.go:303`), or nil when native mode is off. It is read once in `Start()` and sent as `oaSystem` in HELLO and HELLO_OK (9.4, 9.5).
 
 ### 6.2 Lifecycle wiring (`internal/broker/server.go`)
 
@@ -203,8 +207,9 @@ Naming: the feature is **PeerLink** (package `internal/peerlink`, config section
 
 1. If `cfg.PeerLink.Enabled`, construct the manager:
    ```go
-   peerlink.New(cfg.PeerLink, cfg.NodeID, names, server, retainedAccess, clientState, collector, logger)
+   peerlink.New(cfg.PeerLink, cfg.NodeID, names, server, retainedAccess, clientState, oaSystem, collector, logger)
    ```
+   `oaSystem` is `native.LocalSystem` when native mode is on (the service is constructed at `server.go:277`), otherwise nil. Then set `storageHook.retainedViaOA = pl.RetainedViaOA` (13.4), next to the existing `replicated` predicate (`server.go:318-320`).
 2. If `cfg.PeerLink.Enabled`, call `server.AddHook(pl.Hook(), nil)`. Do this whenever any `Pull` or `Serve` peer exists, so the split-horizon counters also work on pull-only nodes. **Register the hook before StorageHook and QueueHook.** The hook only reads `pk.Ignore` (set by the `OnPublish` chain) and identity fields, so the order does not affect correctness. Running first keeps the capture append ahead of the potentially blocking QueueHook in `OnPublished`.
 3. Create one injector client per pull peer:
    ```go
@@ -218,7 +223,7 @@ Naming: the feature is **PeerLink** (package `internal/peerlink`, config section
    - `HostMonitoring.Enabled` and `HostMonitoring.BaseTopic` lacks `{NodeId}` (7.4);
    - an enabled MQTT bridge, inbound or outbound, has a `brokerUrl` host equal to a configured peer's `Address` host (14.6).
 
-**`Serve()`**, after `startNative`: `s.peer.Start()` starts the accept loop and the puller goroutines without blocking, because the embedded host calls `Serve` synchronously (`embed/cabi/cabi.go:223-229`).
+**`Serve()`**, after `startNative`: `s.peer.Start()` starts the accept loop and the puller goroutines without blocking, because the embedded host calls `Serve` synchronously (`embed/cabi/cabi.go:223-229`). The order matters for the handshake: `Serve()` calls `startNative` first (`server.go:674-678`), whose `native.Start` resolves and stores the local system name (`startNative`, `server.go:649-671`; `internal/winccoanative/service.go:225-233`), so `oaSystem()` is set before any HELLO is sent or answered. A start failure returns from `Serve()` before PeerLink starts.
 
 **`Close()`**: when PeerLink is enabled, the new order is:
 
@@ -418,7 +423,7 @@ The lock is never held across I/O or a blocking send, which is the BatchingQueue
 
 ### 8.3 Multiple consumers (R4, R6)
 
-The consumer set is the static list of `Serve` peers. Every consumer exists from the start of the epoch with `C[c] = 1`, **even before it first connects**. A consumer that connects late, or that restarts, therefore receives everything captured since the source started, within the bounds. Retained state from before the epoch is covered by the snapshot (16.5).
+The consumer set is the static list of `Serve` peers. Every consumer exists from the start of the epoch with `C[c] = 1`, **even before it first connects**. A consumer that connects late, or that restarts, therefore receives everything captured since the source started, within the bounds. Retained state from before the epoch is covered by the snapshot (16.5), or, on a link with `oaRetained`, by the MMQRetained datapoints that WinCC OA replicates (13.4).
 
 A peer that is configured but never connects pins the log at its maximum. That is by design (Q20). The source logs a WARN after `NeverConnectedWarnSec` (default 300 s).
 
@@ -524,8 +529,8 @@ FRAME:                              u32 frameLen (bytes after this field) | u8 t
 | Type | Dir | Body (field: type) |
 |---|---|---|
 | `SERVER_HELLO` 0x01 | S→C | `versionMajor u16`, `versionMinor u16`, `capabilities u64`, `authModes u8` (b0 client cert requested, b1 shared secret configured), `nonceS [32]` |
-| `HELLO` 0x02 | C→S | `flags u16` (b0 MAC present), `capabilities u64`, `instanceId u64`, `lastEpoch u64`, `resumeOffset u64` (consumer `appliedNext`, 0 = none), `lastSeenLeo u64`, `maxRecordBytes u32` (largest record it accepts), `retainedClass u8` (0 MEMORY, 1 DB, 2 WINCCOA), `nonceC [32]`, `mac [32]` (zero if no MAC), `consumerNodeId str8`, `expectedSourceNodeId str8`, `topicRoot str16` |
-| `HELLO_OK` 0x03 | S→C | `flags u16` (b0 SOURCE_RESET, b1 CONSUMER_STATE_USED, b2 SNAPSHOT_AVAILABLE), `capabilities u64` (agreed set = intersection), `epoch u64`, `resumeAt u64`, `logStart u64`, `leo u64`, `committed u64`, `lostOnResume u64`, `wallNowMs i64`, `monoNowMs u64`, `maxRecordBytes u32` (source capture cap), `retainedClass u8`, `macS [32]` (zero if no MAC), `sourceNodeId str8`, `topicRoot str16` |
+| `HELLO` 0x02 | C→S | `flags u16` (b0 MAC present), `capabilities u64`, `instanceId u64`, `lastEpoch u64`, `resumeOffset u64` (consumer `appliedNext`, 0 = none), `lastSeenLeo u64`, `maxRecordBytes u32` (largest record it accepts), `retainedClass u8` (0 MEMORY, 1 DB, 2 WINCCOA), `nonceC [32]`, `mac [32]` (zero if no MAC), `consumerNodeId str8`, `expectedSourceNodeId str8`, `topicRoot str16`, `oaSystem str8` (name of the embedding WinCC OA system; empty when the broker is not embedded in WinCC OA or native mode is off) |
+| `HELLO_OK` 0x03 | S→C | `flags u16` (b0 SOURCE_RESET, b1 CONSUMER_STATE_USED, b2 SNAPSHOT_AVAILABLE), `capabilities u64` (agreed set = intersection), `epoch u64`, `resumeAt u64`, `logStart u64`, `leo u64`, `committed u64`, `lostOnResume u64`, `wallNowMs i64`, `monoNowMs u64`, `maxRecordBytes u32` (source capture cap), `retainedClass u8`, `macS [32]` (zero if no MAC), `sourceNodeId str8`, `topicRoot str16`, `oaSystem str8` (as in HELLO) |
 | `GOAWAY` 0x04 | both | `code u16`, `reason str16` (empty before authentication when auth is configured, 9.5). The sender closes afterwards. |
 | `FETCH` 0x10 | C→S | `fetchId u32`, `flags u16` (b0 SNAPSHOT), `lingerMs u16`, `offset u64`, `commit u64` (0 = unchanged), `maxRecords u32`, `maxBytes u32`, `minRecords u32`, `maxWaitMs u32` |
 | `BATCH` 0x11 | S→C | `fetchId u32`, `flags u16` (b0 GAP, b1 EMPTY, b2 CRC, b3 SNAPSHOT, b4 SNAPSHOT_END, b5 TRUNCATED), `reserved u16`, `baseOffset u64`, `count u32`, `recordsBytes u32`, `logStart u64`, `leo u64`, `lost u64`, `sourceMonoMs u64`, `sourceWallMs i64`, `crc32c u32` (valid if b2) (68 bytes), then `recordsBytes` of records |
@@ -567,7 +572,7 @@ Bits that are not understood are ignored. The agreed set is the intersection of 
      (admission 9.2, optional TLS handshake with VerifyConnection 17.2)
 C→S  PREAMBLE
 S→C  SERVER_HELLO(capabilities, authModes, nonceS)
-C→S  HELLO(consumerNodeId, expectedSourceNodeId, instanceId, lastEpoch, resumeOffset, maxRecordBytes, nonceC, mac)
+C→S  HELLO(consumerNodeId, expectedSourceNodeId, instanceId, lastEpoch, resumeOffset, maxRecordBytes, retainedClass, oaSystem, nonceC, mac)
 S:   checks in order; the first failure ends the handshake:
        1 consumerNodeId != own NodeId                          self_connection
        2 consumerNodeId is a configured peer                    unknown_peer
@@ -579,7 +584,7 @@ S:   checks in order; the first failure ends the handshake:
        7 peer authenticated by 5 or 6, or AllowUnauthenticatedPeers
      If any authentication method is configured on this listener, every failure in 1-7 is sent as
      GOAWAY(auth_failed) with an empty reason; the precise reason is logged locally only.
-S→C  HELLO_OK(epoch, resumeAt, ..., macS, sourceNodeId, topicRoot)
+S→C  HELLO_OK(epoch, resumeAt, ..., retainedClass, macS, sourceNodeId, topicRoot, oaSystem)
 C:   checks sourceNodeId == configured NodeId (and != own), == certificate identity (TLS), macS valid;
      on failure: GOAWAY(identity_mismatch | self_connection | wrong_node | auth_failed), close, back off
 ```
@@ -596,6 +601,17 @@ C:   checks sourceNodeId == configured NodeId (and != own), == certificate ident
 **TopicRoot mismatch.** Both sides log a WARN once and set `topicRootMismatch=1`. The receiver filters both its own root and the announced one (12.2).
 
 **Retained store class mismatch.** If `retainedClass` differs between the two sides, both log a WARN once. The 24 h in-memory purge applies only to MEMORY (12.3, K10).
+
+**Retained store replicated by WinCC OA (`oaRetained`, decided 2026-10-03, Q9).** Both sides compute the same per-link flag from the two handshakes:
+
+```
+oaRetained = consumer.retainedClass == WINCCOA && source.retainedClass == WINCCOA
+          && consumer.oaSystem != "" && consumer.oaSystem == source.oaSystem   // byte-for-byte
+```
+
+- **True** for the two hosts of a redundant pair with `RetainedStoreType: WINCCOA`: they share one system name, and WinCC OA itself keeps the MMQRetained datapoints of both hosts in sync. The consumer then applies retained replicas to its in-memory view only (13.4), and the source does not offer a snapshot (16.5).
+- **False** for WinCC OA distributed systems (different system names), for brokers not embedded in WinCC OA (empty `oaSystem`), and whenever either side uses another retained store. The consumer writes its own store as usual (13.4). A WINCCOA store requires native mode (`internal/broker/server.go:177-180`), so a side that announces WINCCOA always announces a non-empty `oaSystem`.
+- Both sides log the decision at INFO once per session and expose it as the gauge `oaRetained` (20.1).
 
 **Session takeover and duplicate NodeIds.**
 
@@ -857,7 +873,7 @@ err := server.InjectPacket(inj, pk)        // one injector goroutine per source:
 |---|---|---|
 | Path | `InjectPacket` → `PublishValidate` → `processPublish`; no PUBACK or inflight for the inline injector | `server.go:936-950,733-737,1041-1048` |
 | QoS | Each subscriber gets `min(QoS, subQoS, MaximumQos)` | `server.go:1155-1249` |
-| Retain | Normal `retainMessage`. An empty retained payload **deletes**. Subscribers see retain=false unless RetainAsPublished is set. DB modes: writes are coalesced per batch (13.4). | `server.go:1037-1039,1082-1112`; `topics.go:463-486` |
+| Retain | Normal `retainMessage`. An empty retained payload **deletes**. Subscribers see retain=false unless RetainAsPublished is set. DB modes: writes are coalesced per batch (13.4). WINCCOA on a link with `oaRetained` (9.5): in-memory view only, no OA write (13.4). | `server.go:1037-1039,1082-1112`; `topics.go:463-486` |
 | Shared subscriptions | Default `Receive.SharedSubscriptions: SKIP`: the hook's `OnSelectSubscribers` clears `Shared`/`SharedSelected` for replicas, so a group gets each message once, from the node it was published on. `DELIVER`: every node's group gets it, i.e. one delivery per node. | `server.go:1132-1138`; `topics.go:322-327`; `hooks.go:379-383` |
 | Offline sessions | Default `Receive.Queue: false`: QueueHook skips replicas. A persistent client that fails over gets peer-origin messages live on the node it is connected to, and no duplicate backlog on its old node. | `hook_queue.go:105-145` |
 | NoLocal | `Origin = original clientId`, so a client using the same id on both nodes does not receive its own replayed messages | `server.go:1156` |
@@ -865,7 +881,7 @@ err := server.InjectPacket(inj, pk)        // one injector goroutine per source:
 | Publish ACL | Enforced on the source. The receiver applies peer-level authorization (authentication, `Receive.Include/Exclude`, namespace filter). | — |
 | Wills | After 12.2 step 7: delivered to subscribers and the retained store only, **not** to bus, archives or offline queues. This matches local wills, which never reach StorageHook or QueueHook, and for which offline QoS>0 subscribers get nothing (`server.go:1197-1201,1704-1706`). | `hook_storage.go:63-79`; `hook_queue.go:91-100` |
 | `$SYS` counters | Include replicas (12.1) | `server.go:944-947` |
-| MQTT 5 limits (pre-existing) | User properties suppressed for RequestProblemInfo=0; DB-retained rows and offline queues store no MQTT 5 properties | `properties.go:326-338`; `hook_storage.go:314-378` |
+| MQTT 5 limits (pre-existing) | User properties suppressed for RequestProblemInfo=0; DB-retained rows and offline queues store no MQTT 5 properties | `properties.go:326-338`; `hook_storage.go:314-349` |
 
 ### 12.5 Receiver subsystems
 
@@ -873,7 +889,7 @@ err := server.InjectPacket(inj, pk)        // one injector goroutine per source:
 |---|---|---|
 | Live subscribers | Delivered | — |
 | Shared subscription groups | Skipped | `Receive.SharedSubscriptions: SKIP \| DELIVER` |
-| Retained store (MEMORY, SQLite, Postgres, Mongo, WINCCOA) | Always applied; the row carries the original client id, username and the backdated time in seconds. There is no switch: in every DB mode, including WINCCOA, the store is the only retained source (`server.go:316-317`; `hook_storage.go:63-67`), so skipping it would mean no retained copy at all. | — |
+| Retained store (MEMORY, SQLite, Postgres, Mongo, WINCCOA) | Always applied; the row carries the original client id, username and the backdated time in seconds. There is no switch: in every DB mode the store is the only retained source for new subscribers (`server.go:316-317`; `hook_storage.go:63-67,352-381`), so skipping it would mean no retained copy at all. **WINCCOA on a link with `oaRetained` (9.5, decided 2026-10-03):** the replica updates only the in-memory view of the oastore (`ApplyCached`, 13.4) and is not written to MMQRetained, because WinCC OA already stores and replicates the source's write. On a link without `oaRetained` (distributed systems, different system names) the receiver writes MMQRetained itself, batched per flush. | — |
 | Offline queues | Skipped | `Receive.Queue` |
 | pubsub bus (GraphQL `topicUpdates`, scripts, Redfish, REST SSE) | Dispatched, flagged `OriginNode` | `Receive.Bus` |
 | MQTT bridge outbound (reads the bus) | **Skipped** (loop guard, 14.6) | `Receive.BridgeOutbound` |
@@ -967,13 +983,16 @@ type Forward struct {
      - `IsDup = Forward.Dup`;
      - `OriginNode = Forward.SourceNode`.
   4. Gate the bus by `Receive.Bus` and archives by `Receive.Archive`.
-- **`OnRetainMessage` (`:314-378`)**, when `pk.Forward != nil`:
+- **`OnRetainMessage` (`:314-349`)**, when `pk.Forward != nil`:
   - `ClientID` and `Username` come from `Forward`.
-  - `Time = time.Unix(pk.Created, 0)`, the backdated receiver-frame time in seconds. `OnSelectRetainedMessages` rebuilds `Expiry` from the row time (`:381-404`), so the source wall time would make expiry skew-dependent. PL-03 asserts exactly this.
-  - In DB modes (SQLite, Postgres, Mongo, WINCCOA) the write is not executed immediately. It goes into a per-source **pending map** (topic → last value or delete) that the injector flushes with one `AddAll` plus one `DelAll` before every COMMIT (`RetainedAccess.FlushReplicas`, 9.8).
+  - `Time = time.Unix(pk.Created, 0)`, the backdated receiver-frame time in seconds. `OnSelectRetainedMessages` rebuilds `Expiry` from the row time (`:352-381`), so the source wall time would make expiry skew-dependent. PL-03 asserts exactly this.
+  - In DB modes (SQLite, Postgres, Mongo, and WINCCOA on a link without `oaRetained`) the write is not executed immediately. It goes into a per-source **pending map** (topic → last value or delete) that the injector flushes with one `AddAll` plus one `DelAll` before every COMMIT (`RetainedAccess.FlushReplicas`, 9.8).
   - A **local** retained write to a topic that has a pending replica entry removes that entry, so the local (newest arrival) value wins. The check is one atomic read when nothing is pending.
   - Trade-off: for up to one batch, a new subscriber on the receiver can see the previous retained value in DB mode.
-- **WINCCOA retained.** Every replicated retained message becomes a confirmed `dpSet` on MMQRetained (`internal/stores/oastore/retained.go:40-42,228-279`), batched per flush. The cost is measured in gate G3. Whether passive-host writes are confirmed is an M0 exit criterion (Q9).
+- **WINCCOA retained (decided 2026-10-03, Q9).** WinCC OA stores the MMQRetained datapoints and replicates them between the hosts of a redundant pair. The oastore keeps every retained message in memory, loaded once at startup (`internal/stores/oastore/retained.go:39-41,89-147`, called from `useOAStores`, `internal/broker/server.go:572-579`), and new subscribers are served from that view (`OnSelectRetainedMessages` → `store.Retained.FindMatchingMessages`, `hook_storage.go:352-381`; `retained.go:330-347`).
+  - **Link with `oaRetained` (9.5).** A retained replica, set or delete, updates only the receiver's in-memory view. `OnRetainMessage` checks `h.retainedViaOA(pk.Forward.SourceNode)` (one atomic load of the per-source flag set at the handshake) and calls `ApplyCached` with the single message at once, bypassing the pending map and `AddAll`/`DelAll`. No `dpCreate`, `dpSet` or `dpDelete` runs on the receiver: the source's own confirmed write (`put`/`del`, `retained.go:228-279,281-301`) is stored and replicated by WinCC OA. Live delivery to subscribers is unchanged. After a restart the receiver loads MMQRetained, which WinCC OA has kept in sync, so its view and its datapoints agree. The one-batch trade-off above does not apply.
+  - **Link without `oaRetained`** (WinCC OA distributed systems with different system names, or the source uses another retained store). The receiver writes its own MMQRetained through the pending map: `put` with a confirmed `dpSet` per value (`retained.go:228-279`) or `del` with `dpDelete` (`:281-301`), batched per flush.
+  - **`RetainedStore.ApplyCached(msgs []stores.BrokerMessage)`** (new in `internal/stores/oastore/retained.go`; struct with `data` at `:42-53`, `retainedEntry` at `:55-58`, `inMemoryOnly` at `:65-67`, `retainedDP` at `:75`). For each message, an empty payload deletes `s.data[topic]`; otherwise it stores `&retainedEntry{dp: retainedDP(topic), msg: m}` with `IsRetain = true` and a copied payload, or `dp: ""` when `inMemoryOnly(topic)`. It makes no OA call and takes only `s.mu`, not `wmu`, so it never waits for a local OA write in progress; a concurrent local `put` that completes later wins, as with the pending map. The entry carries a `cached` flag, so a later local `put` on that topic still calls `DpCreate` (an existing datapoint is tolerated, `retained.go:248-253`) in case WinCC OA has not replicated the datapoint yet. StorageHook reaches the method through a one-method interface asserted on `store.Retained`; no other store implements it.
 
 **QueueHook (`internal/broker/hook_queue.go`)**
 
@@ -1137,10 +1156,10 @@ The record is dropped and counted in `retainedDiverged{expired}`.
 
 ### 16.4 Active-active conflicts
 
-A partition, or a device failing over from A to B while A's backlog is still being replayed, can make the nodes **swap** retained values.
+Clients connect to both brokers at the same time (active-active, owner statement 2026-10-03). A partition, or a device failing over from A to B while A's backlog is still being replayed, can make the nodes **swap** retained values.
 
-- **v1 (`RetainedConflict: ARRIVAL`).** Documented, and visible through the lag and gap counters. Will supersession (12.2 step 7) removes the most common failover case.
-- **M6 option (`RetainedConflict: NEWEST`).** A per-topic map `topic → (publishWallNs, nodeId)` fed by an `OnRetainMessage` tap. An older incoming retained record is injected with `Retain=false`; ties are broken by NodeId. Costs: est. 50-100 ns per retained publish, and dependence on NTP.
+- **Policy ARRIVAL (decided 2026-10-03, Q8).** On each node the last retained record applied there wins. The owner decided that PeerLink needs no special handling for active-active clients: swapped retained values after a partition are accepted. They are documented and visible through the lag and gap counters. Will supersession (12.2 step 7) removes the most common failover case. There is no configuration key.
+- **Not planned.** A newest-wins policy (`RetainedConflict: NEWEST`, a per-topic publish-time map) is not part of v1 or M6.
 
 ### 16.5 Retained snapshot and resync (R4)
 
@@ -1149,6 +1168,7 @@ A partition, or a device failing over from A to B while A's backlog is still bei
 **Automatic snapshot (FILL), v1.**
 
 - **When.** On `HELLO_OK` with `SNAPSHOT_AVAILABLE`, that is, after a consumer restart or a source reset, if both sides agree `SNAPSHOT_FILL` and `Snapshot.Mode: FILL` (default).
+- **Skipped automatically on a link with `oaRetained`** (both sides `RetainedStoreType: WINCCOA` in one WinCC OA system, 9.5). The source does not set `SNAPSHOT_AVAILABLE`, and the consumer does not request a snapshot: the receiver loaded the MMQRetained datapoints that WinCC OA replicated when it started (13.4). Consequence of a source crash on such a link: a retained record that was captured but never pulled is in the receiver's datapoints (WinCC OA replicated the source's write) but not in its in-memory view until the receiver restarts. It is counted in `resetLostLowerBound`; the operator resync below repairs it without a restart.
 - **Source side.**
   1. The consumer sends `FETCH(flags=SNAPSHOT)`.
   2. The source materialises the **topic list** of its current retained set through `RetainedAccess.Snapshot`: in-memory `Topics.Retained`, or `store.Retained.FindMatchingMessages("#")` in DB modes.
@@ -1405,7 +1425,6 @@ The section is a top-level `PeerLink PeerLinkConfig` with its own `Enabled`, lik
      - `AllowUnauthenticatedPeers` in use;
      - a group secret with more than two nodes;
      - the peer truststore equals the TCPS truststore;
-     - `RetainedStoreType: WINCCOA` (Q9);
      - `RetainedStoreType: MEMORY` with `Snapshot.Mode: OFF` ("peer retained state is lost on restart");
      - `2.2 × MaxBytes + 150 MiB > Runtime.MemoryLimitMB`.
 
@@ -1438,7 +1457,13 @@ The section is a top-level `PeerLink PeerLinkConfig` with its own `Enabled`, lik
 | Throughput / latency | OA-bound | Broker-bound (measured, G3/G4) |
 
 - **Stores.**
-  - **`RetainedStoreType: WINCCOA`** writes every replicated retained value as a confirmed `dpSet` to the MMQRetained datapoint that OA already mirrors. Writes on the passive host may be discarded (`plan-winccoa-node-redundancy-status.md:71-75`), and the oastore cache is loaded only at startup (`retained.go:40-42`). Q9 is an M0 exit criterion. Until it passes, the recommendation is `RetainedStoreType: MEMORY` (with snapshot FILL) or `SQLITE` together with PeerLink.
+  - **`RetainedStoreType: WINCCOA`** stays as it is: WinCC OA stores the MMQRetained datapoints and replicates them between the two hosts (decided 2026-10-03, Q9). Both hosts share one system name, so the link has `oaRetained` (9.5): a forwarded retained message updates only the receiver's in-memory view and is not written again (13.4), and snapshot FILL is skipped (16.5). After a restart each host loads MMQRetained, which WinCC OA has kept in sync (`retained.go:89-147`). Between WinCC OA distributed systems (different system names) the receiver writes its own MMQRetained.
+- **Writes on the passive host (confirmed by the owner 2026-10-03).** WinCC OA receives value changes made on the passive host but does not execute them. Every datapoint write of the broker on the passive host is therefore without effect:
+  - a retained message published to the passive broker is not stored in MMQRetained. It lives in the memory of both brokers (the active one gets it through PeerLink, cache only) and is lost when both restart;
+  - native writes (`.../set`) and topics-branch publishes (`winccoa/topics/...`) sent to the passive broker are not executed;
+  - writes of the other WINCCOA stores (MMQSessions, MMQConfigs, MMQUsers) on the passive host are lost as well.
+
+  Accepted for v1. Follow-up idea (Q29): the passive broker forwards these writes over PeerLink to the broker on the active host, which executes them.
   - **`SessionStoreType: WINCCOA`** mirrors MMQSessions across hosts. With PeerLink enabled, QueueHook hydrates only own-node sessions (13.4).
   - **`UserStoreType` and `ConfigStoreType: WINCCOA`** are unaffected as stores; a shared config store matters only for device assignment (next bullet).
 - **Devices.** Assign devices that publish into the broker (inbound MQTT bridges, WinCC UA/OA bridges, RTSP cameras, scripts) to one node's NodeId. Outbound-only MQTT bridges run on every node (`*`) with `BridgeOutbound: false`. A bridge with both directions on one node needs `BridgeOutbound: true` and a remote that is not a peer (14.6).
@@ -1446,7 +1471,7 @@ The section is a top-level `PeerLink PeerLinkConfig` with its own `Enabled`, lik
   - `Receive.BridgeOutbound` applies to every bridge of the node. A node with `BridgeOutbound: true` therefore must not also run `*` outbound-only bridges, or the peer's publishes reach the remote twice.
   - Redfish ignores NodeId: enable it on one node only (7.4). Host monitoring may run on both nodes as long as its `BaseTopic` contains `{NodeId}`.
   - If a device's node fails, its output stops until the device is reassigned. The startup WARNs are listed in 6.2 `build()` step 5.
-- **Clients.** Keep a persistent session on one node where possible. Shared subscription groups should have members on every node (`SharedSubscriptions: SKIP`). Use MQTT 5, so clients see reason 0x8B on a planned stop and fail over immediately.
+- **Clients.** Clients may connect to both brokers at the same time; PeerLink adds no special handling for it, and swapped retained values after a partition are accepted (16.4). Keep a persistent session on one node where possible. Shared subscription groups should have members on every node (`SharedSubscriptions: SKIP`). Use MQTT 5, so clients see reason 0x8B on a planned stop and fail over immediately.
 - **Bridges and archives.** The MQTT bridge outbound does not forward replicas by default. Assign an archive group that writes to a **shared** database to one node only, or set `Receive.Archive: false`.
 
 ---
@@ -1470,7 +1495,7 @@ The section is a top-level `PeerLink PeerLinkConfig` with its own `Enabled`, lik
   - `dropped{malformed|size_source|namespace|filtered|size|expired|stale|will_superseded}`, `retainedDiverged{reason}`, `rejected`, `unknownProps`;
   - `gapLostTotal`, `sourceResets`, `resetLostLowerBound`, `reconnects`, `crcErrors`;
   - `snapshotFilled`, `snapshotSkippedPresent`, `snapshotTruncated`;
-  - `paced`, `lastError`, `clockSkewMs`, `topicRootMismatch`, `retainedClassMismatch`;
+  - `paced`, `lastError`, `clockSkewMs`, `topicRootMismatch`, `retainedClassMismatch`, `oaRetained` (also per consumer on the source, 9.5);
   - `applyDelayMs p50/p99/p99.9`.
 - **Measurement details.**
   - Latency uses fixed allocation-free buckets.
@@ -1484,7 +1509,7 @@ The section is a top-level `PeerLink PeerLinkConfig` with its own `Enabled`, lik
    - WARN, rate-limited per peer to 1 per 10 s with aggregate counts: gaps, source resets, never connected, skew, retained divergence, `shutdownUnserved > 0`, `uncapturedAtShutdown > 0`.
    - ERROR: identity mismatch, self connection, wrong node, duplicate NodeId, poison batch.
 2. **Status endpoint** `GET /peerlink/v1/status`: plaintext from loopback, or over TLS to mTLS-authenticated peers only. There is no HMAC-signed remote status in v1. It returns JSON with `nodeId`, `epoch`, `listen`, `tls`, `log{...}`, `consumers[...]` and `sources[...]`, e.g. `curl -s http://127.0.0.1:1890/peerlink/v1/status`. The integration tests assert counters through it. `POST /peerlink/v1/resync` is loopback only (16.5).
-3. **Metrics collector.** `messageBusIn` (records injected) and `messageBusOut` (records served) are added to the persisted `BrokerSnapshot` JSON under the Java keys (`MetricsStoreSQLite.kt:351-352`; meaning per `SessionHandler.kt:58-60`). The `snapshotToBrokerMetrics` mapping (`resolver.go:1832-1842`) follows only after S4.
+3. **Metrics collector.** `messageBusIn` (records injected) and `messageBusOut` (records served) are added to the persisted `BrokerSnapshot` JSON under the Java keys (`MetricsStoreSQLite.kt:351-352`; meaning per `SessionHandler.kt:58-60`). `snapshotToBrokerMetrics` (`internal/graphql/resolvers/resolver.go:1832-1843`) maps them to the existing `BrokerMetrics.messageBusIn/messageBusOut` fields in v1 (M5; S4 granted 2026-10-03, no SDL change).
 4. **Native status JSON (M5, covered by S2).** When native mode is on, the retained status on `<TopicRoot>/...` (`internal/winccoanative/service.go:1149-1173`) gets a `peerLink` object:
 
    ```json
@@ -1511,7 +1536,7 @@ The section is a top-level `PeerLink PeerLinkConfig` with its own `Enabled`, lik
 | TLS encrypt + decrypt (~220 B) | 1-2 µs | 4-10 µs | 0.1-0.4 µs | ChaCha20-Poly1305 on Pi 4: assembly ChaCha20 on arm64 only, generic Poly1305 on arm |
 | Receive decode + validate | 50-100 ns | 100-200 ns | 20-40 ns | Interning |
 | **Inject (engine publish, default hooks)** | **2-5 µs** | **4-10 µs** | **0.5-1.5 µs** | Includes StorageHook bus/archive dispatch (Default archive group `#` with in-memory last value, `archive/manager.go:108-118`, `archive/group.go:152-167`) and derived UUID; plus ~0.3-0.5 µs per matching subscriber |
-| Retained replica, DB mode | + batched share of one transaction per batch | same | same | SQLite single mutex (`sqlite/db.go:66`); WINCCOA: confirmed dpSet per value, batched |
+| Retained replica, DB mode | + batched share of one transaction per batch | same | same | SQLite single mutex (`sqlite/db.go:66`); WINCCOA without `oaRetained` (different OA systems): confirmed dpSet per value, batched; WINCCOA with `oaRetained` (one OA system, redundant pair): in-memory update only (`ApplyCached`, 13.4), no OA call |
 
 The ceiling is the receiver's apply path on one goroutine. Section 9.1 no longer claims single-instruction loads on armv7.
 
@@ -1609,6 +1634,7 @@ All black-box tests live in `test/integration/peerlink_*_test.go` and drive real
 | PL-41 | TLS migration | Steps of 17.5 executed with one node restart at a time: no interval in which both directions are down; zero loss for connected consumers |
 | PL-42 | Admission | 3 parallel pre-auth connections from one IP: the third is refused (`busy`), and the configured peer from another IP still connects |
 | PL-43 | Retained capture order | A retained publish whose PUBACK write blocks (client with a tiny receive window) and a concurrent same-topic retained publish: final retained value identical on A and B |
+| PL-44 | WINCCOA retained across one or two OA systems | A and B each run on their own simulated WinCC OA host (`simhost.New(<system>, 0)`, `internal/oahost/simhost/simhost.go:93`) with `RetainedStoreType: WINCCOA`, set up like `newSim` and `startNative` (`test/integration/winccoa_native_test.go:37-39,82`) and `TestNativeStoreRetained` (`test/integration/winccoa_native_store_test.go:381-385`). **Same system** (both `System1`): `oaRetained` is 1 on both sides, no snapshot is requested; a retained set and then a delete on A reach B's live subscribers, and a subscriber that connects to B after the set receives the value; on B's host the MMQRetained datapoint of that topic does not exist (`sim.Get` fails, as at `winccoa_native_store_test.go:397`) and `sim.Calls(oahost.OpDpCreate/OpDpSet/OpDpDelete)` do not change while the replicas are applied. **Different systems** (`System1`, `System2`): `oaRetained` is 0; B creates and writes the datapoint (`OpDpSet` count rises, `sim.Get` returns the payload) and deletes it on the retained delete. |
 
 ### 22.3 Package-level tests (pure codec and log, no broker mocks)
 
@@ -1632,13 +1658,13 @@ All black-box tests live in `test/integration/peerlink_*_test.go` and drive real
 
 | M | Scope | Exit criteria |
 |---|---|---|
-| **M0** Decisions | S2-S8 recorded (spec §1 `:15` and `:19` amended, M6a row added, §7.2 cross-reference; S1 done). Q1-Q28 answered. This plan merged. **Q9 verified on the live project:** are passive-host MMQRetained writes confirmed, and how long do they take? **Verify** that `SessionInfo.NodeID` is populated by every session store. | Owner sign-off recorded; Q9 result written into section 19 |
-| **M1** Core, no network | E1, E2, E4, E5, E6 with tests; `wire` codec (header, TLV, tombstone); chunked `Log`; `Hook` (capture paths, striped counters); `BenchmarkInjectPublish`; verify `BrokerMessage.OriginNode` is not persisted by any store; verify `mqtt.Close` after `CloseListeners` | G0 (incl. `T_restart`) and G1/G1b recorded and met; default `MaxBytes` fixed from `T_restart`; fuzz clean |
-| **M2** One-way link, plain TCP | Protocol and handshake, server, puller (three goroutines), injector, receiver filters and failure classes, StorageHook/QueueHook/bus-adapter changes, batched retained writer, config + strict decode + schema + examples + fixture, lifecycle wiring incl. shutdown order | PL-01, 02, 03, 06, 07, 12, 14, 22, 26, 33, 34, 37 green |
+| **M0** Decisions | **Done 2026-10-03, except the spec amendment.** S1-S8 accepted (section 2); Q1-Q28 decided (section 25); this plan committed. Spec amendment pending: the S2 text change in `spec-winccoa-native.md` (§1 `:15` and `:19`, M6a row, §7.2 cross-reference) lands with M1 or as a separate small commit. | Owner sign-off recorded (2026-10-03); spec amendment committed |
+| **M1** Core, no network | E1, E2, E4, E5, E6 with tests; `wire` codec (header, TLV, tombstone); chunked `Log`; `Hook` (capture paths, striped counters); `BenchmarkInjectPublish`; verify `BrokerMessage.OriginNode` is not persisted by any store; verify `mqtt.Close` after `CloseListeners`; verify that `SessionInfo.NodeID` is populated by every session store (moved from M0) | G0 (incl. `T_restart`) and G1/G1b recorded and met; default `MaxBytes` fixed from `T_restart`; fuzz clean |
+| **M2** One-way link, plain TCP | Protocol and handshake (incl. `oaSystem` and the `oaRetained` decision, 9.5), server, puller (three goroutines), injector, receiver filters and failure classes, StorageHook/QueueHook/bus-adapter changes, batched retained writer, `RetainedStore.ApplyCached` (13.4), config + strict decode + schema + examples + fixture, lifecycle wiring incl. shutdown order | PL-01, 02, 03, 06, 07, 12, 14, 22, 26, 33, 34, 37, 44 green |
 | **M3** Failure semantics | Epochs and resume, commit and trim, loss accounting, overflow/GAP, keepalive and progress deadlines, backoff, takeover and duplicate detection, drain, wills with supersession, snapshot FILL, catch-up pacing, shared-subscription skip, bidirectional links and meshes, versioning | PL-04, 05, 08-11, 13, 15, 17-20, 23, 27-32, 35, 38, 39, 43 green; G5 |
 | **M4** Security | `internal/tlsutil`, TLS listener and dialer, NodeId binding (URI SAN), pins, `EnsurePeerCertificate`, shared secrets over TLS with channel binding, admission, fail-closed validation, migration switches | PL-16, 21, 41, 42 green |
-| **M5** Performance, observability, docs | Status endpoint and resync, metrics snapshot fields, native status `peerLink` object, log events, `Runtime.MemoryLimitMB`, load harness and stored baselines, Pi 4 (arm64 and armv7) and x86 runs, soak. README sections: "PeerLink for redundant pairs" in `winccoa/README.md` (incl. rolling upgrade and TLS migration procedures, RPO, device assignment rules of 19) with the "Single node only" line (`winccoa/README.md:342`) rewritten; in `README.md` a PeerLink feature entry, "No clustering" removed from `:21` and "Single-node. No clustering." from `:399`; `AGENTS.md` repository layout lists `internal/peerlink/` and `internal/tlsutil/` (26). | G2-G7 measured, recorded and met (or contingency applied); PL-24, 25, 36, 40 passed |
-| **M6** Optional | Arena log, `RetainedConflict: NEWEST`, conditional retained clear, E3, E7, API username in `Forward`, Redfish NodeId assignment (Q28), certificate hot reload, adaptive `Fetch.MaxBytes`, subscriber-fill backpressure, `messageBusIn/Out` resolver mapping (after S4) | Separate owner decisions |
+| **M5** Performance, observability, docs | Status endpoint and resync, metrics snapshot fields and their `BrokerMetrics.messageBusIn/messageBusOut` resolver mapping (S4 granted 2026-10-03, no SDL change), native status `peerLink` object, log events, `Runtime.MemoryLimitMB`, load harness and stored baselines, Pi 4 (arm64 and armv7) and x86 runs, soak. README sections: "PeerLink for redundant pairs" in `winccoa/README.md` (incl. rolling upgrade and TLS migration procedures, RPO, device assignment rules of 19) with the "Single node only" line (`winccoa/README.md:342`) rewritten; in `README.md` a PeerLink feature entry, "No clustering" removed from `:21` and "Single-node. No clustering." from `:399`; `AGENTS.md` repository layout lists `internal/peerlink/` and `internal/tlsutil/` (26). | G2-G7 measured, recorded and met (or contingency applied); PL-24, 25, 36, 40 passed |
+| **M6** Optional | Arena log, conditional retained clear, E3, E7, API username in `Forward`, Redfish NodeId assignment (Q28), write forwarding from the passive to the active WinCC OA host (Q29, own plan), certificate hot reload, adaptive `Fetch.MaxBytes`, subscriber-fill backpressure. A newest-wins retained policy (`NEWEST`) is not planned (16.4). | Separate owner decisions |
 
 ---
 
@@ -1649,11 +1675,11 @@ All black-box tests live in `test/integration/peerlink_*_test.go` and drive real
 | K1 | Governance: reviewers hold the plan to AC-27..AC-33 | S2 recorded; explicit non-goals (1.3) |
 | K2 | RPO misunderstood as zero loss ("redundancy") | S3 statement in docs and README; counters for every loss path; listener-first drain with internal publishers stopped before it; `shutdownUnserved`, `uncapturedAtShutdown` |
 | K3 | Hot-path regression: every publisher pays for capture | Gates G1/G1b/G2/G2b; chunked log; prefix fast path for the default filters; arena fallback |
-| K4 | Retained divergence (overflow, source crash, expired-before-pull, size drops, active-active) | `retainedDiverged`, snapshot FILL, will supersession, operator resync; NEWEST and conditional clear in M6 |
-| K5 | Same-topic retained race between two publishers on one source, inside `retainMessage` (sub-µs window) | Documented; NEWEST only helps if the timestamps differ |
+| K4 | Retained divergence (overflow, source crash, expired-before-pull, size drops, active-active) | `retainedDiverged`, snapshot FILL, will supersession, operator resync; conditional clear in M6. Swapped values from active-active clients are accepted (16.4, Q8); no newest-wins policy is planned. |
+| K5 | Same-topic retained race between two publishers on one source, inside `retainMessage` (sub-µs window) | Documented |
 | K6 | NodeId collision or mismatch from copied configs or hostname case/FQDN | Canonical NodeIds, `edge` fallback rejected, own-entry WARN, `duplicate_node`, example comment |
 | K7 | Duplicate production: a device that publishes into the broker (inbound bridge, WinCC UA/OA bridge, RTSP camera, script) with NodeId `local`/`*` runs on both nodes under a shared config store, so its output arrives twice; Redfish gateways ignore NodeId, so the NodeId rule does not apply to them; both nodes archive into one shared database | Assign such devices to one node (7.4, 19); exception: outbound-only MQTT bridges run on every node with `BridgeOutbound: false`; Redfish on one node only or its prefix in `Capture.Exclude`; startup WARNs (6.2 `build()` step 5); `Receive.Archive`; documentation |
-| K8 | Receiver apply is the throughput ceiling; DB-retained and WINCCOA writes | G3 matrix; batched retained writer; `InjectWorkers` contingency |
+| K8 | Receiver apply is the throughput ceiling; DB-retained writes, and WINCCOA writes between different OA systems | G3 matrix; batched retained writer; `InjectWorkers` contingency. In a redundant pair (`oaRetained`, 9.5) WINCCOA replicas cost no OA call (13.4). |
 | K9 | Memory: capacity depends on rate and record size; RSS up to 2× without a limit | Size-class accounting, `capacitySeconds`, `Runtime.MemoryLimitMB`, G6 on both sides |
 | K10 | Pre-existing: in-memory retained messages are force-purged 24 h after `Created`, even without expiry (`server.go:1885-1888`); DB stores do not do this | Backdated `Created` aligns MEMORY↔MEMORY only; handshake WARN on mixed store classes; noted for a separate engine review |
 | K11 | Pre-existing MQTT 5 gaps (RequestProblemInfo=0 suppression; DB-retained and queue rows without properties) | Documented (R10 partial) |
@@ -1668,59 +1694,65 @@ All black-box tests live in `test/integration/peerlink_*_test.go` and drive real
 | K20 | Snapshot FILL resurrects a value deleted on the consumer while the source was unreachable | Requires prior divergence; documented; `Snapshot.Mode: OFF` |
 | K21 | Will supersession suppresses a legitimate will when a different device reuses the same client id on the receiver | Same accepted trade-off as K12 |
 | K22 | `$SYS` received counters include replicas | Documented; E7 optional |
+| K23 | `oaRetained` decides by system name only. Two independent WinCC OA projects (neither redundant nor distributed) that both use the same name, for example `System1`, are taken for one system: the receiver does not write the replicated retained values, nothing replicates them and snapshot FILL is skipped, so a receiver restart loses them | Deployment rule: PeerLink between independent WinCC OA projects needs distinct system names (distributed systems require that anyway); INFO log and `oaRetained` gauge per link (9.5); PL-44 covers both cases |
+| K24 | WinCC OA does not execute datapoint writes made on the passive host (confirmed 2026-10-03): retained messages, native writes, topics-branch publishes and WINCCOA store writes sent to the passive broker have no effect in WinCC OA | Accepted for v1 and documented (19); follow-up write forwarding to the active host (Q29) |
 
 ---
 
-## 25. Open questions (each with a recommended answer)
+## 25. Questions and decisions (decided 2026-10-03; Q29 is a follow-up)
 
-| ID | Question | Recommendation |
+The owner answered every open question on 2026-10-03. Each decision is the recommendation of the review draft, except Q8 (NEWEST dropped), Q9 (no receiver-side MMQRetained write within one WinCC OA system) and Q15 (resolver mapping moved into v1).
+
+| ID | Question | Decision |
 |---|---|---|
 | Q1 | Remove the single-node rule from AGENTS.md? | Done 2026-10-03 |
-| Q2 | Accept the in-memory RPO (15.4) replacing plan §7.2 durability, AC-28 and AC-30? | Yes |
+| Q2 | Accept the in-memory RPO (15.4) replacing plan §7.2 durability, AC-28 and AC-30? | Decided 2026-10-03: yes, accepted (S3) |
 | Q3 | Which inline publishes are captured? | Decided 2026-10-03: all of them, like client publishes (7.4); duplicates are avoided by assigning devices to one node |
-| Q4 | Preserve the original client id as `Origin` on the receiver (NoLocal per logical client, Kotlin `senderId` parity)? | Yes (E1) |
-| Q5 | Replicas feed the receiver's bus and archives by default; MQTT bridge outbound? | Bus and archives yes, with switches; bridge outbound no (`Receive.BridgeOutbound: false`) |
-| Q6 | Exclude replicas from `messagesIn` and count them as `messageBusIn`? | Yes. `$SYS` counters keep including them (documented). |
-| Q7 | Retained record expired before pull | v1: drop and count in `retainedDiverged`. M6: conditional silent clear. |
-| Q8 | Retained conflict policy for active-active | ARRIVAL in v1 (with will supersession); NEWEST opt-in in M6 |
-| Q9 | Write replicated retained messages into MMQRetained (`RetainedStoreType: WINCCOA`)? | Yes, always (there is no correct alternative, 12.5), batched per flush. Verify in M0 that passive-host writes are confirmed and fast. Until verified, recommend MEMORY (with snapshot) or SQLITE with PeerLink. |
-| Q10 | Topology | One hop, full mesh required; transitive forwarding deferred |
-| Q11 | Replicate wills? | Yes (`Capture.Wills: true`), never during the source's own shutdown, and with receiver-side supersession. E3 only on demand. |
-| Q12 | Default peer port | 1890 |
-| Q13 | Default log limits | 2,000,000 messages / 256 MiB provisional; final `MaxBytes` from the M1 `T_restart` measurement |
-| Q14 | Default fetch pipeline depth and linger | 1 and 0 until G3/G7 are measured; then whichever wins (the duplicate window no longer depends on it) |
-| Q15 | Fill `BrokerMetrics.messageBusIn/Out` via the resolver? | Yes, after S4 |
-| Q16 | Is the HMI sync base topic excluded? | By default (`Capture.Exclude` = `<HMI.SyncBaseTopic>/#`): the sync service on every node would otherwise answer and write the files. Changeable. |
-| Q17 | Status endpoint scope | Loopback plaintext, and mTLS peers over TLS; no HMAC remote status in v1 |
-| Q18 | Refactor `broker.LoadTLS` onto `tlsutil` now? | No; refactor later |
-| Q19 | Support JKS or modern PKCS12 keystores or encrypted keys? | No in v1 (PEM only; a new dependency needs sign-off) |
-| Q20 | Does a configured but never-connected consumer pin the log? | Yes (required for R4), with a WARN after 300 s |
-| Q21 | Drop stale replicas by age by default? | No (`MaxRecordAgeMs: 0`). Stale retained records are applied silently when enabled. |
-| Q22 | Filter the source's announced TopicRoot in addition to the own one? | Yes |
-| Q23 | Add a top-level `Runtime.MemoryLimitMB` (affects the whole broker)? | Yes; default 0 (unchanged behaviour) |
-| Q24 | Nightly performance regression runs | Yes, once reference Pi 4 and x86 hosts are available; until then per release with stored baselines |
-| Q25 | Default for shared subscriptions on the receiver | `SKIP`, with the deployment rule "members on every node" |
-| Q26 | Default for offline queues on the receiver, and the own-node session hydration filter | `Receive.Queue: false`; hydration filter on whenever PeerLink is enabled |
+| Q4 | Preserve the original client id as `Origin` on the receiver (NoLocal per logical client, Kotlin `senderId` parity)? | Decided 2026-10-03: yes (E1) |
+| Q5 | Replicas feed the receiver's bus and archives by default; MQTT bridge outbound? | Decided 2026-10-03: bus and archives yes, with switches; bridge outbound no (`Receive.BridgeOutbound: false`) |
+| Q6 | Exclude replicas from `messagesIn` and count them as `messageBusIn`? | Decided 2026-10-03: yes; `$SYS` counters keep including them (documented) |
+| Q7 | Retained record expired before pull | Decided 2026-10-03: v1 drops and counts in `retainedDiverged`; M6 conditional silent clear |
+| Q8 | Retained conflict policy for active-active | Decided 2026-10-03: ARRIVAL, with will supersession. Clients connect to both brokers; PeerLink adds no special handling, and swapped retained values after a partition are accepted (16.4). NEWEST is not planned. |
+| Q9 | Write replicated retained messages into MMQRetained (`RetainedStoreType: WINCCOA`)? | Decided 2026-10-03: WINCCOA stays as is; WinCC OA stores and replicates MMQRetained. With WINCCOA on both sides of one OA system (`oaRetained`, 9.5) the receiver updates only its in-memory view (`ApplyCached`, 13.4) and snapshot FILL is skipped (16.5). With different system names, or another store on either side, the receiver writes its own store, batched per flush. No passive-host verification is needed for the redundant pair. |
+| Q10 | Topology | Decided 2026-10-03: one hop; a full mesh has to be configured (accepted); transitive forwarding deferred |
+| Q11 | Replicate wills? | Decided 2026-10-03: yes (`Capture.Wills: true`), never during the source's own shutdown, with receiver-side supersession; E3 only on demand |
+| Q12 | Default peer port | Decided 2026-10-03: 1890 |
+| Q13 | Default log limits | Decided 2026-10-03: 2,000,000 messages / 256 MiB provisional; final `MaxBytes` from the M1 `T_restart` measurement |
+| Q14 | Default fetch pipeline depth and linger | Decided 2026-10-03: 1 and 0 until G3/G7 are measured; then whichever wins |
+| Q15 | Fill `BrokerMetrics.messageBusIn/Out` via the resolver? | Decided 2026-10-03: yes, in v1 (M5); resolver only, no SDL change (S4 granted) |
+| Q16 | Is the HMI sync base topic excluded? | Decided 2026-10-03: by default (`Capture.Exclude` = `<HMI.SyncBaseTopic>/#`); changeable |
+| Q17 | Status endpoint scope | Decided 2026-10-03: loopback plaintext, and mTLS peers over TLS; no HMAC remote status in v1 |
+| Q18 | Refactor `broker.LoadTLS` onto `tlsutil` now? | Decided 2026-10-03: no; refactor later |
+| Q19 | Support JKS or modern PKCS12 keystores or encrypted keys? | Decided 2026-10-03: PEM only |
+| Q20 | Does a configured but never-connected consumer pin the log? | Decided 2026-10-03: yes (required for R4), with a WARN after 300 s |
+| Q21 | Drop stale replicas by age by default? | Decided 2026-10-03: no (`MaxRecordAgeMs: 0`); stale retained records are applied silently when enabled |
+| Q22 | Filter the source's announced TopicRoot in addition to the own one? | Decided 2026-10-03: yes |
+| Q23 | Add a top-level `Runtime.MemoryLimitMB` (affects the whole broker)? | Decided 2026-10-03: yes; default 0 (unchanged behaviour) |
+| Q24 | Nightly performance regression runs | Decided 2026-10-03: yes, once reference Pi 4 and x86 hosts exist; until then per release with stored baselines |
+| Q25 | Default for shared subscriptions on the receiver | Decided 2026-10-03: `SKIP`, with the deployment rule "members on every node" |
+| Q26 | Default for offline queues on the receiver, and the own-node session hydration filter | Decided 2026-10-03: `Receive.Queue: false`; hydration filter on whenever PeerLink is enabled |
 | Q27 | Stop the internal publishers (bridges, scripts, host monitoring, HMI sync, Redfish, RTSP, publish APIs) before the drain, which moves their stop ahead of `native.Stop` when PeerLink is enabled? | Yes (decided 2026-10-03, 6.2 `Close()` step 4). Otherwise the drain chases a moving target and their later publishes are lost uncounted. With PeerLink disabled, `Close()` is unchanged. |
-| Q28 | Make Redfish gateways honour NodeId like the other devices? | Not in v1: it changes Redfish behaviour outside PeerLink. Enable Redfish on one node, or exclude its prefix; startup WARN (6.2). M6 candidate. |
+| Q28 | Make Redfish gateways honour NodeId like the other devices? | Decided 2026-10-03: not in v1; enable Redfish on one node or exclude its prefix; startup WARN (6.2); M6 candidate |
+| Q29 | Forward WinCC OA writes made on the passive host to the broker on the active host? | Follow-up (owner idea 2026-10-03), not v1, own plan. Covers native `.../set` commands, topics-branch publishes and WINCCOA store writes (MMQRetained, MMQSessions, MMQConfigs, MMQUsers). Needs the host role (`plan-winccoa-node-redundancy-status.md`), a request/result channel on the PeerLink connection, command ids for deduplication and a defined result when the active host is unreachable (`plan-winccoa-broker-embedded-manager.md` §6, AC-32). |
 
 ---
 
 ## 26. Change list
 
 - **New:**
-  - `internal/peerlink/*` (incl. `wire/`; `hook.go` also refuses the reserved client ids `inline` and `peerlink:*` in `OnConnect`, 12.1), `internal/tlsutil/*`;
+  - `internal/peerlink/*` (incl. `wire/`, whose HELLO and HELLO_OK carry `retainedClass` and `oaSystem` for the `oaRetained` decision, 9.4-9.5; `hook.go` also refuses the reserved client ids `inline` and `peerlink:*` in `OnConnect`, 12.1), `internal/tlsutil/*`;
   - `test/integration/peerlink_*_test.go`, `test/integration/testdata/peerlink-full.yaml`;
   - `dev/plans/plan-peerlink.md`, `dev/bench/peerlink/` (baselines).
 - **Modified:**
   - **Engine:** `internal/mqtt/packets/packets.go` (E2, E6), `internal/mqtt/server.go` (E1, E4, E5, E6).
   - **Broker:**
-    - `internal/broker/server.go`: build (incl. the device WARN step, 6.2 `build()` step 5)/Serve/Close (incl. the internal-publisher stop before the drain, 6.2), `RetainedAccess`/`ClientState` adapters.
-    - `internal/broker/hook_storage.go`: Forward handling, gates, derived UUID, `IncIn`, batched replica retained writer.
+    - `internal/broker/server.go`: build (incl. the device WARN step, 6.2 `build()` step 5, and the `oaSystem`/`retainedViaOA` wiring, 6.2 step 1)/Serve/Close (incl. the internal-publisher stop before the drain, 6.2), `RetainedAccess`/`ClientState` adapters.
+    - `internal/broker/hook_storage.go`: Forward handling, gates, derived UUID, `IncIn`, batched replica retained writer; `OnRetainMessage` calls `ApplyCached` instead of `AddAll`/`DelAll` for replicas on a link with `oaRetained` (13.4).
     - `internal/broker/hook_queue.go`: replica skip, own-node hydration.
   - **Bridge:** `internal/bridge/mqttclient/bus_adapter.go` (skip peer-origin).
-  - **Stores:** `internal/stores/types.go` (`BrokerMessage.OriginNode`, not persisted).
+  - **Stores:** `internal/stores/types.go` (`BrokerMessage.OriginNode`, not persisted); `internal/stores/oastore/retained.go` (`RetainedStore.ApplyCached` and the `cached` entry flag, 13.4).
   - **Metrics:** `internal/metrics` (bus in/out).
+  - **GraphQL resolver:** `internal/graphql/resolvers/resolver.go` (`snapshotToBrokerMetrics` fills `messageBusIn`/`messageBusOut`; S4 granted 2026-10-03, M5). No SDL change.
   - **Native status:** `internal/winccoanative/service.go` (`peerLink` status object, M5, under S2).
   - **Config:** `internal/config/config.go`, `load.go` (+ tests), `yaml-json-schema.json`, `config.yaml.example`, `winccoa/monstermq.yaml.example`.
   - **Docs and governance:**
@@ -1731,7 +1763,7 @@ All black-box tests live in `test/integration/peerlink_*_test.go` and drive real
     - `winccoa/README.md`: rewrite the "Single node only" line (`:342`) likewise; add "PeerLink for redundant pairs" (M5).
   - **Tests:** `test/integration/mtls_test.go` (certificate helpers).
 - **Untouched:**
-  - GraphQL SDL (and resolvers unless S4), storage DDL, `embed/cabi`, the C++ manager, `scripts/deb/config.yaml`;
+  - GraphQL SDL (resolvers change only for the S4 mapping), storage DDL, `embed/cabi`, the C++ manager, `scripts/deb/config.yaml`;
   - `go.mod`: stdlib plus the existing `golang.org/x/crypto/pkcs12` and `go.yaml.in/yaml/v3` only;
   - `internal/broker/tls.go`.
 
@@ -1745,11 +1777,12 @@ All black-box tests live in `test/integration/peerlink_*_test.go` and drive real
   Also `internal/mqtt/hooks.go`, `internal/mqtt/packets/packets.go` (Copy 185-249), `internal/mqtt/packets/properties.go` (Copy 127-188), `internal/mqtt/packets/codec.go:46-56`, `internal/mqtt/clients.go`, `internal/mqtt/listeners/listeners.go:115-130`, `internal/mqtt/topics.go:322-327`, `/opt/go/src/net/net.go:853-866`.
 - **Broker:**
   - `internal/broker/server.go` (build 115-512, Close 758-820);
-  - `hook_storage.go` (OnPublished 278-311, OnRetainMessage 314-378, retention 381-404);
+  - `hook_storage.go` (OnPublished 278-311, OnRetainMessage 314-349, OnSelectRetainedMessages 352-381, retention 384-410);
   - `hook_queue.go` (hydrate 65-85, OnPublished 105-145), `hook_winccoa.go`, `tls.go`;
   - `internal/archive/manager.go:100-120`, `internal/archive/group.go:152-167`;
-  - `internal/stores/interfaces.go:57-62`, `internal/stores/oastore/retained.go:40-42`, `internal/stores/oastore/stores.go:397-399`;
+  - `internal/stores/interfaces.go:57-62`, `internal/stores/oastore/retained.go` (RetainedStore 39-53, retainedEntry 55-58, inMemoryOnly 65-67, retainedDP 75, Load 89-147, put 228-279, del 281-301, FindMatchingMessages 330-347), `internal/stores/oastore/stores.go:397-399`;
   - `internal/winccoanative/namespace.go`, `internal/config/config.go`, `internal/config/load.go:19`, `Makefile:39-47`.
-- **Internal publishers:** `internal/broker/server.go` (publishFn and managers 396-502, auth hooks 247-264); `internal/bridge/mqttclient/connector.go:21-48`; `internal/redfish/manager.go:142`, `internal/redfish/subscriber.go:69,142-168`; `internal/bridge/rtspcamera/connector.go:554-620`, `config.go:101,129`; `internal/hostinfo/collector.go:34`; `test/integration/winccoa_native_store_test.go:25-35`.
+- **Internal publishers:** `internal/broker/server.go` (publishFn and managers 396-502, auth hooks 247-264); `internal/bridge/mqttclient/connector.go:21-48`; `internal/redfish/manager.go:142`, `internal/redfish/subscriber.go:69,142-168`; `internal/bridge/rtspcamera/connector.go:554-620`, `config.go:101,129`; `internal/hostinfo/collector.go:34`; `test/integration/winccoa_native_store_test.go:25-35,381-397`, `test/integration/winccoa_native_test.go:37-39,82`, `internal/oahost/simhost/simhost.go:93,162`.
+- **WinCC OA system name:** `internal/winccoanative/service.go` (Start 225-233, LocalSystem 303); `internal/broker/server.go` (native service 277, WINCCOA stores need native 177-180, useOAStores retained 572-579, startNative 649-671, Serve 673-678).
 - **Plans:** `dev/plans/plan-winccoa-broker-embedded-manager.md` §7 and AC-25..AC-35, `dev/plans/plan-winccoa-node-redundancy-status.md`, `dev/plans/spec-winccoa-native.md`, `dev/done/plan-queue-performance.md`.
 - **Kotlin precedent:** `main/broker/src/main/kotlin/bus/MessageBusZenoh.kt`, `bus/ZenohMessageEnvelope.kt`, `data/BrokerMessage.kt`, `data/BrokerMessageCodec.kt`, `handlers/SessionHandler.kt`, `extensions/KafkaProtocolServer.kt`, `devices/mqttclient/MqttClientConnector.kt`.
