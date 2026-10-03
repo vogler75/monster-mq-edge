@@ -357,9 +357,20 @@ bool MonsterMQManager::process(const Pending &p)
   switch (op)
   {
     case OpSysInfo:
+    {
       w.str(TagSysName, std::string((const char *)localSystem));
+      // Redundancy facts: the broker derives its own host (1 or 2) and
+      // watches _ReduManager[_2].Status.Active for its role.
+      w.boolean(TagRedundant, Resources::isRedundant());
+      w.u32(TagReplica, (uint32_t)Resources::getReplica());
+      w.str(TagHost, std::string((const char *)Resources::getPrimaryEMHostName()));
+      w.str(TagHost, std::string((const char *)Resources::getSecondaryEMHostName()));
+      char host[256] = {0};
+      if (gethostname(host, sizeof(host) - 1) == 0)
+        w.str(TagLocalHost, std::string(host));
       complete(p.id, MMQ_OK, &w);
       return true;
+    }
     case OpResolve:
       st = opResolve(m, w, err);
       complete(p.id, st, &w, err);

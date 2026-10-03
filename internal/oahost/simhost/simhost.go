@@ -73,6 +73,8 @@ type Host struct {
 	TickBudget  int
 	BatchLimit  int
 	ManagerName string
+	// Redu are the redundancy facts reported by SYS_INFO (zero: not redundant).
+	Redu oahost.SysInfo
 
 	mu      sync.Mutex
 	local   string
@@ -532,6 +534,14 @@ func (h *Host) handle(r request) {
 	switch op {
 	case oahost.OpSysInfo:
 		w.String(oahost.TagSysName, h.local)
+		if h.Redu.Redundant {
+			w.Bool(oahost.TagRedundant, true)
+			w.U32(oahost.TagReplica, h.Redu.Replica)
+			for _, hn := range h.Redu.Hosts {
+				w.String(oahost.TagHost, hn)
+			}
+			w.String(oahost.TagLocalHost, h.Redu.LocalHost)
+		}
 	case oahost.OpResolve:
 		err = h.resolve(m.String(oahost.TagName), &w)
 	case oahost.OpDpSet:
@@ -806,7 +816,6 @@ func oaPatternRe(system, pattern string) (*regexp.Regexp, error) {
 	}
 	return regexp.Compile("^" + regexp.QuoteMeta(system) + ":(" + strings.Join(parts, "|") + ")$")
 }
-
 
 // queryTable renders a dyn_dyn_anytype-like table: header row ["", ":attr"]
 // followed by [dpe, value] rows.

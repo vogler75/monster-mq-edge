@@ -46,6 +46,13 @@ type Resolution struct {
 
 type SysInfo struct {
 	LocalSystem string
+	// Redundant is true for a redundant project. Hosts are the event hosts
+	// 1 and 2 (empty for a non-redundant project), LocalHost the name of
+	// the computer the manager runs on, Replica the manager's replica number.
+	Redundant bool
+	Replica   uint32
+	Hosts     []string
+	LocalHost string
 }
 
 // OA API is the typed front end used by the bridge, stores and namespace.
@@ -120,7 +127,12 @@ func (a API) SysInfo(ctx context.Context) (SysInfo, error) {
 	if err != nil {
 		return SysInfo{}, err
 	}
-	return SysInfo{LocalSystem: m.String(TagSysName)}, nil
+	info := SysInfo{LocalSystem: m.String(TagSysName), Redundant: m.Bool(TagRedundant), LocalHost: m.String(TagLocalHost)}
+	info.Replica, _ = m.U32(TagReplica)
+	for _, h := range m.All(TagHost) {
+		info.Hosts = append(info.Hosts, string(h))
+	}
+	return info, nil
 }
 
 // Resolve checks a DPE name (with optional system prefix and config) on the

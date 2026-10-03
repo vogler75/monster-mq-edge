@@ -191,6 +191,7 @@ type Service struct {
 	cancel  context.CancelFunc
 	wg      sync.WaitGroup
 	unwatch func()
+	redu    reduState
 	ready   atomic.Bool
 	oaUp    atomic.Bool
 
@@ -249,6 +250,7 @@ func (s *Service) Start(ctx context.Context) error {
 	s.unwatch = func() { unSys(); unDP(); unNew() }
 	s.wg.Add(1)
 	go s.worker()
+	s.startRedu(ctx, info)
 	s.ready.Store(true)
 	s.PublishStatus()
 	return nil
@@ -263,6 +265,7 @@ func (s *Service) Stop(ctx context.Context) {
 	s.cancel()
 	s.wg.Wait()
 	s.stopWild(ctx)
+	s.stopRedu(ctx)
 	if s.unwatch != nil {
 		s.unwatch()
 	}
@@ -1156,9 +1159,9 @@ func (s *Service) PublishStatus() {
 		"system":    s.localSystem,
 		"oa":        map[bool]string{true: "connected", false: "disconnected"}[s.oaUp.Load()],
 		"ready":     s.ready.Load() && s.oaUp.Load(),
-		"role":      "STANDALONE",
 		"timestamp": time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
 	}
+	s.reduStatus(st)
 	if s.opts.PeerLinkStatus != nil {
 		st["peerLink"] = s.opts.PeerLinkStatus()
 	}

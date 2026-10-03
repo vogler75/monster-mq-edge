@@ -27,6 +27,12 @@ const (
 	TagExists   byte = 12
 	TagTime     byte = 13
 	TagCount    byte = 14
+
+	// SYS_INFO answer, redundancy facts (absent from older hosts).
+	TagRedundant byte = 15
+	TagReplica   byte = 16
+	TagHost      byte = 17 // repeated: event host 1, event host 2
+	TagLocalHost byte = 18
 )
 
 // MaxMessage bounds any single ABI message (spec section 7).

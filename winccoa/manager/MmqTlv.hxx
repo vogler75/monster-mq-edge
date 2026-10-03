@@ -18,7 +18,8 @@ namespace mmq
 enum Tag : uint8_t
 {
   TagOp = 1, TagName = 2, TagQuery = 3, TagFlags = 4, TagValue = 5, TagRef = 6, TagError = 7,
-  TagRow = 8, TagTypeName = 9, TagElemType = 10, TagSysName = 11, TagExists = 12, TagTime = 13, TagCount = 14
+  TagRow = 8, TagTypeName = 9, TagElemType = 10, TagSysName = 11, TagExists = 12, TagTime = 13, TagCount = 14,
+  TagRedundant = 15, TagReplica = 16, TagHost = 17, TagLocalHost = 18
 };
 
 enum Kind : uint8_t

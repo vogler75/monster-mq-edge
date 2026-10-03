@@ -78,9 +78,13 @@ The standalone broker is unaffected: `make build`, `build-arm64` and
 ## Readiness and diagnostics
 
 - `winccoa/systems/<System>` (retained JSON, `<System>` = the project's system
-  name): `nodeId`, `ready`, `oa` connection, `system`, `role`
-  (`STANDALONE`), `timestamp`. A retained empty publish clears a stale
-  status of another system name; the own status cannot be written.
+  name): `nodeId`, `ready`, `oa` connection, `system`, `redundant`, `role`,
+  `timestamp`. `role` is `STANDALONE` in a non-redundant system; in a
+  redundant one it is `ACTIVE` or `PASSIVE` for the host the broker runs on
+  (`UNKNOWN` until known), with `host` (1 or 2), `hostName` and
+  `activeHost` (1, 2, or 0 when unknown or in split mode). A retained empty
+  publish clears a stale status of another system name; the own status
+  cannot be written.
 - Broker log lines go to the WinCC OA log (`PVSS_II.log` / log viewer)
   with the `MonsterMQ` catalog prefix. A start failure (bad config, occupied
   port, missing DPT, unreachable store) is logged as `broker failed: ...` and
@@ -321,6 +325,58 @@ published:
 - The broker's own retained store is not used for these topics. Shared
   subscriptions are not supported below `topics/`.
 
+## Redundant WinCC OA systems
+
+In a redundant system `WCCOAmmq` runs on both hosts. By default a manager
+connects only to the Event Manager of its own host. On the passive host the
+Event Manager receives the manager's writes but does not execute them, so
+`dpSet`, `dpCreate` and `dpDelete` of the broker there have no effect: store
+writes time out (for example `subscriptions persist failed ... write
+MMQSessions_k...: context deadline exceeded`) and native writes are lost.
+
+Connect the manager to both Event Managers, like a UI:
+
+```ini
+[monstermq]
+connectToRedundantHosts = 1
+```
+
+or start it with the option `-connectToRedundantHosts`. WinCC OA documents
+the entry for all config sections except `[general]` ("all managers can
+establish a connection to both Event Managers"). The passive Event Manager
+holds back messages of a manager connected to both Event Managers until the
+active one sends the same message, and the active Event Manager executes
+them. The broker on the passive host then writes through the active server
+like the one on the active host.
+
+Give the two managers different manager numbers. Both connect to both Event
+Managers, so they need distinct numbers in the system, for example
+`WCCOAmmq -num 1` on the first host and `WCCOAmmq -num 2` on the second
+(in PMON, Options `-num 1` / `-num 2`, both with `connectToRedundantHosts`
+in `[monstermq]` or `-connectToRedundantHosts` in the options).
+
+The broker status (`winccoa/systems/<System>` and `winccoa`) shows which
+host the broker runs on and whether that host is active:
+
+```json
+{"system": "System1", "redundant": true, "host": 2, "hostName": "debian2",
+ "role": "PASSIVE", "activeHost": 1, ...}
+```
+
+The broker finds its host by comparing the computer name with the event
+hosts of the project (`event = "debian1$debian2"`), falling back to the
+manager's replica number, and follows `_ReduManager.Status.Active` (host 1)
+and `_ReduManager_2.Status.Active` (host 2). After a switchover the status is
+republished with the new `role` and `activeHost`.
+
+Still to verify on a redundant pair:
+
+- whether answers to `dpSetWait`, `dpCreate` and `dpDelete` arrive once or
+  once per Event Manager (the manager must ignore a second answer);
+- whether `dpConnect` and `dpQueryConnect` registrations are restored after a
+  switchover (the API calls `doRefresh`; the manager does not override it);
+- whether hotlinks arrive twice, once per connection.
+
 ## PeerLink for redundant pairs
 
 [PeerLink](../README.md#peerlink-forwarding-between-brokers) forwards MQTT
@@ -406,8 +462,9 @@ PeerLink:
 ### Writes on the passive host
 
 WinCC OA receives value changes made on the passive host but does not
-execute them. Every datapoint write of the broker on the passive host
-therefore has no effect:
+execute them. Unless the manager connects to both Event Managers
+(`connectToRedundantHosts = 1`, see "Redundant WinCC OA systems"), every
+datapoint write of the broker on the passive host therefore has no effect:
 
 - a retained message published to the passive broker is not stored in
   `MMQRetained`. It lives in the memory of both brokers (the active one gets
@@ -417,9 +474,9 @@ therefore has no effect:
 - writes of the other WINCCOA stores (`MMQSessions`, `MMQConfigs`,
   `MMQUsers`) on the passive host are lost as well.
 
-Clients that write into WinCC OA, and configuration changes, have to use the
-broker on the active host. Forwarding these writes from the passive to the
-active host is a possible follow-up.
+With `connectToRedundantHosts = 1` these writes are executed by the active
+server. Without it, clients that write into WinCC OA, and configuration
+changes, have to use the broker on the active host.
 
 ### Devices and clients
 
