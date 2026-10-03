@@ -6,7 +6,7 @@ before making non-trivial changes.
 ## What this project is
 
 `monster-mq-edge` is the **Go port** of [MonsterMQ](https://github.com/vogler75/monster-mq),
-the JVM/Kotlin MQTT broker. The mission is a **single-binary, single-node**
+the JVM/Kotlin MQTT broker. The mission is a **single-binary**
 broker for edge devices (Raspberry Pi 4/5 class) that talks to the central
 MonsterMQ over MQTT.
 
@@ -25,7 +25,6 @@ The short version:
   JDBC/InfluxDB/TimeBase loggers, OPC UA) remain off-limits unless the
   user signs off on adding them — see the parity rule below before
   introducing any new device type.
-- No clustering — single node only.
 - No UI is hosted. An external dashboard talks to `/graphql`.
 
 ## The non-negotiable parity rules
@@ -189,6 +188,5 @@ When porting a feature: read the Kotlin original first, mirror behavior,
 - Change a column/table name in any backend store.
 - Introduce CGO.
 - Add a UI to this repo (an external dashboard is the consumer).
-- Add clustering/Hazelcast/Kafka-bus dependencies — single-node is a
-  product decision.
+- Add Hazelcast/Kafka-bus dependencies.
 - Push to `main` directly, force-push shared branches, or skip git hooks.
