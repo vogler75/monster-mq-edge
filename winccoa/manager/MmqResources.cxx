@@ -1,18 +1,18 @@
-#include <MonsterMQResources.hxx>
+#include <MmqResources.hxx>
 #include <ErrHdl.hxx>
 
-CharString MonsterMQResources::brokerConfig = "config/monstermq.yaml";
-PVSSlong MonsterMQResources::dispatchMs = 2;
-PVSSlong MonsterMQResources::tickBudget = 256;
-PVSSlong MonsterMQResources::tickBudgetMs = 5;
-PVSSlong MonsterMQResources::queueCapacity = 4096;
-PVSSlong MonsterMQResources::stopTimeoutMs = 10000;
-PVSSlong MonsterMQResources::statsSeconds = 60;
-CharString MonsterMQResources::probeQuery = "";
-CharString MonsterMQResources::probeDpe = "";
-CharString MonsterMQResources::probeSet = "";
+CharString MmqResources::brokerConfig = "config/mmq.yaml";
+PVSSlong MmqResources::dispatchMs = 2;
+PVSSlong MmqResources::tickBudget = 256;
+PVSSlong MmqResources::tickBudgetMs = 5;
+PVSSlong MmqResources::queueCapacity = 4096;
+PVSSlong MmqResources::stopTimeoutMs = 10000;
+PVSSlong MmqResources::statsSeconds = 60;
+CharString MmqResources::probeQuery = "";
+CharString MmqResources::probeDpe = "";
+CharString MmqResources::probeSet = "";
 
-void MonsterMQResources::init(int &argc, char *argv[])
+void MmqResources::init(int &argc, char *argv[])
 {
   begin(argc, argv);
   while (readSection() || generalSection())
@@ -20,9 +20,9 @@ void MonsterMQResources::init(int &argc, char *argv[])
   end(argc, argv);
 }
 
-PVSSboolean MonsterMQResources::readSection()
+PVSSboolean MmqResources::readSection()
 {
-  if (!isSection("monstermq"))
+  if (!isSection("mmq"))
     return PVSS_FALSE;
 
   getNextEntry();

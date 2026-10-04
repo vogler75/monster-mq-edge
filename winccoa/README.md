@@ -50,15 +50,15 @@ The standalone broker is unaffected: `make build`, `build-arm64` and
    creates the same types manually, e.g. to prepare a project. With
    `Namespace: true` the manager also creates `MMQTopic` (topics branch, see
    "Topics replicated through WinCC OA").
-3. Copy `monstermq.yaml.example` to `<project>/config/monstermq.yaml` and
+3. Copy `mmq.yaml.example` to `<project>/config/mmq.yaml` and
    adjust ports, users and stores. The manager runs in the project
    directory, so relative paths in it (`SQLite.Path`, key stores) resolve
    against `<project>/`.
 4. Add to `<project>/config/config`:
 
    ```ini
-   [monstermq]
-   brokerConfig = "config/monstermq.yaml"   # relative to the project directory
+   [mmq]
+   brokerConfig = "config/mmq.yaml"   # relative to the project directory
    dispatchMs = 2                           # dispatch wait; latency floor for Go -> OA requests
    tickBudget = 256                         # requests per dispatch tick
    tickBudgetMs = 5
@@ -86,7 +86,7 @@ The standalone broker is unaffected: `make build`, `build-arm64` and
   publish clears a stale status of another system name; the own status
   cannot be written.
 - Broker log lines go to the WinCC OA log (`PVSS_II.log` / log viewer)
-  with the `MonsterMQ` catalog prefix. A start failure (bad config, occupied
+  with the `MMQ` catalog prefix. A start failure (bad config, occupied
   port, missing DPT, unreachable store) is logged as `broker failed: ...` and
   the manager exits with code 1.
 - Namespace: `winccoa/systems/<System>/tags/<DP>/<element...>` and
@@ -116,10 +116,10 @@ Also logged: `dpConnectNoSource`, `dpDisconnect`, `dpGet`, `dpNames`,
 lists are cut after 20 entries (`(+N more)`). Hotlink and query-row events
 are not logged.
 
-Enable it either with `Logging.Level: DEBUG` in `monstermq.yaml` or with
+Enable it either with `Logging.Level: DEBUG` in `mmq.yaml` or with
 the manager option `-dbg USR1`, which forces DEBUG regardless of the YAML.
 Without `-dbg USR1`, `Logging.Level` applies (`INFO` by default). The lines
-go to the WinCC OA log with the `MonsterMQ` prefix.
+go to the WinCC OA log with the `MMQ` prefix.
 
 ## Connection loss and restarts
 
@@ -155,7 +155,7 @@ is only allowed when the explicit tags form is allowed too.
 `LocalShortcut: false` leaves only the explicit form.
 
 `winccoa`, `systems`, `tags` and `types` are defaults and can be changed in
-`monstermq.yaml`:
+`mmq.yaml`:
 
 ```yaml
 WinCCOaNative:
@@ -192,12 +192,12 @@ default `true`) is not set to `false`.
 
 ## SDK probe (AC-02)
 
-Set `probeQuery` and/or `probeDpe` in `[monstermq]` and start the manager
+Set `probeQuery` and/or `probeDpe` in `[mmq]` and start the manager
 once from a shell; it logs `PROBE:` lines (stderr and WinCC OA log) and
 exits instead of starting the broker:
 
 ```ini
-[monstermq]
+[mmq]
 probeQuery = "SELECT '_online.._value', '_online.._stime' FROM 'ExampleDP_*.'"
 probeDpe = "ExampleDP_Arg1.:_online.._value"
 probeSet = "ExampleDP_Arg1.:_original.._value"   # changed once per second by the probe
@@ -337,7 +337,7 @@ MMQSessions_k...: context deadline exceeded`) and native writes are lost.
 Connect the manager to both Event Managers, like a UI:
 
 ```ini
-[monstermq]
+[mmq]
 connectToRedundantHosts = 1
 ```
 
@@ -353,7 +353,7 @@ Give the two managers different manager numbers. Both connect to both Event
 Managers, so they need distinct numbers in the system, for example
 `WCCOAmmq -num 1` on the first host and `WCCOAmmq -num 2` on the second
 (in PMON, Options `-num 1` / `-num 2`, both with `connectToRedundantHosts`
-in `[monstermq]` or `-connectToRedundantHosts` in the options).
+in `[mmq]` or `-connectToRedundantHosts` in the options).
 
 The broker status (`winccoa/systems/<System>` and `winccoa`) shows which
 host the broker runs on and whether that host is active:
@@ -410,7 +410,7 @@ Use the topics branch for messages that must survive the loss of both hosts.
 ### Configuration
 
 The same `PeerLink` block serves both hosts; only `NodeId` differs (see
-`monstermq.yaml.example`):
+`mmq.yaml.example`):
 
 ```yaml
 NodeId: edge-oa-1                   # edge-oa-2 on the other host

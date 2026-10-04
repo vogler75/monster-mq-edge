@@ -1,5 +1,5 @@
-#include "MonsterMQManager.hxx"
-#include "MonsterMQResources.hxx"
+#include "MmqManager.hxx"
+#include "MmqResources.hxx"
 
 #include <csignal>
 #include <unistd.h>
@@ -28,8 +28,8 @@
 using namespace mmq;
 
 std::atomic<long> mmqLiveWaits(0);
-std::atomic<bool> MonsterMQManager::doExit(false);
-std::atomic<bool> MonsterMQManager::brokerStarted(false);
+std::atomic<bool> MmqManager::doExit(false);
+std::atomic<bool> MmqManager::brokerStarted(false);
 
 static int64_t nowMs()
 {
@@ -41,7 +41,7 @@ static int64_t nowMs()
 // ---------------------------------------------------------------------------
 // Callback objects
 
-ConnectWait::ConnectWait(MonsterMQManager *m, uint64_t r, size_t i) : ref(r), index(i), mgr(m)
+ConnectWait::ConnectWait(MmqManager *m, uint64_t r, size_t i) : ref(r), index(i), mgr(m)
 {
   mmqLiveWaits++;
 }
@@ -49,7 +49,7 @@ ConnectWait::~ConnectWait() { mmqLiveWaits--; }
 void ConnectWait::hotLinkCallBack(DpMsgAnswer &answer) { mgr->onConnectAnswer(this, answer); }
 void ConnectWait::hotLinkCallBack(DpHLGroup &group) { mgr->onConnectHotlink(this, group); }
 
-QueryWait::QueryWait(MonsterMQManager *m, uint64_t r, uint64_t q, bool a)
+QueryWait::QueryWait(MmqManager *m, uint64_t r, uint64_t q, bool a)
     : ref(r), reqId(q), wantAnswer(a), mgr(m)
 {
   mmqLiveWaits++;
@@ -58,7 +58,7 @@ QueryWait::~QueryWait() { mmqLiveWaits--; }
 void QueryWait::hotLinkCallBack(DpMsgAnswer &answer) { mgr->onQueryAnswer(this, answer); }
 void QueryWait::hotLinkCallBack(DpHLGroup &group) { mgr->onQueryHotlink(this, group); }
 
-RequestWait::RequestWait(MonsterMQManager *m, Kind k, uint64_t q, const std::string &n)
+RequestWait::RequestWait(MmqManager *m, Kind k, uint64_t q, const std::string &n)
     : mgr(m), kind(k), reqId(q), name(n)
 {
   mmqLiveWaits++;
@@ -66,11 +66,11 @@ RequestWait::RequestWait(MonsterMQManager *m, Kind k, uint64_t q, const std::str
 RequestWait::~RequestWait() { mmqLiveWaits--; }
 void RequestWait::callBack(DpMsgAnswer &answer) { mgr->onRequestAnswer(kind, reqId, name, answer); }
 
-SetBatchWait::SetBatchWait(MonsterMQManager *m, std::vector<Entry> e) : mgr(m), entries(std::move(e)) { mmqLiveWaits++; }
+SetBatchWait::SetBatchWait(MmqManager *m, std::vector<Entry> e) : mgr(m), entries(std::move(e)) { mmqLiveWaits++; }
 SetBatchWait::~SetBatchWait() { mmqLiveWaits--; }
 void SetBatchWait::callBack(DpMsgAnswer &answer) { mgr->onSetBatchAnswer(entries, answer); }
 
-DistWait::DistWait(MonsterMQManager *m) : mgr(m) { mmqLiveWaits++; }
+DistWait::DistWait(MmqManager *m) : mgr(m) { mmqLiveWaits++; }
 DistWait::~DistWait() { mmqLiveWaits--; }
 void DistWait::hotLinkCallBack(DpMsgAnswer &answer)
 {
@@ -91,7 +91,7 @@ void DistWait::hotLinkCallBack(DpHLGroup &group)
 static const int runtimeSignals[] = {SIGSEGV, SIGBUS, SIGFPE, SIGILL, SIGURG, SIGPROF};
 static struct sigaction goHandlers[sizeof(runtimeSignals) / sizeof(runtimeSignals[0])];
 
-void MonsterMQManager::saveRuntimeSignals()
+void MmqManager::saveRuntimeSignals()
 {
   for (size_t i = 0; i < sizeof(runtimeSignals) / sizeof(runtimeSignals[0]); i++)
     sigaction(runtimeSignals[i], nullptr, &goHandlers[i]);
@@ -99,7 +99,7 @@ void MonsterMQManager::saveRuntimeSignals()
 
 // Reinstalls the Go handlers where WinCC OA replaced them, so Go runtime
 // faults and preemption keep working inside the embedded library.
-void MonsterMQManager::restoreRuntimeSignals()
+void MmqManager::restoreRuntimeSignals()
 {
   for (size_t i = 0; i < sizeof(runtimeSignals) / sizeof(runtimeSignals[0]); i++)
   {
@@ -113,7 +113,7 @@ void MonsterMQManager::restoreRuntimeSignals()
 
 // Every non-default handler must run on the alternate signal stack, because
 // the signal can arrive on a Go-owned thread with a small stack.
-void MonsterMQManager::addOnStackToHandlers()
+void MmqManager::addOnStackToHandlers()
 {
   for (int sig = 1; sig < NSIG; sig++)
   {
@@ -127,7 +127,7 @@ void MonsterMQManager::addOnStackToHandlers()
   }
 }
 
-void MonsterMQManager::signalHandler(int sig)
+void MmqManager::signalHandler(int sig)
 {
   if (sig == SIGINT || sig == SIGTERM)
   {
@@ -145,17 +145,17 @@ void MonsterMQManager::signalHandler(int sig)
 // the signal may arrive on a Go runtime thread.
 static void onExitSignal(int)
 {
-  MonsterMQManager::requestExit();
+  MmqManager::requestExit();
 }
 
-void MonsterMQManager::requestExit()
+void MmqManager::requestExit()
 {
   if (!brokerStarted)
     _exit(0);
   doExit = true;
 }
 
-void MonsterMQManager::installExitSignals()
+void MmqManager::installExitSignals()
 {
   struct sigaction sa;
   memset(&sa, 0, sizeof(sa));
@@ -168,15 +168,15 @@ void MonsterMQManager::installExitSignals()
 
 // ---------------------------------------------------------------------------
 
-MonsterMQManager::MonsterMQManager()
+MmqManager::MmqManager()
     : Manager(ManagerIdentifier(API_MAN, Resources::getManNum()))
 {
-  queueCap = (size_t)MonsterMQResources::getQueueCapacity();
+  queueCap = (size_t)MmqResources::getQueueCapacity();
 }
 
-int32_t MonsterMQManager::cbSubmit(void *user, uint64_t id, int64_t deadline, const uint8_t *data, uint32_t len)
+int32_t MmqManager::cbSubmit(void *user, uint64_t id, int64_t deadline, const uint8_t *data, uint32_t len)
 {
-  MonsterMQManager *self = static_cast<MonsterMQManager *>(user);
+  MmqManager *self = static_cast<MmqManager *>(user);
   std::lock_guard<std::mutex> lock(self->qmu);
   if (self->queue.size() >= self->queueCap)
   {
@@ -194,9 +194,9 @@ int32_t MonsterMQManager::cbSubmit(void *user, uint64_t id, int64_t deadline, co
   return MMQ_OK;
 }
 
-void MonsterMQManager::cbLog(void *user, int32_t level, const char *msg, uint32_t len)
+void MmqManager::cbLog(void *user, int32_t level, const char *msg, uint32_t len)
 {
-  MonsterMQManager *self = static_cast<MonsterMQManager *>(user);
+  MmqManager *self = static_cast<MmqManager *>(user);
   std::lock_guard<std::mutex> lock(self->logmu);
   if (self->logs.size() >= 10000)
   {
@@ -206,7 +206,7 @@ void MonsterMQManager::cbLog(void *user, int32_t level, const char *msg, uint32_
   self->logs.emplace_back(level, std::string(msg, len));
 }
 
-void MonsterMQManager::logLine(int32_t level, const std::string &msg)
+void MmqManager::logLine(int32_t level, const std::string &msg)
 {
   ErrClass::ErrPrio prio = ErrClass::PRIO_INFO;
   if (level >= MMQ_LOG_ERROR)
@@ -217,10 +217,10 @@ void MonsterMQManager::logLine(int32_t level, const std::string &msg)
   // Informational lines use code 0 (no error) so the log does not show
   // "unexpected state" for normal broker output.
   ErrHdl::error(prio, ErrClass::ERR_CONTROL, prio == ErrClass::PRIO_INFO ? ErrClass::NOERR : ErrClass::UNEXPECTEDSTATE,
-                "MonsterMQ", "broker", CharString(msg.c_str()));
+                "MMQ", "broker", CharString(msg.c_str()));
 }
 
-void MonsterMQManager::drainLogs()
+void MmqManager::drainLogs()
 {
   std::deque<std::pair<int32_t, std::string>> batch;
   unsigned long dropped;
@@ -236,7 +236,7 @@ void MonsterMQManager::drainLogs()
     logLine(MMQ_LOG_WARN, "log queue overflow: " + std::to_string(dropped) + " lines dropped");
 }
 
-int32_t MonsterMQManager::complete(uint64_t reqId, int32_t status, const Writer *w, const std::string &err)
+int32_t MmqManager::complete(uint64_t reqId, int32_t status, const Writer *w, const std::string &err)
 {
   Writer out;
   const Writer *use = w;
@@ -250,7 +250,7 @@ int32_t MonsterMQManager::complete(uint64_t reqId, int32_t status, const Writer 
   return mmq_complete(handle, reqId, status, use ? use->data() : nullptr, use ? use->size() : 0);
 }
 
-void MonsterMQManager::event(uint64_t ref, const Writer &w)
+void MmqManager::event(uint64_t ref, const Writer &w)
 {
   // A full queue drops the event (counted by the library); anything else
   // is logged, since the broker never sees it.
@@ -263,7 +263,7 @@ void MonsterMQManager::event(uint64_t ref, const Writer &w)
 // Sends a query table as one or more events below the ABI message limit;
 // every chunk repeats the header row and all but the last initial-answer
 // chunk carry FlagMore.
-bool MonsterMQManager::sendTable(uint64_t ref, const Variable *table, bool answer)
+bool MmqManager::sendTable(uint64_t ref, const Variable *table, bool answer)
 {
   return encodeTableChunks(table, MMQ_MAX_MESSAGE / 2, [&](const Writer &rows, bool last) {
     Writer ev;
@@ -275,7 +275,7 @@ bool MonsterMQManager::sendTable(uint64_t ref, const Variable *table, bool answe
   });
 }
 
-std::string MonsterMQManager::answerError(DpMsgAnswer &answer)
+std::string MmqManager::answerError(DpMsgAnswer &answer)
 {
   std::string err;
   for (AnswerGroup *g = answer.getFirstGroup(); g; g = answer.getNextGroup())
@@ -293,7 +293,7 @@ std::string MonsterMQManager::answerError(DpMsgAnswer &answer)
 // ---------------------------------------------------------------------------
 // Request processing (manager thread only)
 
-void MonsterMQManager::drainRequests()
+void MmqManager::drainRequests()
 {
   std::deque<Pending> work;
   {
@@ -301,8 +301,8 @@ void MonsterMQManager::drainRequests()
     work.swap(retry);
   }
   auto start = std::chrono::steady_clock::now();
-  long budget = MonsterMQResources::getTickBudget();
-  long budgetMs = MonsterMQResources::getTickBudgetMs();
+  long budget = MmqResources::getTickBudget();
+  long budgetMs = MmqResources::getTickBudgetMs();
   for (long n = 0; n < budget; n++)
   {
     if (work.empty())
@@ -337,7 +337,7 @@ void MonsterMQManager::drainRequests()
   flushSetBatch();
 }
 
-bool MonsterMQManager::process(const Pending &p)
+bool MmqManager::process(const Pending &p)
 {
   // Every WinCC OA call happens in process() or in callbacks invoked by
   // dispatch(); count any execution off the manager thread (AC-06).
@@ -444,7 +444,7 @@ static void splitSystem(const std::string &name, std::string &sys, std::string &
   rest = name;
 }
 
-int32_t MonsterMQManager::opResolve(const Message &m, Writer &w, std::string &err)
+int32_t MmqManager::opResolve(const Message &m, Writer &w, std::string &err)
 {
   std::string name = m.str(TagName), sys, rest;
   splitSystem(name, sys, rest);
@@ -484,7 +484,7 @@ int32_t MonsterMQManager::opResolve(const Message &m, Writer &w, std::string &er
   return MMQ_OK;
 }
 
-void MonsterMQManager::opDpConnect(uint64_t reqId, const Message &m)
+void MmqManager::opDpConnect(uint64_t reqId, const Message &m)
 {
   uint64_t ref = 0;
   uint32_t flags = 0;
@@ -547,7 +547,7 @@ void MonsterMQManager::opDpConnect(uint64_t reqId, const Message &m)
 }
 
 // Called when the last answer of a connect request arrived.
-void MonsterMQManager::finishConnect(uint64_t ref)
+void MmqManager::finishConnect(uint64_t ref)
 {
   ConnReg &r = conns[ref];
   r.completed = true;
@@ -569,7 +569,7 @@ void MonsterMQManager::finishConnect(uint64_t ref)
   r.answerEv = Writer();
 }
 
-void MonsterMQManager::onConnectAnswer(ConnectWait *w, DpMsgAnswer &answer)
+void MmqManager::onConnectAnswer(ConnectWait *w, DpMsgAnswer &answer)
 {
   auto it = conns.find(w->ref);
   if (it == conns.end() || w->index >= it->second.waits.size() || it->second.waits[w->index] != w || it->second.completed)
@@ -595,7 +595,7 @@ void MonsterMQManager::onConnectAnswer(ConnectWait *w, DpMsgAnswer &answer)
     finishConnect(w->ref);
 }
 
-void MonsterMQManager::onConnectHotlink(ConnectWait *w, DpHLGroup &group)
+void MmqManager::onConnectHotlink(ConnectWait *w, DpHLGroup &group)
 {
   auto it = conns.find(w->ref);
   if (it == conns.end() || w->index >= it->second.waits.size() || it->second.waits[w->index] != w)
@@ -612,7 +612,7 @@ void MonsterMQManager::onConnectHotlink(ConnectWait *w, DpHLGroup &group)
     event(w->ref, ev);
 }
 
-void MonsterMQManager::disconnectConn(uint64_t ref)
+void MmqManager::disconnectConn(uint64_t ref)
 {
   auto it = conns.find(ref);
   if (it == conns.end())
@@ -629,7 +629,7 @@ void MonsterMQManager::disconnectConn(uint64_t ref)
   conns.erase(it);
 }
 
-void MonsterMQManager::opQueryConnect(uint64_t reqId, const Message &m)
+void MmqManager::opQueryConnect(uint64_t reqId, const Message &m)
 {
   uint64_t ref = 0;
   uint32_t flags = 0;
@@ -655,7 +655,7 @@ void MonsterMQManager::opQueryConnect(uint64_t reqId, const Message &m)
   queries[ref] = QueryReg{w, qid};
 }
 
-void MonsterMQManager::onQueryAnswer(QueryWait *w, DpMsgAnswer &answer)
+void MmqManager::onQueryAnswer(QueryWait *w, DpMsgAnswer &answer)
 {
   auto it = queries.find(w->ref);
   if (it == queries.end() || it->second.wait != w)
@@ -680,7 +680,7 @@ void MonsterMQManager::onQueryAnswer(QueryWait *w, DpMsgAnswer &answer)
         return;
 }
 
-void MonsterMQManager::onQueryHotlink(QueryWait *w, DpHLGroup &group)
+void MmqManager::onQueryHotlink(QueryWait *w, DpHLGroup &group)
 {
   auto it = queries.find(w->ref);
   if (it == queries.end() || it->second.wait != w)
@@ -689,7 +689,7 @@ void MonsterMQManager::onQueryHotlink(QueryWait *w, DpHLGroup &group)
     sendTable(w->ref, item->getValuePtr(), false);
 }
 
-void MonsterMQManager::disconnectQuery(uint64_t ref)
+void MmqManager::disconnectQuery(uint64_t ref)
 {
   auto it = queries.find(ref);
   if (it == queries.end())
@@ -700,7 +700,7 @@ void MonsterMQManager::disconnectQuery(uint64_t ref)
   queries.erase(it);
 }
 
-void MonsterMQManager::processDeferredDisconnects()
+void MmqManager::processDeferredDisconnects()
 {
   while (!connDrop.empty())
   {
@@ -714,7 +714,7 @@ void MonsterMQManager::processDeferredDisconnects()
   }
 }
 
-void MonsterMQManager::releaseAll()
+void MmqManager::releaseAll()
 {
   std::vector<uint64_t> refs;
   for (auto &c : conns)
@@ -730,7 +730,7 @@ void MonsterMQManager::releaseAll()
 
 // Name resolution is on the hot path of every write; results are cached
 // and the cache is dropped on any datapoint identification change.
-bool MonsterMQManager::resolveCached(const std::string &name, DpIdentifier &id)
+bool MmqManager::resolveCached(const std::string &name, DpIdentifier &id)
 {
   auto it = idCache.find(name);
   if (it != idCache.end())
@@ -775,7 +775,7 @@ static DpElementType attributeElementType(const DpIdentifier &id)
   }
 }
 
-bool MonsterMQManager::opDpSet(uint64_t reqId, const Message &m)
+bool MmqManager::opDpSet(uint64_t reqId, const Message &m)
 {
   std::vector<const Field *> names = m.all(TagName);
   std::vector<const Field *> values = m.all(TagValue);
@@ -837,7 +837,7 @@ bool MonsterMQManager::opDpSet(uint64_t reqId, const Message &m)
   return true;
 }
 
-void MonsterMQManager::flushSetBatch()
+void MmqManager::flushSetBatch()
 {
   if (setEntries.empty())
     return;
@@ -854,7 +854,7 @@ void MonsterMQManager::flushSetBatch()
   setBatch.clear();
 }
 
-void MonsterMQManager::onSetBatchAnswer(const std::vector<SetBatchWait::Entry> &entries, DpMsgAnswer &answer)
+void MmqManager::onSetBatchAnswer(const std::vector<SetBatchWait::Entry> &entries, DpMsgAnswer &answer)
 {
   std::vector<AnswerGroup *> groups;
   for (AnswerGroup *g = answer.getFirstGroup(); g; g = answer.getNextGroup())
@@ -886,7 +886,7 @@ void MonsterMQManager::onSetBatchAnswer(const std::vector<SetBatchWait::Entry> &
   }
 }
 
-void MonsterMQManager::opDpGet(uint64_t reqId, const Message &m)
+void MmqManager::opDpGet(uint64_t reqId, const Message &m)
 {
   DpIdentList list;
   for (const Field *f : m.all(TagName))
@@ -913,7 +913,7 @@ void MonsterMQManager::opDpGet(uint64_t reqId, const Message &m)
   }
 }
 
-void MonsterMQManager::onRequestAnswer(RequestWait::Kind kind, uint64_t reqId, const std::string &name, DpMsgAnswer &answer)
+void MmqManager::onRequestAnswer(RequestWait::Kind kind, uint64_t reqId, const std::string &name, DpMsgAnswer &answer)
 {
   std::string err = answerError(answer);
   if (!err.empty())
@@ -933,7 +933,7 @@ void MonsterMQManager::onRequestAnswer(RequestWait::Kind kind, uint64_t reqId, c
   complete(reqId, MMQ_OK, &w);
 }
 
-int32_t MonsterMQManager::opDpNames(const Message &m, Writer &w, std::string &err)
+int32_t MmqManager::opDpNames(const Message &m, Writer &w, std::string &err)
 {
   std::string pattern = m.str(TagName), type = m.str(TagTypeName);
   DpTypeId tid = 0;
@@ -961,7 +961,7 @@ int32_t MonsterMQManager::opDpNames(const Message &m, Writer &w, std::string &er
   return MMQ_OK;
 }
 
-void MonsterMQManager::opDpCreate(uint64_t reqId, const Message &m)
+void MmqManager::opDpCreate(uint64_t reqId, const Message &m)
 {
   std::string name = m.str(TagName), type = m.str(TagTypeName), sys, dp;
   splitSystem(name, sys, dp);
@@ -996,7 +996,7 @@ void MonsterMQManager::opDpCreate(uint64_t reqId, const Message &m)
     complete(reqId, MMQ_E_OA, nullptr, "dpCreate message not sent");
 }
 
-void MonsterMQManager::opDpDelete(uint64_t reqId, const Message &m)
+void MmqManager::opDpDelete(uint64_t reqId, const Message &m)
 {
   std::string name = m.str(TagName), sys, dp;
   splitSystem(name, sys, dp);
@@ -1020,7 +1020,7 @@ void MonsterMQManager::opDpDelete(uint64_t reqId, const Message &m)
 // created from the given element names and kinds (a flat structure); an
 // existing type is never changed. The broker checks the layout again once
 // the new type is known.
-void MonsterMQManager::opTypeCheck(uint64_t reqId, const Message &m)
+void MmqManager::opTypeCheck(uint64_t reqId, const Message &m)
 {
   std::string type = m.str(TagTypeName), err;
   uint32_t flags = 0;
@@ -1052,7 +1052,7 @@ void MonsterMQManager::opTypeCheck(uint64_t reqId, const Message &m)
   complete(reqId, st, nullptr, err);
 }
 
-int32_t MonsterMQManager::checkType(const Message &m, std::string &err)
+int32_t MmqManager::checkType(const Message &m, std::string &err)
 {
   std::string type = m.str(TagTypeName);
   DpTypeId tid = 0;
@@ -1090,7 +1090,7 @@ int32_t MonsterMQManager::checkType(const Message &m, std::string &err)
 // ---------------------------------------------------------------------------
 // Distributed systems and catalog changes (reported on reference 0)
 
-void MonsterMQManager::connectDistState()
+void MmqManager::connectDistState()
 {
   if (!getId("_DistManager.State.SystemNums:_online.._value", distId))
   {
@@ -1107,7 +1107,7 @@ void MonsterMQManager::connectDistState()
   }
 }
 
-void MonsterMQManager::onDistState(const Variable *v)
+void MmqManager::onDistState(const Variable *v)
 {
   std::set<SystemNumType> now;
   if (v && v->isDynVar())
@@ -1149,7 +1149,7 @@ void MonsterMQManager::onDistState(const Variable *v)
     event(0, ev);
 }
 
-void MonsterMQManager::reportDpChange(SystemNumType system, DpIdType dp, DpTypeId type)
+void MmqManager::reportDpChange(SystemNumType system, DpIdType dp, DpTypeId type)
 {
   std::set<std::string> dps;
   for (auto &c : conns)
@@ -1171,7 +1171,7 @@ void MonsterMQManager::reportDpChange(SystemNumType system, DpIdType dp, DpTypeI
   event(0, ev);
 }
 
-void MonsterMQManager::dpDeleted(SystemNumType system, DpIdType dp)
+void MmqManager::dpDeleted(SystemNumType system, DpIdType dp)
 {
   idCache.clear();
   reportDpChange(system, dp, 0);
@@ -1179,7 +1179,7 @@ void MonsterMQManager::dpDeleted(SystemNumType system, DpIdType dp)
 
 // Creations of MMQTopic datapoints are reported, on every system, so
 // waiting topic subscriptions connect at once.
-void MonsterMQManager::dpCreated(SystemNumType system, const CharString &dpName, const DpIdentifier &)
+void MmqManager::dpCreated(SystemNumType system, const CharString &dpName, const DpIdentifier &)
 {
   idCache.clear();
   std::string sysPart, dp;
@@ -1197,7 +1197,7 @@ void MonsterMQManager::dpCreated(SystemNumType system, const CharString &dpName,
   event(0, ev);
 }
 
-void MonsterMQManager::dpTypeChanged(SystemNumType system, const DpType &changedType)
+void MmqManager::dpTypeChanged(SystemNumType system, const DpType &changedType)
 {
   idCache.clear();
   reportDpChange(system, 0, changedType.getName());
@@ -1205,7 +1205,7 @@ void MonsterMQManager::dpTypeChanged(SystemNumType system, const DpType &changed
 
 // ---------------------------------------------------------------------------
 
-int MonsterMQManager::run()
+int MmqManager::run()
 {
   long sec, usec;
   managerThread = std::this_thread::get_id();
@@ -1235,7 +1235,7 @@ int MonsterMQManager::run()
   getSystemName(localSystem);
   localSysNum = DpIdentification::getDefaultSystem();
 
-  if (!MonsterMQResources::getProbeQuery().isEmpty() || !MonsterMQResources::getProbeDpe().isEmpty())
+  if (!MmqResources::getProbeQuery().isEmpty() || !MmqResources::getProbeDpe().isEmpty())
     return runProbe();
 
   connectDistState();
@@ -1245,8 +1245,8 @@ int MonsterMQManager::run()
   host.struct_size = sizeof(host);
   host.abi_version = MMQ_ABI_VERSION;
   host.user = this;
-  host.submit = &MonsterMQManager::cbSubmit;
-  host.log = &MonsterMQManager::cbLog;
+  host.submit = &MmqManager::cbSubmit;
+  host.log = &MmqManager::cbLog;
 
   // Relative paths in the broker config (SQLite.Path, key stores, ...) are
   // resolved against the project directory, not PMON's working directory.
@@ -1254,7 +1254,7 @@ int MonsterMQManager::run()
     logLine(MMQ_LOG_WARN, "cannot change to project directory " + std::string((const char *)Resources::getProjDir()) +
                               ": " + std::strerror(errno));
 
-  CharString cfgPath = MonsterMQResources::getBrokerConfig();
+  CharString cfgPath = MmqResources::getBrokerConfig();
   if (cfgPath.len() && ((const char *)cfgPath)[0] != '/')
     cfgPath = Resources::getProjDir() + "/" + cfgPath;
   mmq_config cfg;
@@ -1299,7 +1299,7 @@ int MonsterMQManager::run()
   while (true)
   {
     sec = 0;
-    usec = MonsterMQResources::getDispatchMs() * 1000;
+    usec = MmqResources::getDispatchMs() * 1000;
     dispatch(sec, usec);
     loops++;
     drainRequests();
@@ -1321,7 +1321,7 @@ int MonsterMQManager::run()
     }
     if (doExit)
       break;
-    if (std::chrono::steady_clock::now() - lastStats > std::chrono::seconds(MonsterMQResources::getStatsSeconds()))
+    if (std::chrono::steady_clock::now() - lastStats > std::chrono::seconds(MmqResources::getStatsSeconds()))
     {
       lastStats = std::chrono::steady_clock::now();
       size_t q;
@@ -1341,8 +1341,8 @@ int MonsterMQManager::run()
 
   // Shutdown: keep dispatching so the broker can disconnect its OA
   // registrations through this thread, bounded by stopTimeoutMs.
-  mmq_stop(handle, (uint32_t)MonsterMQResources::getStopTimeoutMs());
-  auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(MonsterMQResources::getStopTimeoutMs() + 1000);
+  mmq_stop(handle, (uint32_t)MmqResources::getStopTimeoutMs());
+  auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(MmqResources::getStopTimeoutMs() + 1000);
   while (mmq_state(handle, nullptr, 0, nullptr) != MMQ_STATE_STOPPED && std::chrono::steady_clock::now() < deadline)
   {
     sec = 0;

@@ -202,7 +202,7 @@ Naming: the feature is **PeerLink** (package `internal/peerlink`, config section
 | `internal/stores/types.go` | `BrokerMessage.OriginNode string` with `json:"-" bson:"-"`. It is in memory only and never persisted; M1 verifies that no store marshals the struct generically. |
 | `internal/mqtt/packets/packets.go`, `internal/mqtt/server.go` | E1, E2, E4, E5, E6 (section 13) |
 | `internal/metrics` | `IncBusIn`/`IncBusOut`; snapshot fields `messageBusIn`/`messageBusOut` |
-| `internal/config/config.go`, `load.go`, `yaml-json-schema.json`, `config.yaml.example`, `winccoa/monstermq.yaml.example` | Configuration (section 18) |
+| `internal/config/config.go`, `load.go`, `yaml-json-schema.json`, `config.yaml.example`, `winccoa/mmq.yaml.example` | Configuration (section 18) |
 
 `peerlink` must not import `internal/broker`, because `broker` constructs it and that would be an import cycle. This is why the TLS helpers go into `internal/tlsutil`. Callbacks that need broker state go through small interfaces passed into `peerlink.New`:
 
@@ -1452,7 +1452,7 @@ The section is a top-level `PeerLink PeerLinkConfig` with its own `Enabled`, lik
 | `internal/config/config.go`, `load.go`, `config_test.go` | Section, defaults, strict subtree decode, validation; round-trip test (YAML → struct → YAML → struct). The round trip must keep `Capture.Exclude` nil vs empty: the test covers `Exclude: null`, an omitted key and `Exclude: []`, and compares through `GetExclude` (18.3). |
 | `yaml-json-schema.json` | `PeerLink` and `Runtime` objects, `additionalProperties:false` on each sub-object, enums; `Capture.Exclude` has type `["array","null"]`. Fix the documented `NodeId` default (`:9-13` says `edge`; the real default is the hostname). |
 | `config.yaml.example` | **Uncommented** `PeerLink:` block containing every key, with `Enabled: false`, so the schema test exercises it (`test/integration/config_schema_test.go:33-48`) |
-| `winccoa/monstermq.yaml.example` | Uncommented `PeerLink: { Enabled: false, ... }` pair example. A comment at `:4` says the hard-coded `NodeId: edge-oa-1` must differ per host, and that changing a NodeId also changes which devices run (`internal/bridge/mqttclient/manager.go:93`). |
+| `winccoa/mmq.yaml.example` | Uncommented `PeerLink: { Enabled: false, ... }` pair example. A comment at `:4` says the hard-coded `NodeId: edge-oa-1` must differ per host, and that changing a NodeId also changes which devices run (`internal/bridge/mqttclient/manager.go:93`). |
 | `test/integration/testdata/peerlink-full.yaml` | Fully populated with `Enabled: true` (TLS, pins, secrets, per-peer overrides). Schema-validated and passed through `Validate` (no file existence checks at validation time). |
 | `scripts/deb/config.yaml` | Unchanged (disabled by default; `AGENTS.md:136-138`) |
 
@@ -1771,7 +1771,7 @@ The owner answered every open question on 2026-10-03. Each decision is the recom
   - **Metrics:** `internal/metrics` (bus in/out).
   - **GraphQL resolver:** `internal/graphql/resolvers/resolver.go` (`snapshotToBrokerMetrics` fills `messageBusIn`/`messageBusOut`; S4 granted 2026-10-03, M5). No SDL change.
   - **Native status:** `internal/winccoanative/service.go` (`peerLink` status object, M5, under S2).
-  - **Config:** `internal/config/config.go`, `load.go` (+ tests), `yaml-json-schema.json`, `config.yaml.example`, `winccoa/monstermq.yaml.example`.
+  - **Config:** `internal/config/config.go`, `load.go` (+ tests), `yaml-json-schema.json`, `config.yaml.example`, `winccoa/mmq.yaml.example`.
   - **Docs and governance:**
     - `AGENTS.md`: single-node rule already removed 2026-10-03; add `internal/peerlink/` and `internal/tlsutil/` to the repository layout (`AGENTS.md:88-119`).
     - `dev/plans/spec-winccoa-native.md`: amend `:15` and `:19`, add the M6a row (S2).

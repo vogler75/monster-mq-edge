@@ -1042,7 +1042,7 @@ These features exist only in the broker embedded in WinCC OA (`WCCOAmmq`). They 
 ### 14.1 `connectToRedundantHosts`
 
 - On a redundant system the passive Event Manager receives but does not execute writes of a manager connected only to it: store writes time out and native writes are lost.
-- Fix: `[monstermq] connectToRedundantHosts = 1` or the option `-connectToRedundantHosts`, and distinct manager numbers on the two hosts (`-num 1`, `-num 2`). The passive host's broker then writes through the active Event Manager (`winccoa/README.md:328-378`).
+- Fix: `[mmq] connectToRedundantHosts = 1` or the option `-connectToRedundantHosts`, and distinct manager numbers on the two hosts (`-num 1`, `-num 2`). The passive host's broker then writes through the active Event Manager (`winccoa/README.md:328-378`).
 - This is a standard WinCC OA option; no broker code handles it. The only accommodation is that repeated redundancy hotlinks are ignored (`winccoanative/redu.go:84-108`).
 
 ### 14.2 Broker role in the status

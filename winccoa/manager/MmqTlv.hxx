@@ -1,4 +1,4 @@
-// TLV encoding of the MonsterMQ embedding contract (spec-winccoa-native.md
+// TLV encoding of the MMQ embedding contract (spec-winccoa-native.md
 // section 3.1/3.2) and conversion between WinCC OA Variables and TLV values.
 #ifndef MMQ_TLV_HXX
 #define MMQ_TLV_HXX

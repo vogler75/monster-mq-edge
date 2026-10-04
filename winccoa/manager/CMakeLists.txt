@@ -11,17 +11,17 @@ string(REPLACE "\"" "" API_ROOT "${API_ROOT_ENV}")
 
 include(${API_ROOT}/CMakeDefines.txt)
 
-project(monstermq)
+project(mmq)
 
 set(TARGET WCCOAmmq)
 
 set(MMQ_EMBED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../build/embed" CACHE PATH "directory with libmonstermq.a and monstermq.h")
 
 set(SOURCES
-  MonsterMQMain.cxx
-  MonsterMQManager.cxx
-  MonsterMQProbe.cxx
-  MonsterMQResources.cxx
+  MmqMain.cxx
+  MmqManager.cxx
+  MmqProbe.cxx
+  MmqResources.cxx
   MmqTlv.cxx
 )
 

@@ -1,8 +1,8 @@
 // SDK probe (AC-02): records how the selected WinCC OA version delivers
 // dpQueryConnectSingle answers/hotlinks and who owns callback objects on
-// disconnect. Enabled by probeQuery / probeDpe in the [monstermq] section.
-#include "MonsterMQManager.hxx"
-#include "MonsterMQResources.hxx"
+// disconnect. Enabled by probeQuery / probeDpe in the [mmq] section.
+#include "MmqManager.hxx"
+#include "MmqResources.hxx"
 
 #include <iostream>
 #include <sstream>
@@ -20,7 +20,7 @@
 static void probeLog(const std::string &msg)
 {
   std::cerr << "PROBE: " << msg << std::endl;
-  ErrHdl::error(ErrClass::PRIO_INFO, ErrClass::ERR_CONTROL, ErrClass::UNEXPECTEDSTATE, "MonsterMQ", "probe",
+  ErrHdl::error(ErrClass::PRIO_INFO, ErrClass::ERR_CONTROL, ErrClass::UNEXPECTEDSTATE, "MMQ", "probe",
                 CharString(("PROBE: " + msg).c_str()));
 }
 
@@ -121,7 +121,7 @@ static DpIdentifier probeSetId;
 static bool probeSetValid = false;
 static double probeSetValue = 1000.0;
 
-static void pump(MonsterMQManager *m, int ms)
+static void pump(MmqManager *m, int ms)
 {
   (void)m;
   auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
@@ -139,21 +139,21 @@ static void pump(MonsterMQManager *m, int ms)
   }
 }
 
-int MonsterMQManager::runProbe()
+int MmqManager::runProbe()
 {
   probeLog("local system " + std::string((const char *)localSystem) + " number " + std::to_string((int)localSysNum));
   DpIdentifier dist;
   probeLog(std::string("_DistManager.State.SystemNums exists: ") +
            (getId("_DistManager.State.SystemNums:_online.._value", dist) ? "yes" : "no"));
 
-  const CharString &setName = MonsterMQResources::getProbeSet();
+  const CharString &setName = MmqResources::getProbeSet();
   if (!setName.isEmpty())
   {
     probeSetValid = getId(setName, probeSetId);
     probeLog(std::string("probe writes ") + (const char *)setName + (probeSetValid ? " once per second" : ": not found"));
   }
 
-  const CharString &query = MonsterMQResources::getProbeQuery();
+  const CharString &query = MmqResources::getProbeQuery();
   if (!query.isEmpty())
   {
     for (int variant = 0; variant < 3; variant++)
@@ -180,7 +180,7 @@ int MonsterMQManager::runProbe()
     }
   }
 
-  const CharString &dpe = MonsterMQResources::getProbeDpe();
+  const CharString &dpe = MmqResources::getProbeDpe();
   if (!dpe.isEmpty())
   {
     DpIdentifier id;

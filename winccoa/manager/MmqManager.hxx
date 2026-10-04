@@ -28,7 +28,7 @@
 #include "MmqTlv.hxx"
 #include "monstermq.h"
 
-class MonsterMQManager;
+class MmqManager;
 
 // Counts live callback objects so tests and the probe can check ownership
 // (a registration callback must be released exactly once).
@@ -43,7 +43,7 @@ typedef std::vector<std::pair<DpIdentifier, std::string>> NamedIds;
 class ConnectWait : public HotLinkWaitForAnswer
 {
   public:
-    ConnectWait(MonsterMQManager *m, uint64_t ref, size_t index);
+    ConnectWait(MmqManager *m, uint64_t ref, size_t index);
     ~ConnectWait() override;
     void hotLinkCallBack(DpMsgAnswer &answer) override;
 
@@ -54,13 +54,13 @@ class ConnectWait : public HotLinkWaitForAnswer
     void hotLinkCallBack(DpHLGroup &group) override;
 
   private:
-    MonsterMQManager *mgr;
+    MmqManager *mgr;
 };
 
 class QueryWait : public HotLinkWaitForAnswer
 {
   public:
-    QueryWait(MonsterMQManager *m, uint64_t ref, uint64_t reqId, bool answer);
+    QueryWait(MmqManager *m, uint64_t ref, uint64_t reqId, bool answer);
     ~QueryWait() override;
     void hotLinkCallBack(DpMsgAnswer &answer) override;
 
@@ -72,7 +72,7 @@ class QueryWait : public HotLinkWaitForAnswer
     void hotLinkCallBack(DpHLGroup &group) override;
 
   private:
-    MonsterMQManager *mgr;
+    MmqManager *mgr;
 };
 
 // Answer handler of one batched dpSet that carries the items of several
@@ -85,12 +85,12 @@ class SetBatchWait : public WaitForAnswer
       uint64_t reqId;
       size_t items;
     };
-    SetBatchWait(MonsterMQManager *m, std::vector<Entry> entries);
+    SetBatchWait(MmqManager *m, std::vector<Entry> entries);
     ~SetBatchWait() override;
     void callBack(DpMsgAnswer &answer) override;
 
   private:
-    MonsterMQManager *mgr;
+    MmqManager *mgr;
     std::vector<Entry> entries;
 };
 
@@ -100,12 +100,12 @@ class RequestWait : public WaitForAnswer
 {
   public:
     enum Kind { Set, Get, Create, Delete, TypeCreate };
-    RequestWait(MonsterMQManager *m, Kind k, uint64_t reqId, const std::string &name = std::string());
+    RequestWait(MmqManager *m, Kind k, uint64_t reqId, const std::string &name = std::string());
     ~RequestWait() override;
     void callBack(DpMsgAnswer &answer) override;
 
   private:
-    MonsterMQManager *mgr;
+    MmqManager *mgr;
     Kind kind;
     uint64_t reqId;
     std::string name;
@@ -114,7 +114,7 @@ class RequestWait : public WaitForAnswer
 class DistWait : public HotLinkWaitForAnswer
 {
   public:
-    explicit DistWait(MonsterMQManager *m);
+    explicit DistWait(MmqManager *m);
     ~DistWait() override;
     void hotLinkCallBack(DpMsgAnswer &answer) override;
 
@@ -122,13 +122,13 @@ class DistWait : public HotLinkWaitForAnswer
     void hotLinkCallBack(DpHLGroup &group) override;
 
   private:
-    MonsterMQManager *mgr;
+    MmqManager *mgr;
 };
 
-class MonsterMQManager : public Manager
+class MmqManager : public Manager
 {
   public:
-    MonsterMQManager();
+    MmqManager();
 
     // Runs the manager; returns the process exit code.
     int run();

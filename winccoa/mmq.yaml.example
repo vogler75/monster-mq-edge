@@ -1,6 +1,6 @@
 # Bootstrap configuration of the broker embedded in the WinCC OA manager
-# (WCCOAmmq). Copy to <project>/config/monstermq.yaml; the manager
-# reads it through the [monstermq] brokerConfig entry.
+# (WCCOAmmq). Copy to <project>/config/mmq.yaml; the manager
+# reads it through the [mmq] brokerConfig entry.
 # NodeId must differ per host of a redundant pair (edge-oa-1, edge-oa-2). Devices
 # run on the node their NodeId names, so changing it changes which devices run here.
 NodeId: edge-oa-1
@@ -13,7 +13,7 @@ GraphQL:
   Enabled: true
   Port: 4000
 SQLite:
-  Path: ./data/monstermq.db     # relative to the WinCC OA project directory
+  Path: ./data/mmq.db     # relative to the WinCC OA project directory
 DefaultStoreType: SQLITE        # WINCCOA: everything below in WinCC OA, queue and metrics in memory, no database file
 ConfigStoreType: WINCCOA        # device and archive configs in MMQConfigs datapoints (or SQLITE)
 UserStoreType: WINCCOA          # MQTT users and ACL rules in MMQUsers datapoints (or SQLITE)

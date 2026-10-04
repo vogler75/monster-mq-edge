@@ -31,7 +31,7 @@ func TestExampleConfigsValidate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve schema: %v", err)
 	}
-	for _, f := range []string{"config.yaml.example", "winccoa/monstermq.yaml.example", "test/integration/testdata/peerlink-full.yaml"} {
+	for _, f := range []string{"config.yaml.example", "winccoa/mmq.yaml.example", "test/integration/testdata/peerlink-full.yaml"} {
 		data, err := os.ReadFile(filepath.Join(root, f))
 		if err != nil {
 			t.Fatal(err)
@@ -51,7 +51,7 @@ func TestExampleConfigsValidate(t *testing.T) {
 			t.Errorf("%s does not load: %v", f, err)
 			continue
 		}
-		if f == "winccoa/monstermq.yaml.example" && (!cfg.WinCCOaNative.Enabled || cfg.ConfigStore() != config.StoreWinCCOA || cfg.SessionStore() != config.StoreWinCCOA) {
+		if f == "winccoa/mmq.yaml.example" && (!cfg.WinCCOaNative.Enabled || cfg.ConfigStore() != config.StoreWinCCOA || cfg.SessionStore() != config.StoreWinCCOA) {
 			t.Errorf("%s: WinCCOaNative not parsed: %+v", f, cfg.WinCCOaNative)
 		}
 		if f == "test/integration/testdata/peerlink-full.yaml" {

@@ -1,11 +1,11 @@
-// Configuration of the MonsterMQ embedding manager: config section
-// [monstermq] (or [monstermq_<num>]) of the WinCC OA project config.
+// Configuration of the MMQ embedding manager: config section
+// [mmq] (or [mmq_<num>]) of the WinCC OA project config.
 #ifndef MONSTERMQ_RESOURCES_HXX
 #define MONSTERMQ_RESOURCES_HXX
 
 #include <Resources.hxx>
 
-class MonsterMQResources : public Resources
+class MmqResources : public Resources
 {
   public:
     static void init(int &argc, char *argv[]);
