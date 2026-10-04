@@ -16,7 +16,7 @@ import (
 //	winccoa/<sys>/types/<dpt>/#          -> '*.**' WHERE _DPT = "<dpt>"
 //	winccoa/<sys>/types/<dpt>/+/<el>/#   -> '{*.<el>,*.<el>.**}' WHERE _DPT = "<dpt>"
 //
-// A system other than the local one adds REMOTE '<sys>'.
+// A system other than the local one adds REMOTE '<sys>' after FROM.
 type WildTarget struct {
 	Remote   bool     // System is not the local system (set by the service)
 	System   string   // WinCC OA system name
@@ -153,12 +153,13 @@ func (w WildTarget) Pattern() string {
 // Query returns the dpQueryConnectSingle statement. _online.._stime is
 // selected to identify one value change when several queries overlap.
 func (w WildTarget) Query() string {
+	// WinCC OA expects REMOTE directly after FROM, before WHERE.
 	q := "SELECT '_online.._value', '_online.._stime' FROM '" + w.Pattern() + "'"
-	if w.TypeName != "" {
-		q += ` WHERE _DPT = "` + w.TypeName + `"`
-	}
 	if w.Remote {
 		q += " REMOTE '" + w.System + "'"
+	}
+	if w.TypeName != "" {
+		q += ` WHERE _DPT = "` + w.TypeName + `"`
 	}
 	return q
 }

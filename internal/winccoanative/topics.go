@@ -185,11 +185,12 @@ type topicDir struct {
 }
 
 func (d *topicDir) query(local string) string {
-	q := "SELECT '" + DefaultAttr + "' FROM '" + TopicType + "_*." + topicElTopic + "' WHERE _DPT = \"" + TopicType + "\""
+	// WinCC OA expects REMOTE directly after FROM, before WHERE.
+	q := "SELECT '" + DefaultAttr + "' FROM '" + TopicType + "_*." + topicElTopic + "'"
 	if d.system != local {
 		q += " REMOTE '" + d.system + "'"
 	}
-	return q
+	return q + " WHERE _DPT = \"" + TopicType + "\""
 }
 
 // topicDelivery is a retained message for one subscription.

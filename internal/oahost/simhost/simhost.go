@@ -728,7 +728,8 @@ func (h *Host) dpConnect(m oahost.Message) ([]pendingEvent, error) {
 }
 
 var (
-	queryRe = regexp.MustCompile(`(?i)^\s*SELECT\s+(.+?)\s+FROM\s+'([^']+)'(?:\s+WHERE\s+_DPT\s*=\s*"([^"]+)")?(?:\s+REMOTE\s+'([^']+)')?\s*$`)
+	// Like WinCC OA, REMOTE must come directly after FROM, before WHERE.
+	queryRe = regexp.MustCompile(`(?i)^\s*SELECT\s+(.+?)\s+FROM\s+'([^']+)'(?:\s+REMOTE\s+'([^']+)')?(?:\s+WHERE\s+_DPT\s*=\s*"([^"]+)")?\s*$`)
 	attrRe  = regexp.MustCompile(`'([^']+)'`)
 )
 
@@ -741,8 +742,8 @@ func (h *Host) queryConnect(m oahost.Message) ([]pendingEvent, error) {
 	}
 	pattern := sub[2]
 	sysName := h.local
-	if sub[4] != "" {
-		sysName = sub[4]
+	if sub[3] != "" {
+		sysName = sub[3]
 	} else if i := strings.Index(pattern, ":"); i >= 0 && !strings.Contains(pattern[:i], ".") {
 		sysName, pattern = pattern[:i], pattern[i+1:]
 	}
@@ -754,7 +755,7 @@ func (h *Host) queryConnect(m oahost.Message) ([]pendingEvent, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", oahost.ErrOA, err)
 	}
-	q := &query{re: re, typ: sub[3], system: sysName}
+	q := &query{re: re, typ: sub[4], system: sysName}
 	for _, a := range attrRe.FindAllStringSubmatch(sub[1], -1) {
 		q.attrs = append(q.attrs, a[1])
 	}

@@ -18,6 +18,8 @@ func TestWildcardQueries(t *testing.T) {
 		{"winccoa/systems/System1/types/#", `SELECT '_online.._value', '_online.._stime' FROM '*.**'`, true},
 		{"winccoa/systems/System1/types/+/+/speed", `SELECT '_online.._value', '_online.._stime' FROM '*.speed'`, true},
 		{"winccoa/systems/SubA/tags/Feeder1/#", `SELECT '_online.._value', '_online.._stime' FROM 'Feeder1.**' REMOTE 'SubA'`, false},
+		// REMOTE comes directly after FROM, before WHERE (WinCC OA syntax).
+		{"winccoa/systems/SubA/types/Pump/#", `SELECT '_online.._value', '_online.._stime' FROM '*.**' REMOTE 'SubA' WHERE _DPT = "Pump"`, false},
 	}
 	for _, c := range cases {
 		w, err := DefaultNames.ParseWildcard(c.filter)
@@ -51,5 +53,16 @@ func TestWildcardQueries(t *testing.T) {
 	}
 	if _, ok := w.RowTarget("System1:_Users.x", ""); ok {
 		t.Fatal("internal datapoint published")
+	}
+}
+
+func TestTopicDirQuery(t *testing.T) {
+	local := (&topicDir{system: "System1"}).query("System1")
+	if want := `SELECT '_online.._value' FROM 'MMQTopic_*.topic' WHERE _DPT = "MMQTopic"`; local != want {
+		t.Errorf("local:\n got %s\nwant %s", local, want)
+	}
+	remote := (&topicDir{system: "Vienna"}).query("System1")
+	if want := `SELECT '_online.._value' FROM 'MMQTopic_*.topic' REMOTE 'Vienna' WHERE _DPT = "MMQTopic"`; remote != want {
+		t.Errorf("remote:\n got %s\nwant %s", remote, want)
 	}
 }
