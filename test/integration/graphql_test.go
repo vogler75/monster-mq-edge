@@ -692,3 +692,66 @@ func TestGraphQLRetainedMessageInArchiveAcrossRestart(t *testing.T) {
 		t.Fatalf("browseTopics after restart empty: %+v", dataBrowse)
 	}
 }
+
+// Session metrics report each client's messages per second (in: published
+// by the client, out: delivered to it), like the Kotlin broker.
+func TestGraphQLSessionMetricsRates(t *testing.T) {
+	srv, url := startWithGraphQL(t, 23240, 28240)
+	defer srv.Close()
+
+	sub := mqtt.NewClient(mqttOpts(23240, "rate-sub"))
+	if tok := sub.Connect(); tok.WaitTimeout(2*time.Second) && tok.Error() != nil {
+		t.Fatal(tok.Error())
+	}
+	defer sub.Disconnect(100)
+	if tok := sub.Subscribe("rate/#", 0, func(mqtt.Client, mqtt.Message) {}); tok.WaitTimeout(2*time.Second) && tok.Error() != nil {
+		t.Fatal(tok.Error())
+	}
+	pub := mqtt.NewClient(mqttOpts(23240, "rate-pub"))
+	if tok := pub.Connect(); tok.WaitTimeout(2*time.Second) && tok.Error() != nil {
+		t.Fatal(tok.Error())
+	}
+	defer pub.Disconnect(100)
+
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			for i := 0; i < 50; i++ {
+				pub.Publish("rate/x", 0, false, "v")
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}()
+
+	deadline := time.Now().Add(5 * time.Second)
+	var in, out float64
+	for time.Now().Before(deadline) {
+		time.Sleep(300 * time.Millisecond)
+		data := gqlQuery(t, url, `{ sessions { clientId metrics { messagesIn messagesOut } } }`, nil)
+		in, out = 0, 0
+		for _, s := range data["sessions"].([]any) {
+			m := s.(map[string]any)
+			metrics := m["metrics"].([]any)
+			if len(metrics) == 0 {
+				continue
+			}
+			mm := metrics[0].(map[string]any)
+			switch m["clientId"] {
+			case "rate-pub":
+				in = mm["messagesIn"].(float64)
+			case "rate-sub":
+				out = mm["messagesOut"].(float64)
+			}
+		}
+		if in > 100 && out > 100 {
+			return
+		}
+	}
+	t.Fatalf("session rates not reported: publisher in=%v, subscriber out=%v", in, out)
+}

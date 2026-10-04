@@ -1867,7 +1867,13 @@ func (r *sessionResolver) Metrics(ctx context.Context, obj *generated.Session) (
 		}
 	}
 
+	var in, out float64
+	if r.Collector != nil {
+		in, out = r.Collector.ClientRates(obj.ClientID)
+	}
 	return []*generated.SessionMetrics{{
+		MessagesIn:          in,
+		MessagesOut:         out,
 		Timestamp:           nowISO(),
 		Connected:           &obj.Connected,
 		InFlightMessagesSnd: &sndCount,

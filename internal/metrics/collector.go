@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -28,6 +29,8 @@ type Collector struct {
 
 	mu     sync.RWMutex
 	latest BrokerSnapshot
+
+	clients sync.Map // client id -> *clientCounter
 
 	stopCh chan struct{}
 }
@@ -66,6 +69,51 @@ func (c *Collector) IncBusIn() { c.busIn.Add(1) }
 // IncBusOut counts n PeerLink records served to peers (messageBusOut).
 func (c *Collector) IncBusOut(n int) { c.busOut.Add(int64(n)) }
 
+// clientCounter counts the messages of one MQTT client; the rates are the
+// messages per second of the last interval (float64 bits).
+type clientCounter struct {
+	in, out         atomic.Int64
+	rateIn, rateOut atomic.Uint64
+}
+
+func (c *Collector) client(id string) *clientCounter {
+	if v, ok := c.clients.Load(id); ok {
+		return v.(*clientCounter)
+	}
+	v, _ := c.clients.LoadOrStore(id, &clientCounter{})
+	return v.(*clientCounter)
+}
+
+// IncClientIn counts one message published by a client.
+func (c *Collector) IncClientIn(id string) { c.client(id).in.Add(1) }
+
+// IncClientOut counts one message sent to a client.
+func (c *Collector) IncClientOut(id string) { c.client(id).out.Add(1) }
+
+// ForgetClient drops the counters of a client that disconnected.
+func (c *Collector) ForgetClient(id string) { c.clients.Delete(id) }
+
+// ClientRates returns the messages per second a client published (in) and
+// received (out) in the last interval; 0 for an unknown client.
+func (c *Collector) ClientRates(id string) (in, out float64) {
+	v, ok := c.clients.Load(id)
+	if !ok {
+		return 0, 0
+	}
+	cc := v.(*clientCounter)
+	return math.Float64frombits(cc.rateIn.Load()), math.Float64frombits(cc.rateOut.Load())
+}
+
+func (c *Collector) tickClients() {
+	secs := c.interval.Seconds()
+	c.clients.Range(func(_, v any) bool {
+		cc := v.(*clientCounter)
+		cc.rateIn.Store(math.Float64bits(float64(cc.in.Swap(0)) / secs))
+		cc.rateOut.Store(math.Float64bits(float64(cc.out.Swap(0)) / secs))
+		return true
+	})
+}
+
 func (c *Collector) Latest() BrokerSnapshot {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -96,6 +144,7 @@ func (c *Collector) Start(ctx context.Context, counts func() (sessions, subs int
 				boN := c.mqttBridgeOut.Swap(0)
 				busInN := c.busIn.Swap(0)
 				busOutN := c.busOut.Swap(0)
+				c.tickClients()
 				sessions, subs, queued := 0, 0, int64(0)
 				if counts != nil {
 					sessions, subs, queued = counts()

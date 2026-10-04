@@ -26,6 +26,10 @@ func (c *recCounter) IncIn()    { c.in.Add(1) }
 func (c *recCounter) IncOut()   { c.out.Add(1) }
 func (c *recCounter) IncBusIn() { c.busIn.Add(1) }
 
+func (c *recCounter) IncClientIn(string)  {}
+func (c *recCounter) IncClientOut(string) {}
+func (c *recCounter) ForgetClient(string) {}
+
 type recArchive struct {
 	mu   sync.Mutex
 	msgs []stores.BrokerMessage

@@ -87,6 +87,9 @@ type MetricsCounter interface {
 	IncIn()
 	IncOut()
 	IncBusIn()
+	IncClientIn(clientID string)
+	IncClientOut(clientID string)
+	ForgetClient(clientID string)
 }
 
 func NewStorageHook(s *stores.Storage, bus *pubsub.Bus, subs *topic.SubscriptionIndex, dispatcher ArchiveDispatcher, nodeID string, logger *slog.Logger, m MetricsCounter, retainedInMemory bool, server *mqtt.Server) *StorageHook {
@@ -244,6 +247,9 @@ func (h *StorageHook) StoredClientByID(id string, username []byte) (string, []st
 }
 
 func (h *StorageHook) OnDisconnect(cl *mqtt.Client, _ error, expire bool) {
+	if h.metrics != nil {
+		h.metrics.ForgetClient(cl.ID)
+	}
 	if expire {
 		if err := h.store.Sessions.DelClient(context.Background(), cl.ID); err != nil {
 			h.logger.Warn("session delete failed on disconnect", "client", cl.ID, "err", err)
@@ -313,9 +319,12 @@ func (h *StorageHook) OnUnsubscribed(cl *mqtt.Client, pk packets.Packet, reasonC
 	}
 }
 
-func (h *StorageHook) OnPacketSent(_ *mqtt.Client, pk packets.Packet, _ []byte) {
+func (h *StorageHook) OnPacketSent(cl *mqtt.Client, pk packets.Packet, _ []byte) {
 	if h.metrics != nil && pk.FixedHeader.Type == packets.Publish {
 		h.metrics.IncOut()
+		if cl != nil {
+			h.metrics.IncClientOut(cl.ID)
+		}
 	}
 }
 
@@ -326,6 +335,9 @@ func (h *StorageHook) OnPublished(cl *mqtt.Client, pk packets.Packet) {
 	}
 	if h.metrics != nil {
 		h.metrics.IncIn()
+		if !cl.Net.Inline {
+			h.metrics.IncClientIn(cl.ID)
+		}
 	}
 	if pk.Ignore && h.replicated != nil && h.replicated(pk.TopicName) {
 		return
