@@ -80,7 +80,7 @@ EMBED_OUT := build/embed
 
 embed-lib: prepare-dashboard
 	mkdir -p $(EMBED_OUT)
-	CGO_ENABLED=1 go build $(GOFLAGS) -tags winccoa_embed -buildmode=c-archive -o $(EMBED_OUT)/libmonstermq.a ./embed/cabi
+	CGO_ENABLED=1 go build $(GOFLAGS) -tags winccoa_embed -buildmode=c-archive -ldflags="-X monstermq.io/edge/internal/version.Version=$(VERSION)" -o $(EMBED_OUT)/libmonstermq.a ./embed/cabi
 	cp embed/cabi/monstermq.h embed/cabi/monstermq_types.h $(EMBED_OUT)/
 
 # Links the library into a plain C host and exercises the ABI contract.
