@@ -1,6 +1,6 @@
 # Plan: PeerLink, pull-based in-memory forwarding between MonsterMQ Edge brokers
 
-**Status: implemented; WinCC OA parts untested; performance gates G0-G7 (21.2) open (2026-10-03).** The review fixes of 2026-10-03 are recorded in the sections they change, marked "(review 2026-10-03)".
+**Status: implemented (2026-10-03/04). Superseded as reference by [spec-peerlink-redundancy.md](spec-peerlink-redundancy.md), which describes the implementation; this plan keeps the design rationale. Deviations are listed in the spec, section 18.**
 
 Proposed file: `dev/plans/plan-peerlink.md`. Branch at drafting time: `winccoa-native`.
 

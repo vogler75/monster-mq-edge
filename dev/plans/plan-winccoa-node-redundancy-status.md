@@ -1,6 +1,6 @@
 # Plan: WinCC OA Node and Redundancy Status over MQTT
 
-**Status: draft for review (2026-09-30). Nothing implemented.**
+**Status: partly implemented (2026-10-04): broker status fields `redundant`, `host`, `hostName`, `role` and `activeHost`, with switchover tracking ([spec-peerlink-redundancy.md](spec-peerlink-redundancy.md) section 14); the `node/1` and `node/2` topics and `eventConnections` are not implemented; `connectToRedundantHosts` is documented in `winccoa/README.md`.**
 
 ## 1. Goal and scope
 
