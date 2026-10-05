@@ -327,6 +327,20 @@ func build(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus, opts Optio
 			AllowRootWildcard: cfg.AllowRootWildcard(),
 			TopicDPNames:      cfg.WinCCOaNative.TopicDpNames == config.WinCCOaTopicDpName,
 			PeerLinkStatus:    peerLinkNativeStatus(peerSetup != nil, &pl),
+			RetainedStatuses: func(filter string) map[string][]byte {
+				out := map[string][]byte{}
+				if cfg.RetainedStore() == config.StoreMemory {
+					for _, pk := range server.Topics.Messages(filter) {
+						out[pk.TopicName] = pk.Payload
+					}
+					return out
+				}
+				_ = storage.Retained.FindMatchingMessages(context.Background(), filter, func(m stores.BrokerMessage) bool {
+					out[m.TopicName] = m.Payload
+					return true
+				})
+				return out
+			},
 			SessionExists: func(clientID string) bool {
 				if _, ok := server.Clients.Get(clientID); ok {
 					return true

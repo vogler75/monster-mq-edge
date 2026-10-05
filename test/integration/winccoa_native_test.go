@@ -68,6 +68,7 @@ func newSim(queue int) (*simhost.Host, *oahost.Client) {
 	must(sim.CreateDP("SubstationA", "Feeder1", "Feeder"))
 	must(sim.CreateDP("SubstationA", "Pump101", "AnalogDrive"))
 	sim.AddSystem("SubstationB", false)
+	sim.AnnounceSystems() // before the broker starts, like the C++ host
 	return sim, client
 }
 
@@ -712,6 +713,105 @@ func TestNativeStatusTopic(t *testing.T) {
 	pk, ok = c.NextOn("winccoa/systems/System1", 2*time.Second)
 	if !ok || !strings.Contains(string(pk.Payload), `"disconnected"`) {
 		t.Fatal("status transition not published")
+	}
+}
+
+// Every connected WinCC OA system has a retained status on
+// winccoa/systems/<system>, published as a normal MQTT message (so
+// winccoa/systems/+ works); connects and disconnects update it, and after a
+// restart a system that is gone is marked disconnected.
+func TestNativeSystemStatuses(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "n.db")
+	type status struct {
+		System string `json:"system"`
+		Local  bool   `json:"local"`
+		OA     string `json:"oa"`
+		Ready  bool   `json:"ready"`
+	}
+	collect := func(c *rawClient, want map[string]string) map[string]status {
+		t.Helper()
+		got := map[string]status{}
+		deadline := time.Now().Add(3 * time.Second)
+		for time.Now().Before(deadline) {
+			done := true
+			for topic, oa := range want {
+				if got[topic].OA != oa {
+					done = false
+				}
+			}
+			if done {
+				return got
+			}
+			pk, ok := c.Next(time.Until(deadline))
+			if !ok {
+				break
+			}
+			var st status
+			_ = json.Unmarshal(pk.Payload, &st)
+			got[pk.TopicName] = st
+		}
+		t.Fatalf("statuses %v, want %v", got, want)
+		return nil
+	}
+
+	// First run: SubstationA and OldSys are connected.
+	sim, client := newSim(0)
+	sim.AddSystem("OldSys", true)
+	sim.AnnounceSystems()
+	env := startNative(t, 27116, db, sim, client, nil, broker.Options{})
+	c, _ := dialRaw(t, env.port, rawConnect{ClientID: "sys-a", Version: 5, Clean: true})
+	c.Subscribe(sub("winccoa/systems/+", 1))
+	got := collect(c, map[string]string{
+		"winccoa/systems/System1":     "connected",
+		"winccoa/systems/SubstationA": "connected",
+		"winccoa/systems/OldSys":      "connected",
+	})
+	if !got["winccoa/systems/System1"].Local || got["winccoa/systems/SubstationA"].Local || !got["winccoa/systems/SubstationA"].Ready {
+		t.Fatalf("statuses %v", got)
+	}
+	// Live changes.
+	sim.SetSystemAvailable("SubstationA", false)
+	sim.SetSystemAvailable("SubstationB", true)
+	got = collect(c, map[string]string{
+		"winccoa/systems/SubstationA": "disconnected",
+		"winccoa/systems/SubstationB": "connected",
+	})
+	if got["winccoa/systems/SubstationA"].Ready {
+		t.Fatalf("disconnected system ready: %v", got)
+	}
+	c.Close()
+	env.srv.Close()
+	sim.Close()
+
+	// Second run on the same store: OldSys is gone, SubstationA is back.
+	sim, client = newSim(0)
+	defer sim.Close()
+	env = startNative(t, 27117, db, sim, client, nil, broker.Options{})
+	defer env.srv.Close()
+	c, _ = dialRaw(t, env.port, rawConnect{ClientID: "sys-b", Version: 5, Clean: true})
+	defer c.Close()
+	c.Subscribe(sub("winccoa/systems/+", 1))
+	collect(c, map[string]string{
+		"winccoa/systems/System1":     "connected",
+		"winccoa/systems/SubstationA": "connected",
+		"winccoa/systems/OldSys":      "disconnected",
+		"winccoa/systems/SubstationB": "disconnected",
+	})
+
+	// A disconnected system's status can be cleared and stays cleared; a
+	// connected one cannot.
+	if code := c.Publish(rawPub{Topic: "winccoa/systems/OldSys", Retain: true, QoS: 1}); code != 0 {
+		t.Fatalf("clear disconnected status: 0x%02x", code)
+	}
+	if code := c.Publish(rawPub{Topic: "winccoa/systems/SubstationA", Retain: true, QoS: 1}); code == 0 {
+		t.Fatal("status of a connected system cleared")
+	}
+	env.srv.Native().PublishStatus()
+	d, _ := dialRaw(t, env.port, rawConnect{ClientID: "sys-c", Version: 5, Clean: true})
+	defer d.Close()
+	d.Subscribe(sub("winccoa/systems/OldSys", 1))
+	if pk, ok := d.NextOn("winccoa/systems/OldSys", 500*time.Millisecond); ok {
+		t.Fatalf("cleared status republished: %s", pk.Payload)
 	}
 }
 

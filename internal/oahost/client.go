@@ -170,6 +170,11 @@ type Client struct {
 	newWatchers map[uint64]DPWatcher
 	nextWatch   uint64
 	closed      bool
+	// systems is the last reported availability per system (StateRef);
+	// systemsKnown is set by the first complete list (FlagSnapshot).
+	systems      map[string]bool
+	systemsKnown bool
+	snapWatchers map[uint64]func()
 
 	events []chan event
 	done   chan struct{}
@@ -209,14 +214,16 @@ func NewClient(host Host, limits Limits) *Client {
 		}
 	}
 	c := &Client{
-		host:        host,
-		limits:      limits,
-		pending:     map[uint64]*call{},
-		handlers:    map[uint64]EventHandler{},
-		watchers:    map[uint64]SystemWatcher{},
-		dpWatchers:  map[uint64]DPWatcher{},
-		newWatchers: map[uint64]DPWatcher{},
-		done:        make(chan struct{}),
+		host:         host,
+		limits:       limits,
+		pending:      map[uint64]*call{},
+		handlers:     map[uint64]EventHandler{},
+		watchers:     map[uint64]SystemWatcher{},
+		dpWatchers:   map[uint64]DPWatcher{},
+		newWatchers:  map[uint64]DPWatcher{},
+		systems:      map[string]bool{},
+		snapWatchers: map[uint64]func(){},
+		done:         make(chan struct{}),
 	}
 	per := limits.EventQueue / limits.EventWorkers
 	if per < 1 {
@@ -430,13 +437,64 @@ func (c *Client) WatchSystems(w SystemWatcher) func() {
 	}
 }
 
+// Systems returns the last reported availability of every system the host
+// announced, and whether a complete list of the connected systems arrived.
+// State events are kept even before any watcher is registered.
+func (c *Client) Systems() (map[string]bool, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make(map[string]bool, len(c.systems))
+	for k, v := range c.systems {
+		out[k] = v
+	}
+	return out, c.systemsKnown
+}
+
+// WatchSystemsKnown registers fn, called after every complete list of the
+// connected systems (FlagSnapshot), and returns a function that removes it.
+func (c *Client) WatchSystemsKnown(fn func()) func() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.nextWatch++
+	id := c.nextWatch
+	c.snapWatchers[id] = fn
+	return func() {
+		c.mu.Lock()
+		delete(c.snapWatchers, id)
+		c.mu.Unlock()
+	}
+}
+
 func (c *Client) deliverState(data []byte) {
 	m, err := ParseMessage(data)
 	if err != nil {
 		c.unrouted.Add(1)
 		return
 	}
+	flags, _ := m.U32(TagFlags)
+	snapshot := flags&FlagSnapshot != 0
 	c.mu.Lock()
+	var name string
+	for _, f := range m.Fields {
+		switch f.Tag {
+		case TagSysName:
+			name = string(f.Data)
+		case TagName:
+			name = ""
+		case TagExists:
+			if name != "" {
+				c.systems[name] = len(f.Data) == 1 && f.Data[0] != 0
+			}
+			name = ""
+		}
+	}
+	var sws []func()
+	if snapshot {
+		c.systemsKnown = true
+		for _, w := range c.snapWatchers {
+			sws = append(sws, w)
+		}
+	}
 	ws := make([]SystemWatcher, 0, len(c.watchers))
 	for _, w := range c.watchers {
 		ws = append(ws, w)
@@ -476,6 +534,9 @@ func (c *Client) deliverState(data []byte) {
 			}
 			sys, dp = "", ""
 		}
+	}
+	for _, w := range sws {
+		safeCall(w)
 	}
 	c.delivered.Add(1)
 }

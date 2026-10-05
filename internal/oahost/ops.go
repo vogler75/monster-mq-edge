@@ -39,6 +39,10 @@ const (
 	// TagTime (Unix ms) after its TagValue. Hosts that do not know the flag
 	// send no TagTime.
 	FlagSourceTime uint32 = 1 << 5
+	// FlagSnapshot (StateRef event): the systems reported available are
+	// the complete list of connected systems; the host sends it once the
+	// distribution state is known (also when no system is connected).
+	FlagSnapshot uint32 = 1 << 6
 )
 
 // Resolution is the answer to OpResolve for one name.

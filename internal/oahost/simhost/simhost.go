@@ -240,6 +240,27 @@ func (h *Host) SetSystemAvailable(name string, available bool) {
 	_ = h.client.Event(oahost.StateRef, w.Bytes())
 }
 
+// AnnounceSystems reports the complete list of connected remote systems
+// (FlagSnapshot), as the C++ host does once the distribution state is known.
+func (h *Host) AnnounceSystems() {
+	h.mu.Lock()
+	names := make([]string, 0, len(h.systems))
+	for name, s := range h.systems {
+		if name != h.local && s.available {
+			names = append(names, name)
+		}
+	}
+	h.mu.Unlock()
+	sort.Strings(names)
+	var w oahost.Writer
+	w.U32(oahost.TagFlags, oahost.FlagSnapshot)
+	for _, name := range names {
+		w.String(oahost.TagSysName, name)
+		w.Bool(oahost.TagExists, true)
+	}
+	_ = h.client.Event(oahost.StateRef, w.Bytes())
+}
+
 func (h *Host) CreateDP(sys, name, typ string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()

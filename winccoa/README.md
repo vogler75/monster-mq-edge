@@ -82,7 +82,16 @@ The standalone broker is unaffected: `make build`, `build-arm64` and
   (`UNKNOWN` until known), with `host` (1 or 2), `hostName` and
   `activeHost` (1, 2, or 0 when unknown or in split mode). A retained empty
   publish clears a stale status of another system name; the own status
-  cannot be written.
+  cannot be written. The local status has `"local": true`.
+- `winccoa/systems/<System>` for every other WinCC OA system the
+  distribution manager reports (retained JSON): `nodeId`, `system`,
+  `"local": false`, `oa` (`connected`/`disconnected`), `ready`,
+  `timestamp`. At startup the manager reports all systems connected at that
+  moment; later connects and disconnects update the status. After a restart,
+  a retained status of a system that is no longer connected is republished
+  as disconnected. The status of a disconnected system can be removed with a
+  retained empty publish. All statuses are normal retained MQTT messages,
+  so `winccoa/systems/+` receives them all.
 - Broker log lines go to the WinCC OA log (`PVSS_II.log` / log viewer)
   with the `MMQ` catalog prefix. A start failure (bad config, occupied
   port, missing DPT, unreachable store) is logged as `broker failed: ...` and

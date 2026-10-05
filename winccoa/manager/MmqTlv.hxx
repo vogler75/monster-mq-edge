@@ -44,6 +44,7 @@ const uint32_t FlagNoSource = 1u << 1;
 const uint32_t FlagMore = 1u << 3;  // query answer continues in another event
 const uint32_t FlagCreate = 1u << 4;  // type check: create a missing type with the given elements
 const uint32_t FlagSourceTime = 1u << 5;  // connect: add each element's _online.._stime as TagTime
+const uint32_t FlagSnapshot = 1u << 6;    // state event: the complete list of connected systems
 
 class Writer
 {

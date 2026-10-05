@@ -1168,9 +1168,14 @@ void MmqManager::onDistState(const Variable *v)
         now.insert((SystemNumType) static_cast<const UIntegerVar *>(x)->getValue());
     }
   }
+  // The first state is the complete list of connected systems, sent even
+  // when it is empty.
+  bool first = !distKnown;
   Writer ev;
+  if (first)
+    ev.u32(TagFlags, FlagSnapshot);
   for (SystemNumType s : now)
-    if (!distUp.count(s) || !distKnown)
+    if (!distUp.count(s) || first)
     {
       CharString name;
       if (getSystemName(s, name))
@@ -1321,10 +1326,12 @@ int MmqManager::run()
     return 1;
   }
   logLine(MMQ_LOG_INFO, "broker created, local system " + std::string((const char *)localSystem));
-  // Systems connected before the broker existed are announced once.
-  if (!distUp.empty())
+  // Systems connected before the broker existed are announced once, as the
+  // complete list; an unknown state is announced by onDistState later.
+  if (distKnown)
   {
     Writer ev;
+    ev.u32(TagFlags, FlagSnapshot);
     for (SystemNumType s : distUp)
     {
       CharString name;

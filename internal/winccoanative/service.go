@@ -71,6 +71,10 @@ type Options struct {
 	// PeerLinkStatus, when set, adds the compact PeerLink status object
 	// ("peerLink") to the retained broker status.
 	PeerLinkStatus func() any
+	// RetainedStatuses returns the retained messages matching a filter
+	// (topic -> payload); used to mark statuses of remote systems that are
+	// no longer connected after a restart. Nil skips that.
+	RetainedStatuses func(filter string) map[string][]byte
 }
 
 func (o *Options) defaults() {
@@ -195,6 +199,9 @@ type Service struct {
 	ready   atomic.Bool
 	oaUp    atomic.Bool
 
+	statusMu sync.Mutex
+	remote   map[string]bool // remote system -> connected; has a retained status
+
 	connects, disconnects, connectErrs, published, commands, cmdErrs, dups atomic.Uint64
 }
 
@@ -220,6 +227,7 @@ func NewService(api oahost.API, b Broker, opts Options, logger *slog.Logger) *Se
 		twild:       map[subKey]*topicWild{},
 		tdirs:       map[string]*topicDir{},
 		prepared:    map[string]bool{},
+		remote:      map[string]bool{},
 		kick:        make(chan struct{}, 1),
 	}
 }
@@ -247,12 +255,18 @@ func (s *Service) Start(ctx context.Context) error {
 		}
 	})
 	unNew := s.api.C.WatchCreated(s.topicCreated)
-	s.unwatch = func() { unSys(); unDP(); unNew() }
+	unStatus := s.api.C.WatchSystems(s.onSystemStatus)
+	unKnown := s.api.C.WatchSystemsKnown(s.sweepStatuses)
+	s.unwatch = func() { unSys(); unDP(); unNew(); unStatus(); unKnown() }
+	known := s.seedRemote()
 	s.wg.Add(1)
 	go s.worker()
 	s.startRedu(ctx, info)
 	s.ready.Store(true)
 	s.PublishStatus()
+	if known {
+		s.sweepStatuses()
+	}
 	return nil
 }
 
@@ -1164,6 +1178,7 @@ func (s *Service) PublishStatus() {
 	st := map[string]any{
 		"nodeId":    s.opts.NodeID,
 		"system":    s.localSystem,
+		"local":     true,
 		"oa":        map[bool]string{true: "connected", false: "disconnected"}[s.oaUp.Load()],
 		"ready":     s.ready.Load() && s.oaUp.Load(),
 		"timestamp": time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
@@ -1177,6 +1192,15 @@ func (s *Service) PublishStatus() {
 		for _, topic := range s.statusTopics() {
 			_ = s.broker.Publish(topic, b, true, 1)
 		}
+	}
+	s.statusMu.Lock()
+	remote := make(map[string]bool, len(s.remote))
+	for sys, up := range s.remote {
+		remote[sys] = up
+	}
+	s.statusMu.Unlock()
+	for sys, up := range remote {
+		s.publishRemoteStatus(sys, up)
 	}
 }
 
@@ -1219,6 +1243,16 @@ func (s *Service) StaleStatusClear(topic string, retain bool, payload []byte) bo
 		if topic == own {
 			return false
 		}
+	}
+	// A connected remote system keeps its status; a disconnected one is
+	// forgotten so it is not published again.
+	if sys, ok := s.statusSystem(topic); ok {
+		s.statusMu.Lock()
+		defer s.statusMu.Unlock()
+		if s.remote[sys] {
+			return false
+		}
+		delete(s.remote, sys)
 	}
 	return true
 }
