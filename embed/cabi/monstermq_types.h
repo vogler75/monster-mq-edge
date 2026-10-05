@@ -12,7 +12,7 @@
 extern "C" {
 #endif
 
-#define MMQ_ABI_VERSION 1u
+#define MMQ_ABI_VERSION 2u
 
 /* Status codes. */
 #define MMQ_OK              0

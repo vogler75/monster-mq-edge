@@ -1,7 +1,7 @@
 /*
  * monstermq.h - C ABI of the embeddable MonsterMQ Edge broker.
  *
- * Contract: dev/plans/spec-winccoa-native.md section 3. ABI version 1.
+ * Contract: dev/plans/spec-winccoa-native.md section 3. ABI version 2.
  *
  * Threading: every mmq_* function may be called from any thread. The host
  * callbacks (submit, wake, log) are called from arbitrary Go runtime
@@ -64,6 +64,15 @@ int32_t mmq_complete(uint64_t handle, uint64_t request_id, int32_t status,
  * the event queue is full (the event is dropped and counted).
  */
 int32_t mmq_event(uint64_t handle, uint64_t ref, const uint8_t *data, uint32_t len);
+
+/*
+ * Delivers the host's counters as a JSON object of non-negative integers,
+ * e.g. {"connects":3,"queued":0}; keys are single MQTT topic levels (at
+ * most 64 keys). The broker publishes them retained as
+ * $SYS/winccoa/manager/<key>. Non-blocking; data is copied. Returns
+ * MMQ_E_INVALID for a malformed object.
+ */
+int32_t mmq_stats(uint64_t handle, const uint8_t *data, uint32_t len);
 
 #ifdef __cplusplus
 }

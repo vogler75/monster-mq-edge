@@ -397,6 +397,23 @@ func mmq_event(h C.uint64_t, ref C.uint64_t, data *C.uint8_t, n C.uint32_t) (rc 
 	return C.int32_t(oahost.StatusOK)
 }
 
+//export mmq_stats
+func mmq_stats(h C.uint64_t, data *C.uint8_t, n C.uint32_t) (rc C.int32_t) {
+	defer guard(&rc)
+	in, st := current(h)
+	if in == nil {
+		return C.int32_t(st)
+	}
+	b, code := copyIn(data, n)
+	if code != oahost.StatusOK {
+		return C.int32_t(code)
+	}
+	if err := in.client.SetHostStats(b); err != nil {
+		return C.int32_t(oahost.ErrorStatus(err))
+	}
+	return C.int32_t(oahost.StatusOK)
+}
+
 func copyIn(data *C.uint8_t, n C.uint32_t) ([]byte, int32) {
 	if n == 0 {
 		return nil, oahost.StatusOK

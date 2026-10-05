@@ -715,6 +715,49 @@ func TestNativeStatusTopic(t *testing.T) {
 	}
 }
 
+// Host, native and manager counters are retained $SYS topics, not log lines.
+func TestNativeSysTopics(t *testing.T) {
+	sim, client := newSim(0)
+	defer sim.Close()
+	env := startNative(t, 27114, filepath.Join(t.TempDir(), "n.db"), sim, client, nil, broker.Options{})
+	defer env.srv.Close()
+	if err := client.SetHostStats([]byte(`{"connects":3,"queueHighWater":7}`)); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{`{"a/b":1}`, `{"x":-1}`, `[1]`, `{"#":1}`} {
+		if err := client.SetHostStats([]byte(bad)); err == nil {
+			t.Errorf("host stats %s accepted", bad)
+		}
+	}
+	c, _ := dialRaw(t, env.port, rawConnect{ClientID: "sys", Version: 5, Clean: true})
+	defer c.Close()
+	c.Subscribe(sub("$SYS/winccoa/#", 0))
+	want := map[string]string{
+		"$SYS/winccoa/manager/connects":       "3",
+		"$SYS/winccoa/manager/queueHighWater": "7",
+		"$SYS/winccoa/host/submitted":         "",
+		"$SYS/winccoa/native/interests":       "",
+		"$SYS/winccoa/manager/updated":        "",
+	}
+	got := map[string]string{}
+	deadline := time.Now().Add(3 * time.Second)
+	for len(got) < len(want) && time.Now().Before(deadline) {
+		pk, ok := c.Next(time.Until(deadline))
+		if !ok {
+			break
+		}
+		if _, ok := want[pk.TopicName]; ok {
+			got[pk.TopicName] = string(pk.Payload)
+		}
+	}
+	for topic, v := range want {
+		g, ok := got[topic]
+		if !ok || (v != "" && g != v) {
+			t.Errorf("%s = %q (present %v), want %q", topic, g, ok, v)
+		}
+	}
+}
+
 // A stale status of another system (e.g. after the project's system name
 // changed) can be cleared with a retained empty publish; the broker's own
 // status topic stays protected.

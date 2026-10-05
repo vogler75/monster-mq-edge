@@ -42,6 +42,7 @@ import (
 	storepg "monstermq.io/edge/internal/stores/postgres"
 	storesqlite "monstermq.io/edge/internal/stores/sqlite"
 	"monstermq.io/edge/internal/topic"
+	"monstermq.io/edge/internal/version"
 	"monstermq.io/edge/internal/winccoanative"
 )
 
@@ -242,6 +243,11 @@ func build(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus, opts Optio
 	// 3. Pub/sub bus + subscription index + archive manager
 	bus := pubsub.NewBus()
 	subs := topic.NewSubscriptionIndex()
+	// The inline client is not persisted; drop records older versions
+	// stored for it.
+	if err := storage.Sessions.DelClient(ctx, mqtt.InlineClientId); err != nil {
+		logger.Warn("inline session cleanup failed", "err", err)
+	}
 	if err := hydrateSubscriptionIndex(ctx, subs, storage); err != nil {
 		logger.Warn("subscription index hydrate failed", "err", err)
 	}
@@ -260,6 +266,7 @@ func build(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus, opts Optio
 		Logger:       logger,
 		Capabilities: caps,
 	})
+	server.Info.Version = version.Version
 	*undo = append(*undo, func() { _ = server.Close() })
 
 	var authHook *AuthHook
@@ -336,6 +343,10 @@ func build(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus, opts Optio
 		if err := server.AddHook(NewWinCCOaNativeHook(native, server, logger), nil); err != nil {
 			return nil, fmt.Errorf("add winccoa native hook: %w", err)
 		}
+	}
+
+	if opts.OA != nil {
+		server.AddSysTopics(winccoaSysTopics(opts.OA, native))
 	}
 
 	// Metrics collector (counts hooked into the storage hook)

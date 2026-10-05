@@ -1329,13 +1329,33 @@ int MmqManager::run()
         std::lock_guard<std::mutex> lock(qmu);
         q = queue.size() + retry.size();
       }
-      logLine(MMQ_LOG_INFO, "stats connects=" + std::to_string(conns.size()) + " queries=" + std::to_string(queries.size()) +
-                                 " liveCallbacks=" + std::to_string(mmqLiveWaits.load()) + " queued=" + std::to_string(q) +
-                                 " queueHighWater=" + std::to_string(queueHighWater) + " overloads=" + std::to_string(overloads.load()) +
-                                 " offThreadCalls=" + std::to_string(offThreadCalls.load()) +
-                                 " setMessages=" + std::to_string(setMessages) + " setItems=" + std::to_string(setItems) +
-                                 " hotlinkGroups=" + std::to_string(hotlinkGroups) + " hotlinkItems=" + std::to_string(hotlinkItems) +
-                                 " loops=" + std::to_string(loops));
+      long live = mmqLiveWaits.load();
+      std::vector<std::pair<const char *, unsigned long long>> st = {
+          {"connects", conns.size()},
+          {"queries", queries.size()},
+          {"liveCallbacks", live > 0 ? (unsigned long long)live : 0},
+          {"queued", q},
+          {"queueHighWater", queueHighWater},
+          {"overloads", overloads.load()},
+          {"offThreadCalls", offThreadCalls.load()},
+          {"setMessages", setMessages},
+          {"setItems", setItems},
+          {"hotlinkGroups", hotlinkGroups},
+          {"hotlinkItems", hotlinkItems},
+          {"loops", loops}};
+      // Published by the broker as $SYS/winccoa/manager/<name>; the log
+      // line only with -dbg USR1.
+      std::string json = "{", line = "stats";
+      for (auto &f : st)
+      {
+        std::string v = std::to_string(f.second);
+        json += (json.size() > 1 ? ",\"" : "\"") + std::string(f.first) + "\":" + v;
+        line += std::string(" ") + f.first + "=" + v;
+      }
+      json += "}";
+      mmq_stats(handle, (const uint8_t *)json.data(), (uint32_t)json.size());
+      if (Resources::isDbgFlag(Resources::DBG_API_USR1))
+        logLine(MMQ_LOG_DEBUG, line);
     }
   }
 

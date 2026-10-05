@@ -30,7 +30,6 @@ type liveEnv struct {
 	gql     int
 	project string
 	node    string
-	tag     string // "(<manager num>)" to select the statistics line
 }
 
 func live(t *testing.T) liveEnv {
@@ -252,39 +251,33 @@ func (e liveEnv) graphql(t *testing.T, query string) map[string]any {
 	return out
 }
 
-// lastStats returns the fields of the manager's latest statistics line
-// (statsSeconds must be small; MMQ_LIVE_LOG is PVSS_II.log of the project).
+// lastStats returns the manager counters ($SYS/winccoa/manager/...) of the
+// first push after the given time (statsSeconds must be small).
 func (e liveEnv) lastStats(t *testing.T, after time.Time) map[string]int {
 	t.Helper()
-	path := os.Getenv("MMQ_LIVE_LOG")
-	if path == "" {
-		t.Skip("MMQ_LIVE_LOG not set")
-	}
+	c := e.client(t, "live-stats-"+strconv.FormatInt(time.Now().UnixNano(), 36), 5)
+	defer c.Close()
+	c.Subscribe(sub("$SYS/winccoa/manager/#", 0))
+	out := map[string]int{}
+	var fresh time.Time // when the first fresh push was seen
 	deadline := time.Now().Add(20 * time.Second)
 	for time.Now().Before(deadline) {
-		data, _ := os.ReadFile(path)
-		lines := strings.Split(string(data), "\n")
-		for i := len(lines) - 1; i >= 0; i-- {
-			l := lines[i]
-			j := strings.Index(l, "stats connects=")
-			if j < 0 || !strings.Contains(l, "WCCOAmmq") || (e.tag != "" && !strings.Contains(l, e.tag)) {
-				continue
-			}
-			ts, err := time.ParseInLocation("2006.01.02 15:04:05.000", strings.TrimSpace(strings.Split(strings.SplitN(l, "),", 2)[1], ",")[0]), time.Local)
-			if err != nil || ts.Before(after) {
-				break
-			}
-			out := map[string]int{}
-			for _, f := range strings.Fields(l[j+len("stats "):]) {
-				k, v, _ := strings.Cut(f, "=")
-				n, _ := strconv.Atoi(v)
-				out[k] = n
-			}
+		pk, ok := c.Next(time.Until(deadline))
+		if !ok {
+			break
+		}
+		n, _ := strconv.Atoi(string(pk.Payload))
+		out[strings.TrimPrefix(pk.TopicName, "$SYS/winccoa/manager/")] = n
+		if fresh.IsZero() && pk.TopicName == "$SYS/winccoa/manager/updated" && int64(n) >= after.UnixMilli() {
+			fresh = time.Now()
+		}
+		// Every $SYS tick republishes all counters; one more tick completes
+		// the fresh set.
+		if !fresh.IsZero() && time.Since(fresh) > 1200*time.Millisecond {
 			return out
 		}
-		time.Sleep(time.Second)
 	}
-	t.Fatal("no fresh statistics line")
+	t.Fatal("no fresh manager statistics")
 	return nil
 }
 
@@ -482,8 +475,7 @@ func TestLiveBackupRestore(t *testing.T) {
 
 // AC-07: a burst beyond the host queue capacity is rejected with bounded
 // memory; every accepted command reports an outcome; the manager recovers.
-// MMQ_LIVE_OVL_PORT is a second manager with queueCapacity = 16 and
-// MMQ_LIVE_OVL_NUM its manager number.
+// MMQ_LIVE_OVL_PORT is a second manager with queueCapacity = 16.
 func TestLiveOverload(t *testing.T) {
 	e := live(t)
 	p, _ := strconv.Atoi(os.Getenv("MMQ_LIVE_OVL_PORT"))
@@ -491,7 +483,6 @@ func TestLiveOverload(t *testing.T) {
 		t.Skip("MMQ_LIVE_OVL_PORT not set")
 	}
 	e.port = p
-	e.tag = "(" + os.Getenv("MMQ_LIVE_OVL_NUM") + ")"
 	c := e.client(t, "ovl", 5)
 	defer c.Close()
 	c.Subscribe(sub("ovl/res", 1))

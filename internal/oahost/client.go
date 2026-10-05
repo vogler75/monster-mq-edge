@@ -2,9 +2,11 @@ package oahost
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -177,7 +179,18 @@ type Client struct {
 	delivered, dropped, unrouted, highWater          atomic.Uint64
 
 	logger atomic.Pointer[slog.Logger]
+
+	hostStats atomic.Pointer[HostStats]
 }
+
+// HostStats are the counters the host pushed last (mmq_stats).
+type HostStats struct {
+	Values  map[string]uint64
+	Updated time.Time
+}
+
+// maxHostStats bounds the number of host counters.
+const maxHostStats = 64
 
 func NewClient(host Host, limits Limits) *Client {
 	if limits.MaxPending <= 0 || limits.EventQueue <= 0 || limits.DefaultTimeout <= 0 || limits.EventWorkers <= 0 {
@@ -534,6 +547,28 @@ func (c *Client) Stats() Stats {
 		PendingHighWater: c.highWater.Load(),
 	}
 }
+
+// SetHostStats stores the host's counters: a JSON object of non-negative
+// integers whose keys are single topic levels.
+func (c *Client) SetHostStats(data []byte) error {
+	var v map[string]uint64
+	if err := json.Unmarshal(data, &v); err != nil {
+		return fmt.Errorf("%w: host stats: %v", ErrInvalid, err)
+	}
+	if len(v) > maxHostStats {
+		return fmt.Errorf("%w: host stats: %d counters (max %d)", ErrInvalid, len(v), maxHostStats)
+	}
+	for k := range v {
+		if k == "" || len(k) > 64 || strings.ContainsAny(k, "/+#$\x00") {
+			return fmt.Errorf("%w: host stats: invalid name %q", ErrInvalid, k)
+		}
+	}
+	c.hostStats.Store(&HostStats{Values: v, Updated: time.Now()})
+	return nil
+}
+
+// HostStats returns the counters pushed last, or nil before the first push.
+func (c *Client) HostStats() *HostStats { return c.hostStats.Load() }
 
 // Refs reports the number of registered event routes.
 func (c *Client) Refs() int {

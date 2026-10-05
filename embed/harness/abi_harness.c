@@ -296,7 +296,7 @@ int main(void) {
   small.struct_size = 8;
   CHECK(mmq_create(&small, &host, &h) == MMQ_E_ABI, "short cfg struct");
   mmq_host bad = host;
-  bad.abi_version = 2;
+  bad.abi_version = MMQ_ABI_VERSION + 1;
   CHECK(mmq_create(&cfg, &bad, &h) == MMQ_E_ABI, "abi mismatch");
   bad = host;
   bad.submit = NULL;
@@ -355,6 +355,11 @@ int main(void) {
   free(big);
   CHECK(mmq_event(h, 77, bin, sizeof(bin)) == MMQ_OK, "binary event for unknown ref is accepted and dropped");
   CHECK(mmq_event(h, 77, NULL, 3) == MMQ_E_INVALID, "null event data");
+  const char *stats = "{\"connects\":3,\"queued\":0}";
+  CHECK(mmq_stats(h, (const uint8_t *)stats, (uint32_t)strlen(stats)) == MMQ_OK, "host stats");
+  const char *badStats = "{\"a/b\":1}";
+  CHECK(mmq_stats(h, (const uint8_t *)badStats, (uint32_t)strlen(badStats)) == MMQ_E_INVALID, "host stats with a topic separator");
+  CHECK(mmq_stats(h, (const uint8_t *)"[1]", 3) == MMQ_E_INVALID, "host stats not an object");
   CHECK(mmq_state(h, NULL, 0, NULL) == MMQ_STATE_RUNNING, "still running after bad input");
 
   /* End-to-end: a native SUBSCRIBE triggers RESOLVE on the host. */

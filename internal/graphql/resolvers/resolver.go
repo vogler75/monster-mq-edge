@@ -2454,6 +2454,12 @@ func (r *sessionMutationsResolver) RemoveSessions(ctx context.Context, _ *genera
 	for _, id := range clientIds {
 		var detailErr *string
 		success := true
+		if id == mqtt.InlineClientId {
+			msg := "the broker's internal client cannot be removed"
+			nodeID := r.NodeID
+			results = append(results, &generated.SessionRemovalDetail{ClientID: id, Success: false, Error: &msg, NodeID: &nodeID})
+			continue
+		}
 
 		// 1. Disconnect and delete client from MQTT engine memory
 		if r.MQTT != nil {

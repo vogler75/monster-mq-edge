@@ -44,7 +44,7 @@ Demonstrated live by the probe (acceptance record, AC-02): `del=true` keeps a ho
 
 ## 3. C ABI (header `embed/cabi/monstermq.h`)
 
-- ABI version `MMQ_ABI_VERSION = 1`. Every struct begins with `uint32_t struct_size`; the library rejects a smaller size or a different major ABI with `MMQ_E_ABI`.
+- ABI version `MMQ_ABI_VERSION = 2` (2 added `mmq_stats`). Every struct begins with `uint32_t struct_size`; the library rejects a smaller size or a different major ABI with `MMQ_E_ABI`.
 - Fixed-width integers only; default C calling convention; symbols exported with default visibility.
 - One broker instance per process, enforced: a second `mmq_create` returns `MMQ_E_STATE`. The handle is opaque (`uint64_t`).
 - Lifecycle: `mmq_create` (validate config, no listeners) -> `mmq_start` (asynchronous; poll `mmq_state`) -> `mmq_stop(timeout_ms)` (asynchronous, idempotent) -> `mmq_destroy` (only after state `STOPPED` or `FAILED`). Calls after destroy return `MMQ_E_STATE`.
@@ -53,6 +53,7 @@ Demonstrated live by the probe (acceptance record, AC-02): `del=true` keeps a ho
 - The host drops a request whose deadline has passed before it reaches the manager thread and completes it with `MMQ_E_TIMEOUT` without executing it, so an expired write is never executed late.
 - A sent `QUERY_CONNECT`/`DP_CONNECT` whose OA answer reports an error is disconnected by the host with the matching callback before the error completion is delivered (spec of the embedded-manager plan, section 6.2).
 - Host -> Go events: `mmq_event(handle, ref, data, len)` for hotlink/query data of a registered subscription reference. Non-blocking; returns `MMQ_E_OVERLOAD` when the event queue is full (the host counts it; the drop policy is section 7).
+- Host -> Go counters: `mmq_stats(handle, data, len)` with a JSON object of non-negative integers (keys are single topic levels, at most 64). The manager pushes it every `statsSeconds`; the broker publishes the values retained as `$SYS/winccoa/manager/<key>` (plus `updated`, the push time in Unix ms) together with `$SYS/winccoa/host/...` and `$SYS/winccoa/native/...`. These counters are not logged; the manager logs its line only with `-dbg USR1`.
 - Query tables larger than half of `MMQ_MAX_MESSAGE` are split into several events; every chunk repeats the header row, and all but the last chunk of an initial answer carry `FlagMore` (bit 3).
 - Payload encoding: the TLV format of section 3.1 in both directions. Payloads are length-delimited; embedded NULs are allowed.
 - No Go pointer is retained by C and no C pointer is retained by Go after a call returns.

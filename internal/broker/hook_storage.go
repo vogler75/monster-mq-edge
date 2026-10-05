@@ -268,6 +268,9 @@ func (h *StorageHook) OnClientExpired(cl *mqtt.Client) {
 }
 
 func (h *StorageHook) OnSubscribed(cl *mqtt.Client, pk packets.Packet, reasonCodes []byte) {
+	if cl.Net.Inline {
+		return // in-process subscriptions are recreated on every start
+	}
 	rows := make([]stores.MqttSubscription, 0, len(pk.Filters))
 	for i, f := range pk.Filters {
 		granted := false
@@ -302,6 +305,9 @@ func (h *StorageHook) OnSubscribed(cl *mqtt.Client, pk packets.Packet, reasonCod
 }
 
 func (h *StorageHook) OnUnsubscribed(cl *mqtt.Client, pk packets.Packet, reasonCodes []byte) {
+	if cl.Net.Inline {
+		return
+	}
 	rows := make([]stores.MqttSubscription, 0, len(pk.Filters))
 	for i, f := range pk.Filters {
 		if len(reasonCodes) > 0 && i < len(reasonCodes) && reasonCodes[i] >= packets.ErrUnspecifiedError.Code {

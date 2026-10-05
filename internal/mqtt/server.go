@@ -158,6 +158,8 @@ type Server struct {
 	hooks        *Hooks               // hooks contains hooks for extra functionality such as auth and persistent storage
 	inlineClient *Client              // inlineClient is a special client used for inline subscriptions and inline Publish
 	retainLocks  [64]sync.Mutex       // per-topic stripes for Options.SerializeRetained
+	sysMu        sync.Mutex           // guards sysExtra
+	sysExtra     []func() map[string]string
 }
 
 // loop contains interval tickers for the system events loop.
@@ -352,7 +354,7 @@ func (s *Server) AddListenersFromConfig(configs []listeners.Config) error {
 // Serve starts the event loops responsible for establishing client connections
 // on all attached listeners, publishing the system topics, and starting all hooks.
 func (s *Server) Serve() error {
-	s.Log.Info("mqtt starting", "version", Version)
+	s.Log.Info("mqtt starting", "version", s.Info.Version)
 	defer s.Log.Info("mqtt started")
 
 	if len(s.Options.Listeners) > 0 {
@@ -573,6 +575,10 @@ func (s *Server) validateConnect(cl *Client, pk packets.Packet) packets.Code {
 
 	if cl.Properties.ProtocolVersion < 5 && !pk.Connect.Clean && pk.Connect.ClientIdentifier == "" {
 		return packets.ErrUnspecifiedError
+	}
+
+	if !cl.Net.Inline && pk.Connect.ClientIdentifier == InlineClientId {
+		return packets.ErrClientIdentifierNotValid // would take over the inline client
 	}
 
 	if cl.Properties.ProtocolVersion < s.Options.Capabilities.MinimumProtocolVersion {
@@ -1724,6 +1730,15 @@ func (s *Server) publishSysTopics() {
 		SysPrefix + "/broker/system/threads":       Int64toa(info.Threads),
 	}
 
+	s.sysMu.Lock()
+	extra := s.sysExtra
+	s.sysMu.Unlock()
+	for _, fn := range extra {
+		for topic, payload := range fn() {
+			topics[SysPrefix+"/"+topic] = payload
+		}
+	}
+
 	for topic, payload := range topics {
 		pk.TopicName = topic
 		pk.Payload = []byte(payload)
@@ -1732,6 +1747,15 @@ func (s *Server) publishSysTopics() {
 	}
 
 	s.hooks.OnSysInfoTick(info)
+}
+
+// AddSysTopics registers fn, called on every $SYS tick. Its topics are
+// relative to $SYS/ and are published retained with the server's own $SYS
+// values, outside the hooks (not persisted, archived or replicated).
+func (s *Server) AddSysTopics(fn func() map[string]string) {
+	s.sysMu.Lock()
+	defer s.sysMu.Unlock()
+	s.sysExtra = append(s.sysExtra[:len(s.sysExtra):len(s.sysExtra)], fn)
 }
 
 // Close attempts to gracefully shut down the server, all listeners, clients, and stores.

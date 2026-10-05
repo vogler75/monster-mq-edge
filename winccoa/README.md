@@ -64,16 +64,14 @@ The standalone broker is unaffected: `make build`, `build-arm64` and
    tickBudgetMs = 5
    queueCapacity = 4096
    stopTimeoutMs = 10000
-   statsSeconds = 60                        # statistics line interval
+   statsSeconds = 10                        # $SYS/winccoa/manager update interval
    ```
 
 5. Add the manager to the console (PMON) as `WCCOAmmq -num <n>`.
    Use a distinct manager number; `-dbg USR1` enables debug logging
-   (see "Debug logging of WinCC OA calls" below). Every
-   `statsSeconds` the manager logs a statistics line (`connects`, `queries`,
-   `liveCallbacks`, `queued`, `queueHighWater`, `overloads`, `offThreadCalls`,
-   `setMessages`, `setItems`, `hotlinkItems`); set `MMQ_STATS_SECONDS` in the
-   manager environment for the broker-side `host client stats` line.
+   (see "Debug logging of WinCC OA calls" below). Runtime counters are
+   published as retained `$SYS` topics (see "Readiness and diagnostics");
+   with `-dbg USR1` the manager also logs its counters every `statsSeconds`.
 
 ## Readiness and diagnostics
 
@@ -89,6 +87,21 @@ The standalone broker is unaffected: `make build`, `build-arm64` and
   with the `MMQ` catalog prefix. A start failure (bad config, occupied
   port, missing DPT, unreachable store) is logged as `broker failed: ...` and
   the manager exits with code 1.
+- Counters (retained, refreshed every second with the other `$SYS` topics;
+  local to each broker, not replicated):
+  - `$SYS/winccoa/manager/<name>`: the manager, pushed every `statsSeconds`
+    (`connects`, `queries`, `liveCallbacks`, `queued`, `queueHighWater`,
+    `overloads`, `offThreadCalls`, `setMessages`, `setItems`,
+    `hotlinkGroups`, `hotlinkItems`, `loops`; `updated` = push time in Unix
+    ms).
+  - `$SYS/winccoa/host/<name>`: the broker's requests to the manager
+    (`submitted`, `completed`, `timedOut`, `overloaded`, `late`, `pending`,
+    `pendingHighWater`, `eventsDelivered`, `eventsDropped`,
+    `eventsUnrouted`).
+  - `$SYS/winccoa/native/<name>`: the namespace (`interests`, `dpes`,
+    `batches`, `connects`, `disconnects`, `connectErrors`, `published`,
+    `commands`, `commandErrors`, `duplicates`, `wildQueries`, `wildSubs`,
+    `topicDps`, `topicSubs`, `topicWilds`, `topicDirs`).
 - Namespace: `winccoa/systems/<System>/tags/<DP>/<element...>` and
   `winccoa/systems/<System>/types/<DPT>/<DP>/<element...>`, where `<System>` is the
   local system or a connected remote system (same form for both), optional

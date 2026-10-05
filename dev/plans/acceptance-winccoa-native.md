@@ -22,9 +22,8 @@ shell using 1-3.5 cores during measurements), live tests
 
 ```bash
 MMQ_LIVE_PORT=27200 MMQ_LIVE_GQL=27201 MMQ_LIVE_PROJECT=Test321 MMQ_LIVE_NODE=live \
-MMQ_LIVE_LOG=$HOME/WinCC_OA_Proj/Test321/log/PVSS_II.log \
 MMQ_LIVE_RESTART="mgr.sh stop && mgr.sh start 5" MMQ_LIVE_STOP="mgr.sh stop" MMQ_LIVE_START="mgr.sh start 5" \
-MMQ_LIVE_ASCII=/opt/WinCC_OA/3.21/bin/WCCOAasciiSQLite MMQ_LIVE_OVL_PORT=27210 MMQ_LIVE_OVL_NUM=85 \
+MMQ_LIVE_ASCII=/opt/WinCC_OA/3.21/bin/WCCOAasciiSQLite MMQ_LIVE_OVL_PORT=27210 \
 go test ./test/integration -run TestLive -v -count=1
 ```
 
