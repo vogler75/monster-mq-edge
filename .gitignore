@@ -13,4 +13,5 @@ internal/dashboard/dist/*
 /dist/
 /build/
 embed/harness/harness-data/
+winccoa
 winccoa/manager/build/
