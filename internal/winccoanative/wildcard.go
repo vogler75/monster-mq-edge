@@ -150,8 +150,9 @@ func (w WildTarget) Pattern() string {
 	return base
 }
 
-// Query returns the dpQueryConnectSingle statement. _online.._stime is
-// selected to identify one value change when several queries overlap.
+// Query returns the dpQueryConnectSingle statement. _online.._stime is the
+// published time and identifies one value change when several queries
+// overlap.
 func (w WildTarget) Query() string {
 	// WinCC OA expects REMOTE directly after FROM, before WHERE.
 	q := "SELECT '_online.._value', '_online.._stime' FROM '" + w.Pattern() + "'"

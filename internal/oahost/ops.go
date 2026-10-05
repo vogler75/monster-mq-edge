@@ -2,6 +2,7 @@ package oahost
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,6 +34,11 @@ const (
 	FlagWait     uint32 = 1 << 2 // set: require the OA answer (always set by this package)
 	FlagMore     uint32 = 1 << 3 // event: the query answer continues in another event
 	FlagCreate   uint32 = 1 << 4 // type check: create a missing type from the given elements
+	// FlagSourceTime (connect): connect each name together with the
+	// _online.._stime of its element; every event item then carries a
+	// TagTime (Unix ms) after its TagValue. Hosts that do not know the flag
+	// send no TagTime.
+	FlagSourceTime uint32 = 1 << 5
 )
 
 // Resolution is the answer to OpResolve for one name.
@@ -389,6 +395,23 @@ func HotlinkItems(m Message) ([]string, []Value, error) {
 		return nil, nil, ErrMalformed
 	}
 	return names, values, nil
+}
+
+// HotlinkTimes returns the source time (TagTime) of every item of a
+// DP_CONNECT event, parallel to HotlinkItems; zero where the host sent none.
+func HotlinkTimes(m Message) []time.Time {
+	var times []time.Time
+	for _, f := range m.Fields {
+		switch f.Tag {
+		case TagValue:
+			times = append(times, time.Time{})
+		case TagTime:
+			if len(times) > 0 && len(f.Data) == 8 {
+				times[len(times)-1] = time.UnixMilli(int64(binary.LittleEndian.Uint64(f.Data)))
+			}
+		}
+	}
+	return times
 }
 
 // QueryRows decodes a QUERY_CONNECT event: a table whose first row is the

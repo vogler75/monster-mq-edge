@@ -173,6 +173,9 @@ class MmqManager : public Manager
       bool wantAnswer;
       NamedIds ids;
       std::vector<ConnectWait *> waits;  // parallel to ids; nullptr = not registered
+      // parallel to ids: the element's _online.._stime connected with it
+      // (FlagSourceTime); first = false when not paired
+      std::vector<std::pair<bool, DpIdentifier>> stimes;
       size_t pending;                    // answers still expected
       std::string err;
       mmq::Writer answerEv;
@@ -183,6 +186,9 @@ class MmqManager : public Manager
       QueryWait *wait;
       PVSSulong queryId;
     };
+    static void pickItem(const ConnReg &r, size_t i, const DpIdentifier &id, const Variable *v, const Variable *&value,
+                         const Variable *&stime);
+    static void putItem(mmq::Writer &ev, const std::string &name, const Variable *value, const Variable *stime);
 
     static std::atomic<bool> doExit;
     static std::atomic<bool> brokerStarted;

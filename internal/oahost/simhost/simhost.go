@@ -46,6 +46,7 @@ type system struct {
 type connection struct {
 	names    []string // fully qualified read addresses
 	noSource bool
+	stime    bool // FlagSourceTime: items carry the element's _online.._stime
 }
 
 type query struct {
@@ -263,6 +264,7 @@ func (h *Host) createLocked(sys, name, typ string) error {
 			continue
 		}
 		d.values[el] = zero(oahost.Kind(k))
+		d.values[el+"#stime"] = oahost.Value{Kind: oahost.KindTime, Time: time.Now().UTC()}
 	}
 	s.dps[name] = d
 	return nil
@@ -300,8 +302,13 @@ func zero(k oahost.Kind) oahost.Value {
 
 // Set changes a value as if a driver or another manager wrote it.
 func (h *Host) Set(address string, v oahost.Value) error {
+	return h.SetTimed(address, v, time.Now())
+}
+
+// SetTimed changes a value with the given source time (dpSetTimed).
+func (h *Host) SetTimed(address string, v oahost.Value, stime time.Time) error {
 	h.mu.Lock()
-	events, err := h.setLocked(address, v, false)
+	events, err := h.setLocked(address, v, false, stime)
 	h.mu.Unlock()
 	h.emit(events)
 	return err
@@ -354,7 +361,7 @@ func (h *Host) lookup(address string) (*system, *dp, string, string, error) {
 	return s, d, el, attr, nil
 }
 
-func (h *Host) setLocked(address string, v oahost.Value, own bool) ([]pendingEvent, error) {
+func (h *Host) setLocked(address string, v oahost.Value, own bool, stime time.Time) ([]pendingEvent, error) {
 	s, d, el, attr, err := h.lookup(address)
 	if err != nil {
 		return nil, err
@@ -378,7 +385,7 @@ func (h *Host) setLocked(address string, v oahost.Value, own bool) ([]pendingEve
 		return nil, fmt.Errorf("%w: element %s expects kind %d, got %d", oahost.ErrType, address, k, v.Kind)
 	}
 	d.values[el] = v
-	d.values[el+"#stime"] = oahost.Value{Kind: oahost.KindTime, Time: time.Now().UTC()}
+	d.values[el+"#stime"] = oahost.Value{Kind: oahost.KindTime, Time: stime.UTC()}
 	_, dpe, _ := splitAddress(address, h.local)
 	full := s.name + ":" + dpe
 	var evs []pendingEvent
@@ -393,6 +400,9 @@ func (h *Host) setLocked(address string, v oahost.Value, own bool) ([]pendingEve
 			var w oahost.Writer
 			w.String(oahost.TagName, n)
 			w.Value(oahost.TagValue, h.readAttr(d, el, attrOf(n)))
+			if c.stime {
+				h.writeSTime(&w, d, el)
+			}
 			evs = append(evs, pendingEvent{ref: ref, data: w.Bytes()})
 		}
 	}
@@ -470,6 +480,11 @@ func (h *Host) readAttr(d *dp, el, attr string) oahost.Value {
 		return oahost.Value{Kind: oahost.KindBool}
 	}
 	return d.values[el]
+}
+
+// writeSTime appends the element's _online.._stime as TagTime (Unix ms).
+func (h *Host) writeSTime(w *oahost.Writer, d *dp, el string) {
+	w.U64(oahost.TagTime, uint64(h.readAttr(d, el, "_online.._stime").Time.UnixMilli()))
 }
 
 func (h *Host) run() {
@@ -679,7 +694,7 @@ func (h *Host) dpSet(m oahost.Message) ([]pendingEvent, error) {
 	}
 	var all []pendingEvent
 	for i := range names {
-		evs, err := h.setLocked(string(names[i]), decoded[i], true)
+		evs, err := h.setLocked(string(names[i]), decoded[i], true, time.Now())
 		if err != nil {
 			return all, err
 		}
@@ -707,7 +722,7 @@ func (h *Host) dpConnect(m oahost.Message) ([]pendingEvent, error) {
 	if len(names) > h.BatchLimit {
 		return nil, fmt.Errorf("%w: %d names exceed maxConnectMessageSize %d", oahost.ErrOA, len(names), h.BatchLimit)
 	}
-	c := &connection{noSource: flags&oahost.FlagNoSource != 0}
+	c := &connection{noSource: flags&oahost.FlagNoSource != 0, stime: flags&oahost.FlagSourceTime != 0}
 	var w oahost.Writer
 	w.U32(oahost.TagFlags, oahost.FlagAnswer)
 	for _, raw := range names {
@@ -719,6 +734,9 @@ func (h *Host) dpConnect(m oahost.Message) ([]pendingEvent, error) {
 		c.names = append(c.names, n)
 		w.String(oahost.TagName, n)
 		w.Value(oahost.TagValue, h.readAttr(d, el, attr))
+		if c.stime {
+			h.writeSTime(&w, d, el)
+		}
 	}
 	h.conns[ref] = c
 	if flags&oahost.FlagAnswer == 0 {

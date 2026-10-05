@@ -54,6 +54,7 @@ Demonstrated live by the probe (acceptance record, AC-02): `del=true` keeps a ho
 - A sent `QUERY_CONNECT`/`DP_CONNECT` whose OA answer reports an error is disconnected by the host with the matching callback before the error completion is delivered (spec of the embedded-manager plan, section 6.2).
 - Host -> Go events: `mmq_event(handle, ref, data, len)` for hotlink/query data of a registered subscription reference. Non-blocking; returns `MMQ_E_OVERLOAD` when the event queue is full (the host counts it; the drop policy is section 7).
 - Host -> Go counters: `mmq_stats(handle, data, len)` with a JSON object of non-negative integers (keys are single topic levels, at most 64). The manager pushes it every `statsSeconds`; the broker publishes the values retained as `$SYS/winccoa/manager/<key>` (plus `updated`, the push time in Unix ms) together with `$SYS/winccoa/host/...` and `$SYS/winccoa/native/...`. These counters are not logged; the manager logs its line only with `-dbg USR1`.
+- `DP_CONNECT` with `FlagSourceTime` (bit 5): the host connects each name together with the `_online.._stime` of its element in one `dpConnect` (a name that is itself `_online.._stime` stays single). Every answer and hotlink item then carries a `time` field (tag 13, Unix ms) after its value. A host without the flag sends no `time`; the broker then stamps the receive time.
 - Query tables larger than half of `MMQ_MAX_MESSAGE` are split into several events; every chunk repeats the header row, and all but the last chunk of an initial answer carry `FlagMore` (bit 3).
 - Payload encoding: the TLV format of section 3.1 in both directions. Payloads are length-delimited; embedded NULs are allowed.
 - No Go pointer is retained by C and no C pointer is retained by Go after a call returns.
@@ -132,7 +133,7 @@ A native filter with `+` or `#` after `tags/` or `types/` becomes one `dpQueryCo
 | `<sys>` is not the local system | `... REMOTE '<sys>'` |
 
 - `+` matches exactly one name level (`*`), a trailing `#` matches the level and everything below (`**`, which also includes the root of a scalar DP). Partial-level wildcards do not exist in MQTT; names containing OA pattern characters (`*?[]{},'"`), attribute segments and names starting with `_` are rejected (`0x8F`).
-- Rows are published as `{"time","value"}` to the exact topic of each element in the filter's form (`tags/...` or `types/<DPT>/...`), QoS 1, not retained. Internal (`_`) and store (`MMQ*`) datapoints are never published.
+- Rows are published as `{"time","value"}` (`time` = the row's `_online.._stime`) to the exact topic of each element in the filter's form (`tags/...` or `types/<DPT>/...`), QoS 1, not retained. Internal (`_`) and store (`MMQ*`) datapoints are never published.
 - Current values: the initial query answer (possibly split into several events, `FlagMore`) is delivered to the subscribers that are waiting; later subscribers of the same filter get the cached current values at once. Retain handling applies as for exact filters.
 - One change is published once: a query does not publish a topic that has an exact native subscription (that path publishes it), and overlapping queries are deduplicated by value and `_online.._stime`.
 - Datapoints created after the subscription are reported by the running query (verified on 3.21); deleted ones simply stop.
@@ -194,7 +195,7 @@ Echo policy: `BROKER_TAG` (default) uses `dpConnect`; writes from MQTT come back
 | Max ABI message | 1 MiB |
 | Max store record envelope | 256 KiB |
 | Max command payload | 64 KiB |
-| Connect batch size | 100 names per `DP_CONNECT` request; a batch never mixes systems, so an outage of one system only drops that system's registrations. The host registers each name with its own single-element `dpConnect`: a list `dpConnect` delivers every element of the list whenever one changes (verified on 3.21), which republished unchanged values |
+| Connect batch size | 100 names per `DP_CONNECT` request; a batch never mixes systems, so an outage of one system only drops that system's registrations. The host registers each name with its own `dpConnect` of the element's value and its `_online.._stime` (`FlagSourceTime`); a list `dpConnect` delivers every element of the list whenever one changes (verified on 3.21), so several elements in one list would republish unchanged values, while value and source time always change together |
 | Write batching | all `DP_SET` requests drained in one dispatch tick go out as one `dpSet` message; the answer has one group per item, so each request is confirmed individually |
 | Max native interests (distinct DPEs) | 10000 |
 | Load target (AC-34) | 50 MQTT clients, 5000 DPEs, 2000 value changes/s, payload <= 1 KiB |

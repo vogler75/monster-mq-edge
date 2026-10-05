@@ -107,7 +107,11 @@ The standalone broker is unaffected: `make build`, `build-arm64` and
   local system or a connected remote system (same form for both), optional
   read attribute suffix
   (`_online.._value`, `_online.._stime`, `_online.._status`,
-  `_online.._invalid`), writes via `.../set` with `{"value": ..}`. See the
+  `_online.._invalid`), writes via `.../set` with `{"value": ..}`. Values
+  are published as `{"time": .., "value": ..}`, where `time` is the
+  element's `_online.._stime` in WinCC OA (connected together with the
+  value; wildcard queries select it as a column), not the broker's receive
+  time. See the
   spec for encoding, reason codes and command results.
   `winccoa/systems/<System>/topics/<topic>`: MQTT topics replicated through
   `MMQTopic` datapoints (see "Topics replicated through WinCC OA").

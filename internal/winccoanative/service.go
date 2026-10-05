@@ -736,7 +736,7 @@ func (s *Service) connectQueued() {
 		if len(names) == 0 {
 			return
 		}
-		var flags uint32 = oahost.FlagAnswer
+		flags := oahost.FlagAnswer | oahost.FlagSourceTime
 		if s.opts.NoSource {
 			flags |= oahost.FlagNoSource
 		}
@@ -790,9 +790,16 @@ func (s *Service) onHotlink(m oahost.Message) {
 		s.logger.Warn("native hotlink decode failed", "err", err)
 		return
 	}
+	// The published time is the element's _online.._stime (FlagSourceTime);
+	// the receive time only when the host sent none.
+	times := oahost.HotlinkTimes(m)
 	now := time.Now()
 	for i, name := range names {
-		s.apply(name, values[i], now, answer)
+		ts := now
+		if i < len(times) && !times[i].IsZero() {
+			ts = times[i]
+		}
+		s.apply(name, values[i], ts, answer)
 	}
 }
 

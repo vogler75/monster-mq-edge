@@ -182,6 +182,28 @@ func TestLiveValues(t *testing.T) {
 	t.Logf("woa set -> MQTT: %s", time.Since(start))
 }
 
+// The published time is the element's _online.._stime: it equals the value
+// of the _stime attribute topic, for the initial value and a hotlink.
+func TestLiveSourceTime(t *testing.T) {
+	e := live(t)
+	c := e.client(t, "live-stime", 5)
+	defer c.Close()
+	val, st := "winccoa/systems/System1/tags/MMQLive1/speed", "winccoa/systems/System1/tags/MMQLive1/speed/_online.._stime"
+	check := func(what string, got map[string]packets.Packet) {
+		t.Helper()
+		var v, s map[string]any
+		_ = json.Unmarshal(got[val].Payload, &v)
+		_ = json.Unmarshal(got[st].Payload, &s)
+		if v["time"] == nil || v["time"] != s["value"] || s["time"] != s["value"] {
+			t.Fatalf("%s: value %s, stime %s", what, got[val].Payload, got[st].Payload)
+		}
+	}
+	c.Subscribe(sub(val, 0), sub(st, 0))
+	check("initial", c.NextOnAll(5*time.Second, val, st))
+	e.set(t, "MMQLive1.speed", "31.5", "float")
+	check("hotlink", c.NextOnAll(5*time.Second, val, st))
+}
+
 // AC-24/AC-26: typed writes applied in WinCC OA, rejections leave it unchanged.
 func TestLiveWrites(t *testing.T) {
 	e := live(t)

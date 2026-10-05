@@ -521,12 +521,30 @@ void MmqManager::opDpConnect(uint64_t reqId, const Message &m)
   }
   ConnReg &r = conns[ref] = reg;
   r.waits.assign(r.ids.size(), nullptr);
+  r.stimes.assign(r.ids.size(), {false, DpIdentifier()});
   for (size_t i = 0; i < r.ids.size(); i++)
   {
     // del=true: verified on 3.21 (AC-02 probe) to keep the callback after
     // the answer and delete it on dpDisconnect.
     ConnectWait *w = new ConnectWait(this, ref, i);
-    bool sent = (flags & FlagNoSource) ? dpConnectNoSource(r.ids[i].first, w, true) : dpConnect(r.ids[i].first, w, true);
+    DpIdentList list;
+    list.append(r.ids[i].first);
+    if (flags & FlagSourceTime)
+    {
+      // The source time is connected with the value in one dpConnect, so
+      // both arrive in the same answer and hotlink group.
+      std::string n = r.ids[i].second;
+      size_t pos = n.rfind(":_");
+      std::string base = pos == std::string::npos ? n : n.substr(0, pos);
+      DpIdentifier sid;
+      if ((pos == std::string::npos || n.compare(pos, std::string::npos, ":_online.._stime") != 0) &&
+          resolveCached(base + ":_online.._stime", sid))
+      {
+        list.append(sid);
+        r.stimes[i] = {true, sid};
+      }
+    }
+    bool sent = (flags & FlagNoSource) ? dpConnectNoSource(list, w, true) : dpConnect(list, w, true);
     if (!sent)
     {
       // Ownership of an unsent callback is undocumented; leaking it is
@@ -584,12 +602,11 @@ void MmqManager::onConnectAnswer(ConnectWait *w, DpMsgAnswer &answer)
   }
   else if (r.wantAnswer)
   {
+    const Variable *value = nullptr, *stime = nullptr;
     for (AnswerGroup *g = answer.getFirstGroup(); g; g = answer.getNextGroup())
       for (AnswerItem *item = g->getFirstItem(); item; item = g->getNextItem())
-      {
-        r.answerEv.str(TagName, r.ids[w->index].second);
-        r.answerEv.value(TagValue, item->getValuePtr());
-      }
+        pickItem(r, w->index, item->getDpIdentifier(), item->getValuePtr(), value, stime);
+    putItem(r.answerEv, r.ids[w->index].second, value, stime);
   }
   if (r.pending > 0 && --r.pending == 0)
     finishConnect(w->ref);
@@ -600,16 +617,41 @@ void MmqManager::onConnectHotlink(ConnectWait *w, DpHLGroup &group)
   auto it = conns.find(w->ref);
   if (it == conns.end() || w->index >= it->second.waits.size() || it->second.waits[w->index] != w)
     return;
-  const std::string &name = it->second.ids[w->index].second;
+  ConnReg &r = it->second;
   Writer ev;
   hotlinkGroups++;
+  const Variable *value = nullptr, *stime = nullptr;
   for (DpVCItem *item = group.getFirstItem(); item; item = group.getNextItem(), hotlinkItems++)
-  {
-    ev.str(TagName, name);
-    ev.value(TagValue, item->getValuePtr());
-  }
+    pickItem(r, w->index, item->getDpIdentifier(), item->getValuePtr(), value, stime);
+  putItem(ev, r.ids[w->index].second, value, stime);
   if (!ev.empty())
     event(w->ref, ev);
+}
+
+// pickItem sorts one item of a connect group into the value or the paired
+// source time of registration index i.
+void MmqManager::pickItem(const ConnReg &r, size_t i, const DpIdentifier &id, const Variable *v, const Variable *&value,
+                          const Variable *&stime)
+{
+  if (r.stimes[i].first && id == r.stimes[i].second)
+    stime = v;
+  else
+    value = v;
+}
+
+// putItem writes one event item: name, value and, when known, the source
+// time (TagTime, Unix ms).
+void MmqManager::putItem(mmq::Writer &ev, const std::string &name, const Variable *value, const Variable *stime)
+{
+  if (!value)
+    return;
+  ev.str(TagName, name);
+  ev.value(TagValue, value);
+  if (stime && stime->isA() == TIME_VAR)
+  {
+    const TimeVar *t = static_cast<const TimeVar *>(stime);
+    ev.u64(TagTime, (uint64_t)((int64_t)t->getSeconds() * 1000 + t->getMilli()));
+  }
 }
 
 void MmqManager::disconnectConn(uint64_t ref)
@@ -622,8 +664,12 @@ void MmqManager::disconnectConn(uint64_t ref)
   {
     if (!r.waits[i])
       continue;
-    // The same callback as the connect; the framework deletes it.
-    if (!dpDisconnect(r.ids[i].first, r.waits[i]))
+    // The same callback and ids as the connect; the framework deletes it.
+    DpIdentList list;
+    list.append(r.ids[i].first);
+    if (r.stimes[i].first)
+      list.append(r.stimes[i].second);
+    if (!dpDisconnect(list, r.waits[i]))
       logLine(MMQ_LOG_WARN, "dpDisconnect message not sent for " + r.ids[i].second);
   }
   conns.erase(it);

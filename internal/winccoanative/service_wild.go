@@ -196,7 +196,11 @@ func (s *Service) onWildRows(q *wildQuery, m oahost.Message) {
 			continue
 		}
 		topic := t.Topic()
-		payload := ValuePayload(row[1], now)
+		ts := now
+		if len(row) > 2 && row[2].Kind == oahost.KindTime && !row[2].Time.IsZero() {
+			ts = row[2].Time // _online.._stime
+		}
+		payload := ValuePayload(row[1], ts)
 		sig := string(payload[strings.Index(string(payload), `"value":`):])
 		if len(row) > 2 {
 			sig += "|" + fmt.Sprint(row[2].JSON())

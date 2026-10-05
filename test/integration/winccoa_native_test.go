@@ -715,6 +715,76 @@ func TestNativeStatusTopic(t *testing.T) {
 	}
 }
 
+// The published time is the element's _online.._stime in WinCC OA, not the
+// broker's receive time: initial values, hotlinks, the cached replay for a
+// later subscriber and wildcard (dpQueryConnect) rows.
+func TestNativeSourceTime(t *testing.T) {
+	sim, client := newSim(0)
+	defer sim.Close()
+	env := startNative(t, 27115, filepath.Join(t.TempDir(), "n.db"), sim, client, nil, broker.Options{})
+	defer env.srv.Close()
+	payloadTime := func(pk packets.Packet) string {
+		t.Helper()
+		var m map[string]any
+		if err := json.Unmarshal(pk.Payload, &m); err != nil {
+			t.Fatalf("payload %q: %v", pk.Payload, err)
+		}
+		s, _ := m["time"].(string)
+		return s
+	}
+	const exact = "winccoa/systems/System1/tags/Pump101/speed"
+	initial := time.Date(2020, 1, 2, 3, 4, 5, 678e6, time.UTC)
+	if err := sim.SetTimed("System1:Pump101.speed", oahost.Value{Kind: oahost.KindFloat, Float: 1}, initial); err != nil {
+		t.Fatal(err)
+	}
+
+	a, _ := dialRaw(t, env.port, rawConnect{ClientID: "st-a", Version: 5, Clean: true})
+	defer a.Close()
+	a.Subscribe(sub(exact, 0), sub("winccoa/systems/System1/tags/Pump1/+", 0))
+	pk, ok := a.NextOn(exact, 3*time.Second)
+	if !ok || payloadTime(pk) != "2020-01-02T03:04:05.678Z" {
+		t.Fatalf("initial value time: %s", pk.Payload)
+	}
+
+	hot := time.Date(2021, 6, 7, 8, 9, 10, 123e6, time.UTC)
+	if err := sim.SetTimed("System1:Pump101.speed", oahost.Value{Kind: oahost.KindFloat, Float: 2}, hot); err != nil {
+		t.Fatal(err)
+	}
+	pk, ok = a.NextOn(exact, 3*time.Second)
+	if !ok || payloadTime(pk) != "2021-06-07T08:09:10.123Z" {
+		t.Fatalf("hotlink time: %s", pk.Payload)
+	}
+
+	// A later subscriber of the same element gets the cached value with its
+	// source time.
+	b, _ := dialRaw(t, env.port, rawConnect{ClientID: "st-b", Version: 5, Clean: true})
+	defer b.Close()
+	b.Subscribe(sub(exact, 0))
+	pk, ok = b.NextOn(exact, 3*time.Second)
+	if !ok || payloadTime(pk) != "2021-06-07T08:09:10.123Z" {
+		t.Fatalf("replayed time: %s", pk.Payload)
+	}
+
+	// Wildcard subscriptions (dpQueryConnectSingle) use the _stime column.
+	wild := time.Date(2022, 3, 4, 5, 6, 7, 890e6, time.UTC)
+	if err := sim.SetTimed("System1:Pump1.count", oahost.Value{Kind: oahost.KindInt, Int: 5}, wild); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		pk, ok = a.NextOn("winccoa/systems/System1/tags/Pump1/count", time.Until(deadline))
+		if !ok {
+			t.Fatal("wildcard hotlink missing")
+		}
+		if payloadValue(t, pk) == float64(5) {
+			break
+		}
+	}
+	if payloadTime(pk) != "2022-03-04T05:06:07.890Z" {
+		t.Fatalf("wildcard time: %s", pk.Payload)
+	}
+}
+
 // Host, native and manager counters are retained $SYS topics, not log lines.
 func TestNativeSysTopics(t *testing.T) {
 	sim, client := newSim(0)
