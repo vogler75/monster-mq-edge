@@ -198,8 +198,13 @@ func build(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus, opts Optio
 		_ = storage.Close()
 		return nil, fmt.Errorf("store type WINCCOA (Config/Session/RetainedStoreType) needs the WinCC OA manager (WCCOAmmq) with WinCCOaNative enabled")
 	}
+	// oaStoreSystem is the local WinCC OA system name when the retained
+	// store is WINCCOA, for PeerLink's oaRetained decision; it does not
+	// depend on the native namespace being on.
+	var oaStoreSystem string
 	if nativeOn && cfg.UsesWinCCOaStores() {
-		if err := useOAStores(ctx, cfg, storage, oahost.API{C: opts.OA}, names.Root, logger); err != nil {
+		var err error
+		if oaStoreSystem, err = useOAStores(ctx, cfg, storage, oahost.API{C: opts.OA}, names.Root, logger); err != nil {
 			_ = storage.Close()
 			return nil, err
 		}
@@ -404,8 +409,13 @@ func build(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus, opts Optio
 			},
 			Logger: logger,
 		}
+		if oaStoreSystem != "" {
+			deps.OASystem = func() string { return oaStoreSystem }
+		}
 		if native != nil {
-			deps.OASystem = native.LocalSystem
+			if deps.OASystem == nil {
+				deps.OASystem = native.LocalSystem
+			}
 			peerStatus = make(chan struct{}, 1)
 			deps.OnStateChange = func() {
 				select {
@@ -657,26 +667,28 @@ func configureVolatileStores(ctx context.Context, cfg *config.Config, storage *s
 }
 
 // useOAStores replaces the selected stores with WinCC OA datapoint stores.
+// With a WINCCOA retained store it returns the local WinCC OA system name.
 // The datapoint types are checked and every record is loaded here, so a
 // missing DPT or an unreachable OA stops startup instead of running with
 // an incompatible or empty configuration.
-func useOAStores(ctx context.Context, cfg *config.Config, storage *stores.Storage, api oahost.API, nativeRoot string, logger *slog.Logger) error {
+func useOAStores(ctx context.Context, cfg *config.Config, storage *stores.Storage, api oahost.API, nativeRoot string, logger *slog.Logger) (string, error) {
 	needCfg := cfg.ConfigStore() == config.StoreWinCCOA
 	needSes := cfg.SessionStore() == config.StoreWinCCOA
 	needRet := cfg.RetainedStore() == config.StoreWinCCOA
 	needUsr := cfg.UserStore() == config.StoreWinCCOA
 	if err := oastore.EnsureTypes(ctx, api, needCfg, needSes, needRet, needUsr); err != nil {
-		return fmt.Errorf("winccoa stores: %w", err)
+		return "", fmt.Errorf("winccoa stores: %w", err)
 	}
+	var sys string
 	st := oastore.New(api, 10*time.Second, logger)
 	if needCfg {
 		if err := st.Device.Load(ctx); err != nil {
-			return fmt.Errorf("winccoa stores: %w", err)
+			return "", fmt.Errorf("winccoa stores: %w", err)
 		}
 	}
 	if needSes {
 		if err := st.Sessions.Load(ctx); err != nil {
-			return fmt.Errorf("winccoa stores: %w", err)
+			return "", fmt.Errorf("winccoa stores: %w", err)
 		}
 	}
 	if needCfg {
@@ -691,18 +703,23 @@ func useOAStores(ctx context.Context, cfg *config.Config, storage *stores.Storag
 		// The native namespace (status topics) never gets datapoints.
 		st.Retained.KeepInMemory(nativeRoot)
 		if err := st.Retained.Load(ctx); err != nil {
-			return fmt.Errorf("winccoa stores: %w", err)
+			return "", fmt.Errorf("winccoa stores: %w", err)
 		}
 		storage.Retained = st.Retained
+		info, err := api.SysInfo(ctx)
+		if err != nil {
+			return "", fmt.Errorf("winccoa stores: local system: %w", err)
+		}
+		sys = info.LocalSystem
 	}
 	if needUsr {
 		if err := st.Users.Load(ctx); err != nil {
-			return fmt.Errorf("winccoa stores: %w", err)
+			return "", fmt.Errorf("winccoa stores: %w", err)
 		}
 		storage.Users = st.Users
 	}
-	logger.Info("winccoa datapoint stores active", "config", needCfg, "sessions", needSes, "retained", needRet, "users", needUsr)
-	return nil
+	logger.Info("winccoa datapoint stores active", "config", needCfg, "sessions", needSes, "retained", needRet, "users", needUsr, "system", sys)
+	return sys, nil
 }
 
 func appendStorageCloser(storage *stores.Storage, closeFn func() error) {

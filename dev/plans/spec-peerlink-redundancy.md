@@ -1069,7 +1069,7 @@ The status is the retained JSON on `<Root>/<Systems>/<sys>` and `<Root>`, QoS 1;
 
 ### 14.4 `oaSystem` and `oaRetained`
 
-- `oaSystem` is the local WinCC OA system name, sent in HELLO and HELLO_OK only when embedded with native mode.
+- `oaSystem` is the local WinCC OA system name, sent in HELLO and HELLO_OK only when embedded with native mode. It comes from `SysInfo` at store setup when `RetainedStoreType` is WINCCOA (also with `WinCCOaNative.Namespace` off), else from the native service.
 - `oaRetained` (3.9): no snapshot on that link; retained replicas from that source only update the cache (`ApplyCached`); shown per link in the status.
 - Retained capture is not serialised for the WINCCOA store class.
 - Deployment rule: two independent WinCC OA projects linked by PeerLink need different system names, or they are taken for one system and forwarded retained values are not stored.
