@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -265,6 +266,25 @@ func (pk *Packet) Copy(allowTransfer bool) Packet {
 	}
 
 	return p
+}
+
+// SubscriptionIdentifiers returns the sorted, non-zero subscription identifiers
+// to send with a PUBLISH matching this subscription: the merged Identifiers of
+// all of a client's matching filters, or the subscription's own Identifier when
+// it was not merged, e.g. when sending retained messages on subscribe.
+func (s Subscription) SubscriptionIdentifiers() []int {
+	var ids []int
+	if len(s.Identifiers) > 0 {
+		for _, id := range s.Identifiers {
+			if id > 0 {
+				ids = append(ids, id)
+			}
+		}
+		sort.Ints(ids)
+	} else if s.Identifier > 0 {
+		ids = []int{s.Identifier}
+	}
+	return ids
 }
 
 // Merge merges a new subscription with a base subscription, preserving the highest

@@ -946,11 +946,7 @@ func (s *SessionStore) IterateSubscriptions(ctx context.Context, yield func(stor
 		if err := cur.Decode(&doc); err != nil {
 			return err
 		}
-		sub := stores.MqttSubscription{
-			ClientID: getStr(doc, "client_id"), TopicFilter: getStr(doc, "topic"),
-			QoS: byte(getInt(doc, "qos")),
-		}
-		if !yield(sub) {
+		if !yield(docToSubscription(doc)) {
 			return nil
 		}
 	}
@@ -969,15 +965,20 @@ func (s *SessionStore) GetSubscriptionsForClient(ctx context.Context, clientID s
 		if err := cur.Decode(&doc); err != nil {
 			return nil, err
 		}
-		out = append(out, stores.MqttSubscription{
-			ClientID: getStr(doc, "client_id"), TopicFilter: getStr(doc, "topic"),
-			QoS:               byte(getInt(doc, "qos")),
-			NoLocal:           getBool(doc, "no_local"),
-			RetainAsPublished: getBool(doc, "retain_as_published"),
-			RetainHandling:    byte(getInt(doc, "retain_handling")),
-		})
+		out = append(out, docToSubscription(doc))
 	}
 	return out, cur.Err()
+}
+
+func docToSubscription(doc bson.M) stores.MqttSubscription {
+	return stores.MqttSubscription{
+		ClientID: getStr(doc, "client_id"), TopicFilter: getStr(doc, "topic"),
+		QoS:               byte(getInt(doc, "qos")),
+		NoLocal:           getBool(doc, "no_local"),
+		RetainAsPublished: getBool(doc, "retain_as_published"),
+		RetainHandling:    byte(getInt(doc, "retain_handling")),
+		SubscriptionID:    getInt(doc, "subscription_id"),
+	}
 }
 
 func (s *SessionStore) AddSubscriptions(ctx context.Context, subs []stores.MqttSubscription) error {
@@ -993,6 +994,7 @@ func (s *SessionStore) AddSubscriptions(ctx context.Context, subs []stores.MqttS
 				"qos": int(sub.QoS), "wildcard": strings.ContainsAny(sub.TopicFilter, "+#"),
 				"no_local": sub.NoLocal, "retain_handling": int(sub.RetainHandling),
 				"retain_as_published": sub.RetainAsPublished,
+				"subscription_id":     sub.SubscriptionID,
 			}).SetUpsert(true))
 	}
 	_, err := s.subsColl().BulkWrite(ctx, models)

@@ -46,6 +46,7 @@ func (s *SessionStore) EnsureTable(ctx context.Context) error {
             no_local INTEGER DEFAULT 0,
             retain_handling INTEGER DEFAULT 0,
             retain_as_published INTEGER DEFAULT 0,
+            subscription_id INTEGER DEFAULT 0,
             PRIMARY KEY (client_id, topic)
         )`,
 		`CREATE INDEX IF NOT EXISTS ` + subscriptionsTable + `_topic_idx ON ` + subscriptionsTable + ` (topic)`,
@@ -53,6 +54,16 @@ func (s *SessionStore) EnsureTable(ctx context.Context) error {
 	}
 	for _, q := range stmts {
 		if _, err := s.db.Exec(q); err != nil {
+			return err
+		}
+	}
+	// Columns added after the first release; CREATE TABLE IF NOT EXISTS
+	// leaves tables of older databases untouched.
+	for _, col := range []string{
+		`retain_as_published INTEGER DEFAULT 0`,
+		`subscription_id INTEGER DEFAULT 0`,
+	} {
+		if _, err := s.db.Exec(`ALTER TABLE ` + subscriptionsTable + ` ADD COLUMN ` + col); err != nil && !isDuplicateColumnErr(err) {
 			return err
 		}
 	}
@@ -197,20 +208,20 @@ func (s *SessionStore) IterateSessions(ctx context.Context, yield func(stores.Se
 
 func (s *SessionStore) IterateSubscriptions(ctx context.Context, yield func(stores.MqttSubscription) bool) error {
 	rows, err := s.db.Conn().QueryContext(ctx,
-		`SELECT client_id, topic, qos, no_local, retain_handling, retain_as_published FROM `+subscriptionsTable)
+		`SELECT client_id, topic, qos, no_local, retain_handling, retain_as_published, subscription_id FROM `+subscriptionsTable)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var (
-			sub      stores.MqttSubscription
-			qos      int
-			noLocal  int
-			rh       int
-			rap      int
+			sub     stores.MqttSubscription
+			qos     int
+			noLocal int
+			rh      int
+			rap     int
 		)
-		if err := rows.Scan(&sub.ClientID, &sub.TopicFilter, &qos, &noLocal, &rh, &rap); err != nil {
+		if err := rows.Scan(&sub.ClientID, &sub.TopicFilter, &qos, &noLocal, &rh, &rap, &sub.SubscriptionID); err != nil {
 			return err
 		}
 		sub.QoS = byte(qos)
@@ -226,7 +237,7 @@ func (s *SessionStore) IterateSubscriptions(ctx context.Context, yield func(stor
 
 func (s *SessionStore) GetSubscriptionsForClient(ctx context.Context, clientID string) ([]stores.MqttSubscription, error) {
 	rows, err := s.db.Conn().QueryContext(ctx,
-		`SELECT client_id, topic, qos, no_local, retain_handling, retain_as_published FROM `+subscriptionsTable+` WHERE client_id = ?`, clientID)
+		`SELECT client_id, topic, qos, no_local, retain_handling, retain_as_published, subscription_id FROM `+subscriptionsTable+` WHERE client_id = ?`, clientID)
 	if err != nil {
 		return nil, err
 	}
@@ -240,7 +251,7 @@ func (s *SessionStore) GetSubscriptionsForClient(ctx context.Context, clientID s
 			rh  int
 			rap int
 		)
-		if err := rows.Scan(&sub.ClientID, &sub.TopicFilter, &qos, &nl, &rh, &rap); err != nil {
+		if err := rows.Scan(&sub.ClientID, &sub.TopicFilter, &qos, &nl, &rh, &rap, &sub.SubscriptionID); err != nil {
 			return nil, err
 		}
 		sub.QoS = byte(qos)
@@ -256,14 +267,15 @@ func (s *SessionStore) AddSubscriptions(ctx context.Context, subs []stores.MqttS
 	if len(subs) == 0 {
 		return nil
 	}
-	q := `INSERT INTO ` + subscriptionsTable + ` (client_id, topic, qos, wildcard, no_local, retain_handling, retain_as_published)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
+	q := `INSERT INTO ` + subscriptionsTable + ` (client_id, topic, qos, wildcard, no_local, retain_handling, retain_as_published, subscription_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT (client_id, topic) DO UPDATE SET
             qos = excluded.qos,
             wildcard = excluded.wildcard,
             no_local = excluded.no_local,
             retain_handling = excluded.retain_handling,
-            retain_as_published = excluded.retain_as_published`
+            retain_as_published = excluded.retain_as_published,
+            subscription_id = excluded.subscription_id`
 	s.db.Lock()
 	defer s.db.Unlock()
 	tx, err := s.db.Conn().BeginTx(ctx, nil)
@@ -286,7 +298,7 @@ func (s *SessionStore) AddSubscriptions(ctx context.Context, subs []stores.MqttS
 		if sub.RetainAsPublished {
 			rap = 1
 		}
-		if _, err := stmt.ExecContext(ctx, sub.ClientID, sub.TopicFilter, int(sub.QoS), wildcard, nl, int(sub.RetainHandling), rap); err != nil {
+		if _, err := stmt.ExecContext(ctx, sub.ClientID, sub.TopicFilter, int(sub.QoS), wildcard, nl, int(sub.RetainHandling), rap, sub.SubscriptionID); err != nil {
 			_ = tx.Rollback()
 			return err
 		}

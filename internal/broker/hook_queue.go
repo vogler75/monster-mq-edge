@@ -330,6 +330,7 @@ func (h *QueueHook) OnSessionEstablished(cl *mqtt.Client, _ packets.Packet) {
 				Payload:   m.Payload,
 				Origin:    cl.ID,
 			}
+			pk.Properties.SubscriptionIdentifier = h.subscriptionIdentifiers(cl, m.TopicName)
 
 			if m.QoS == 0 {
 				if err := cl.WritePacket(pk); err != nil {
@@ -368,6 +369,20 @@ func (h *QueueHook) OnSessionEstablished(cl *mqtt.Client, _ packets.Packet) {
 			}
 		}
 	}
+}
+
+// subscriptionIdentifiers returns the MQTT v5 subscription identifiers of the
+// client's subscriptions matching topicName, which a replayed queued message
+// must carry like a live one [MQTT-3.3.4-3].
+func (h *QueueHook) subscriptionIdentifiers(cl *mqtt.Client, topicName string) []int {
+	if h.server == nil || cl.Properties.ProtocolVersion < 5 {
+		return nil
+	}
+	sub, ok := h.server.Topics.Subscribers(topicName).Subscriptions[cl.ID]
+	if !ok {
+		return nil
+	}
+	return sub.SubscriptionIdentifiers()
 }
 
 func (h *QueueHook) recordPendingAck(clientID string, packetID uint16, messageUUID string) {

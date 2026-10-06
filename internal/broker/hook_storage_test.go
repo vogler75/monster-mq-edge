@@ -509,3 +509,43 @@ func TestStorageHookFailedFlushDoesNotOverwriteLocal(t *testing.T) {
 		t.Fatalf("x = %+v, want the local value", m)
 	}
 }
+
+// TestStorageHookPersistsSubscriptionIdentifier covers #17: the MQTT v5
+// subscription identifier must survive the store round trip so a resumed
+// persistent session still gets it on delivered PUBLISH packets.
+func TestStorageHookPersistsSubscriptionIdentifier(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	db, err := storesqlite.OpenMemory("hookstorage-" + t.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	ss := storesqlite.NewSessionStore(db)
+	ctx := context.Background()
+	if err := ss.EnsureTable(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := ss.SetClient(ctx, stores.SessionInfo{ClientID: "c1", NodeID: "n1", CleanSession: false}); err != nil {
+		t.Fatal(err)
+	}
+	h := NewStorageHook(&stores.Storage{Sessions: ss, Subscriptions: ss}, pubsub.NewBus(), nil, nil, "n1", logger, nil, true, nil)
+
+	cl := &mqtt.Client{ID: "c1"}
+	pk := packets.Packet{Filters: packets.Subscriptions{
+		{Filter: "a/#", Qos: 1, Identifier: 42},
+		{Filter: "b", Qos: 0},
+	}}
+	h.OnSubscribed(cl, pk, []byte{1, 0})
+
+	_, subs, _, err := h.StoredClientByID("c1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]int{}
+	for _, s := range subs {
+		got[s.Filter] = s.Identifier
+	}
+	if len(got) != 2 || got["a/#"] != 42 || got["b"] != 0 {
+		t.Fatalf("restored identifiers = %v, want a/#:42 b:0", got)
+	}
+}

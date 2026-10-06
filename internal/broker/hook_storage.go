@@ -292,6 +292,7 @@ func (h *StorageHook) OnSubscribed(cl *mqtt.Client, pk packets.Packet, reasonCod
 			NoLocal:           f.NoLocal,
 			RetainAsPublished: f.RetainAsPublished,
 			RetainHandling:    f.RetainHandling,
+			SubscriptionID:    f.Identifier,
 		})
 		if h.subs != nil {
 			h.subs.Subscribe(cl.ID, f.Filter, grantedQoS)

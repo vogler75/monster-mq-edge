@@ -437,3 +437,79 @@ func TestMessageArchivePayloadFormats(t *testing.T) {
 		t.Fatalf("default json/valid payload = %q, want %q", got, `{"value":42}`)
 	}
 }
+
+func TestSessionStoreSubscriptionIDRoundTrip(t *testing.T) {
+	db := tempDB(t)
+	ss := NewSessionStore(db)
+	ctx := context.Background()
+	if err := ss.EnsureTable(ctx); err != nil {
+		t.Fatal(err)
+	}
+	sub := stores.MqttSubscription{ClientID: "c1", TopicFilter: "a/#", QoS: 1, RetainAsPublished: true, SubscriptionID: 42}
+	if err := ss.AddSubscriptions(ctx, []stores.MqttSubscription{sub}); err != nil {
+		t.Fatal(err)
+	}
+	subs, err := ss.GetSubscriptionsForClient(ctx, "c1")
+	if err != nil || len(subs) != 1 || subs[0] != sub {
+		t.Fatalf("subs=%+v err=%v", subs, err)
+	}
+
+	// Re-subscribing to the same filter replaces the identifier.
+	sub.SubscriptionID = 7
+	if err := ss.AddSubscriptions(ctx, []stores.MqttSubscription{sub}); err != nil {
+		t.Fatal(err)
+	}
+	var iterated []stores.MqttSubscription
+	if err := ss.IterateSubscriptions(ctx, func(s stores.MqttSubscription) bool {
+		iterated = append(iterated, s)
+		return true
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(iterated) != 1 || iterated[0] != sub {
+		t.Fatalf("iterated=%+v", iterated)
+	}
+}
+
+func TestSessionStoreMigrationAddsSubscriptionColumns(t *testing.T) {
+	db := tempDB(t)
+	ctx := context.Background()
+	// Layout from before retain_as_published and subscription_id existed.
+	if _, err := db.Exec(`CREATE TABLE subscriptions (
+        client_id TEXT,
+        topic TEXT,
+        qos INTEGER,
+        wildcard BOOLEAN,
+        no_local INTEGER DEFAULT 0,
+        retain_handling INTEGER DEFAULT 0,
+        PRIMARY KEY (client_id, topic)
+    )`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO subscriptions (client_id, topic, qos, wildcard, no_local, retain_handling) VALUES ('old', 'x/+', 2, 1, 1, 1)`); err != nil {
+		t.Fatal(err)
+	}
+	ss := NewSessionStore(db)
+	if err := ss.EnsureTable(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// EnsureTable runs on every start; the second run must not fail.
+	if err := ss.EnsureTable(ctx); err != nil {
+		t.Fatal(err)
+	}
+	subs, err := ss.GetSubscriptionsForClient(ctx, "old")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := stores.MqttSubscription{ClientID: "old", TopicFilter: "x/+", QoS: 2, NoLocal: true, RetainHandling: 1}
+	if len(subs) != 1 || subs[0] != want {
+		t.Fatalf("migrated subs=%+v, want %+v", subs, want)
+	}
+	if err := ss.AddSubscriptions(ctx, []stores.MqttSubscription{{ClientID: "new", TopicFilter: "y", QoS: 1, SubscriptionID: 9}}); err != nil {
+		t.Fatal(err)
+	}
+	subs, err = ss.GetSubscriptionsForClient(ctx, "new")
+	if err != nil || len(subs) != 1 || subs[0].SubscriptionID != 9 {
+		t.Fatalf("subs=%+v err=%v", subs, err)
+	}
+}

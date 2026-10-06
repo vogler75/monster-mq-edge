@@ -12,7 +12,6 @@ import (
 	"net"
 	"os"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1255,12 +1254,8 @@ func (s *Server) publishToClient(cl *Client, sub packets.Subscription, pk packet
 		out.FixedHeader.Retain = false // [MQTT-3.3.1-12]
 	}
 
-	if len(sub.Identifiers) > 0 { // [MQTT-3.3.4-3]
-		out.Properties.SubscriptionIdentifier = []int{}
-		for _, id := range sub.Identifiers {
-			out.Properties.SubscriptionIdentifier = append(out.Properties.SubscriptionIdentifier, id) // [MQTT-3.3.4-4] ![MQTT-3.3.4-5]
-		}
-		sort.Ints(out.Properties.SubscriptionIdentifier)
+	if ids := sub.SubscriptionIdentifiers(); len(ids) > 0 { // [MQTT-3.3.4-3]
+		out.Properties.SubscriptionIdentifier = ids // [MQTT-3.3.4-4] ![MQTT-3.3.4-5]
 	}
 
 	if out.FixedHeader.Qos > sub.Qos {

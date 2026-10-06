@@ -664,8 +664,13 @@ func (s *SessionStore) EnsureTable(ctx context.Context) error {
             no_local INTEGER DEFAULT 0,
             retain_handling INTEGER DEFAULT 0,
             retain_as_published INTEGER DEFAULT 0,
+            subscription_id INTEGER DEFAULT 0,
             PRIMARY KEY (client_id, topic)
         )`,
+		// Columns added after the first release; CREATE TABLE IF NOT EXISTS
+		// leaves tables of older databases untouched.
+		`ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS retain_as_published INTEGER DEFAULT 0`,
+		`ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS subscription_id INTEGER DEFAULT 0`,
 		`CREATE INDEX IF NOT EXISTS subscriptions_topic_idx ON subscriptions (topic)`,
 		`CREATE INDEX IF NOT EXISTS subscriptions_wildcard_idx ON subscriptions (wildcard) WHERE wildcard = true`,
 	} {
@@ -809,7 +814,7 @@ func (s *SessionStore) IterateSessions(ctx context.Context, yield func(stores.Se
 }
 
 func (s *SessionStore) IterateSubscriptions(ctx context.Context, yield func(stores.MqttSubscription) bool) error {
-	rows, err := s.db.pool.Query(ctx, `SELECT client_id, topic, qos, no_local, retain_handling, retain_as_published FROM subscriptions`)
+	rows, err := s.db.pool.Query(ctx, `SELECT client_id, topic, qos, no_local, retain_handling, retain_as_published, subscription_id FROM subscriptions`)
 	if err != nil {
 		return err
 	}
@@ -822,7 +827,7 @@ func (s *SessionStore) IterateSubscriptions(ctx context.Context, yield func(stor
 			rh  int
 			rap int
 		)
-		if err := rows.Scan(&sub.ClientID, &sub.TopicFilter, &qos, &nl, &rh, &rap); err != nil {
+		if err := rows.Scan(&sub.ClientID, &sub.TopicFilter, &qos, &nl, &rh, &rap, &sub.SubscriptionID); err != nil {
 			return err
 		}
 		sub.QoS = byte(qos)
@@ -838,7 +843,7 @@ func (s *SessionStore) IterateSubscriptions(ctx context.Context, yield func(stor
 
 func (s *SessionStore) GetSubscriptionsForClient(ctx context.Context, clientID string) ([]stores.MqttSubscription, error) {
 	rows, err := s.db.pool.Query(ctx,
-		`SELECT client_id, topic, qos, no_local, retain_handling, retain_as_published FROM subscriptions WHERE client_id=$1`, clientID)
+		`SELECT client_id, topic, qos, no_local, retain_handling, retain_as_published, subscription_id FROM subscriptions WHERE client_id=$1`, clientID)
 	if err != nil {
 		return nil, err
 	}
@@ -852,7 +857,7 @@ func (s *SessionStore) GetSubscriptionsForClient(ctx context.Context, clientID s
 			rh  int
 			rap int
 		)
-		if err := rows.Scan(&sub.ClientID, &sub.TopicFilter, &qos, &nl, &rh, &rap); err != nil {
+		if err := rows.Scan(&sub.ClientID, &sub.TopicFilter, &qos, &nl, &rh, &rap, &sub.SubscriptionID); err != nil {
 			return nil, err
 		}
 		sub.QoS = byte(qos)
@@ -883,13 +888,14 @@ func (s *SessionStore) AddSubscriptions(ctx context.Context, subs []stores.MqttS
 		}
 		wildcard := strings.ContainsAny(sub.TopicFilter, "+#")
 		if _, err := tx.Exec(ctx,
-			`INSERT INTO subscriptions (client_id, topic, qos, wildcard, no_local, retain_handling, retain_as_published)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)
+			`INSERT INTO subscriptions (client_id, topic, qos, wildcard, no_local, retain_handling, retain_as_published, subscription_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
              ON CONFLICT (client_id, topic) DO UPDATE SET
                 qos = EXCLUDED.qos, wildcard = EXCLUDED.wildcard,
                 no_local = EXCLUDED.no_local, retain_handling = EXCLUDED.retain_handling,
-                retain_as_published = EXCLUDED.retain_as_published`,
-			sub.ClientID, sub.TopicFilter, int(sub.QoS), wildcard, nl, int(sub.RetainHandling), rap); err != nil {
+                retain_as_published = EXCLUDED.retain_as_published,
+                subscription_id = EXCLUDED.subscription_id`,
+			sub.ClientID, sub.TopicFilter, int(sub.QoS), wildcard, nl, int(sub.RetainHandling), rap, sub.SubscriptionID); err != nil {
 			_ = tx.Rollback(ctx)
 			return err
 		}
