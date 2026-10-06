@@ -36,7 +36,7 @@ violates them needs explicit user sign-off — do not silently drift.
 
 The schema (types, field names, argument names, enum values, nullability)
 must remain a **strict subset** of the Java broker's schema at
-`../monster-mq/broker/src/main/resources/schema-*.graphqls`. The same
+`../main/broker/src/main/resources/schema-*.graphqls`. The same
 external dashboard binary is supposed to work against either backend.
 
 **CRITICAL: AVOID CHANGING THE GRAPHQL INTERFACE**:
@@ -70,7 +70,7 @@ shape** as the Java broker. Same table names, same column names, same
 types. The goal is that the same physical database can be opened by
 either broker without migrations.
 
-Reference (in the sibling repo `../monster-mq/`):
+Reference (in the sibling checkout `../main/`):
 
 - `broker/src/main/kotlin/stores/dbs/sqlite/*.kt` — SQLite DDL is
   authoritative.
@@ -169,7 +169,7 @@ The schema in `yaml-json-schema.json` validates `config.yaml` and
 The Java broker lives at:
 
 - **GitHub**: https://github.com/vogler75/monster-mq
-- **Local sibling**: `../monster-mq/` (when checked out alongside this repo)
+- **Local sibling**: `../main/` (the `monster-mq` repo, checked out next to this one)
 
 Useful pointers in that tree:
 
