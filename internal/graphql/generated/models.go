@@ -1084,30 +1084,32 @@ type WinCCUaClientResult struct {
 }
 
 type WinCCUaConnectionConfig struct {
-	DataAccessMode    WinCCUaDataAccessMode   `json:"dataAccessMode"`
-	GraphqlEndpoint   *string                 `json:"graphqlEndpoint,omitempty"`
-	WebsocketEndpoint *string                 `json:"websocketEndpoint,omitempty"`
-	Username          *string                 `json:"username,omitempty"`
-	Password          *string                 `json:"password,omitempty"`
-	PipePath          *string                 `json:"pipePath,omitempty"`
-	ReconnectDelay    int64                   `json:"reconnectDelay"`
-	ConnectionTimeout int64                   `json:"connectionTimeout"`
-	MessageFormat     WinCCUaMessageFormat    `json:"messageFormat"`
-	TransformConfig   *WinCCUaTransformConfig `json:"transformConfig"`
-	Addresses         []*WinCCUaAddress       `json:"addresses"`
+	DataAccessMode       WinCCUaDataAccessMode   `json:"dataAccessMode"`
+	GraphqlEndpoint      *string                 `json:"graphqlEndpoint,omitempty"`
+	WebsocketEndpoint    *string                 `json:"websocketEndpoint,omitempty"`
+	TrustAllCertificates bool                    `json:"trustAllCertificates"`
+	Username             *string                 `json:"username,omitempty"`
+	Password             *string                 `json:"password,omitempty"`
+	PipePath             *string                 `json:"pipePath,omitempty"`
+	ReconnectDelay       int64                   `json:"reconnectDelay"`
+	ConnectionTimeout    int64                   `json:"connectionTimeout"`
+	MessageFormat        WinCCUaMessageFormat    `json:"messageFormat"`
+	TransformConfig      *WinCCUaTransformConfig `json:"transformConfig"`
+	Addresses            []*WinCCUaAddress       `json:"addresses"`
 }
 
 type WinCCUaConnectionConfigInput struct {
-	DataAccessMode    *WinCCUaDataAccessMode       `json:"dataAccessMode,omitempty"`
-	GraphqlEndpoint   *string                      `json:"graphqlEndpoint,omitempty"`
-	WebsocketEndpoint *string                      `json:"websocketEndpoint,omitempty"`
-	Username          *string                      `json:"username,omitempty"`
-	Password          *string                      `json:"password,omitempty"`
-	PipePath          *string                      `json:"pipePath,omitempty"`
-	ReconnectDelay    *int64                       `json:"reconnectDelay,omitempty"`
-	ConnectionTimeout *int64                       `json:"connectionTimeout,omitempty"`
-	MessageFormat     *string                      `json:"messageFormat,omitempty"`
-	TransformConfig   *WinCCUaTransformConfigInput `json:"transformConfig,omitempty"`
+	DataAccessMode       *WinCCUaDataAccessMode       `json:"dataAccessMode,omitempty"`
+	GraphqlEndpoint      *string                      `json:"graphqlEndpoint,omitempty"`
+	WebsocketEndpoint    *string                      `json:"websocketEndpoint,omitempty"`
+	TrustAllCertificates *bool                        `json:"trustAllCertificates,omitempty"`
+	Username             *string                      `json:"username,omitempty"`
+	Password             *string                      `json:"password,omitempty"`
+	PipePath             *string                      `json:"pipePath,omitempty"`
+	ReconnectDelay       *int64                       `json:"reconnectDelay,omitempty"`
+	ConnectionTimeout    *int64                       `json:"connectionTimeout,omitempty"`
+	MessageFormat        *string                      `json:"messageFormat,omitempty"`
+	TransformConfig      *WinCCUaTransformConfigInput `json:"transformConfig,omitempty"`
 }
 
 type WinCCUaDeviceMutations struct {

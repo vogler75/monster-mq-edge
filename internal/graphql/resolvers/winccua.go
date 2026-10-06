@@ -346,10 +346,11 @@ func (r *Resolver) deviceToWinCCUaClient(d stores.DeviceConfig) *generated.WinCC
 
 func winCCUaConfigToGraphQL(c *winccua.ConnectionConfig) *generated.WinCCUaConnectionConfig {
 	out := &generated.WinCCUaConnectionConfig{
-		DataAccessMode:    generated.WinCCUaDataAccessMode(c.DataAccessMode),
-		ReconnectDelay:    c.ReconnectDelay,
-		ConnectionTimeout: c.ConnectionTimeout,
-		MessageFormat:     generated.WinCCUaMessageFormat(c.MessageFormat),
+		DataAccessMode:       generated.WinCCUaDataAccessMode(c.DataAccessMode),
+		TrustAllCertificates: c.TrustAllCertificates,
+		ReconnectDelay:       c.ReconnectDelay,
+		ConnectionTimeout:    c.ConnectionTimeout,
+		MessageFormat:        generated.WinCCUaMessageFormat(c.MessageFormat),
 		TransformConfig: &generated.WinCCUaTransformConfig{
 			ConvertDotToSlash:        c.TransformConfig.ConvertDotToSlash,
 			ConvertUnderscoreToSlash: c.TransformConfig.ConvertUnderscoreToSlash,
@@ -431,6 +432,9 @@ func winCCUaInputToConfig(in *generated.WinCCUaConnectionConfigInput, prev *winc
 	}
 	if in.WebsocketEndpoint != nil {
 		out.WebsocketEndpoint = *in.WebsocketEndpoint
+	}
+	if in.TrustAllCertificates != nil {
+		out.TrustAllCertificates = *in.TrustAllCertificates
 	}
 	if in.Username != nil {
 		out.Username = *in.Username

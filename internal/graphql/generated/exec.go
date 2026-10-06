@@ -1706,6 +1706,7 @@ type WinCCUaConnectionConfig {
     dataAccessMode: WinCCUaDataAccessMode!
     graphqlEndpoint: String
     websocketEndpoint: String
+    trustAllCertificates: Boolean!
     username: String
     password: String
     pipePath: String
@@ -1750,6 +1751,7 @@ input WinCCUaConnectionConfigInput {
     dataAccessMode: WinCCUaDataAccessMode = GRAPHQL
     graphqlEndpoint: String
     websocketEndpoint: String
+    trustAllCertificates: Boolean = false
     username: String
     password: String
     pipePath: String
@@ -3367,6 +3369,8 @@ func (ec *executionContext) childFields_WinCCUaConnectionConfig(ctx context.Cont
 		return ec.fieldContext_WinCCUaConnectionConfig_graphqlEndpoint(ctx, field)
 	case "websocketEndpoint":
 		return ec.fieldContext_WinCCUaConnectionConfig_websocketEndpoint(ctx, field)
+	case "trustAllCertificates":
+		return ec.fieldContext_WinCCUaConnectionConfig_trustAllCertificates(ctx, field)
 	case "username":
 		return ec.fieldContext_WinCCUaConnectionConfig_username(ctx, field)
 	case "password":
@@ -23124,6 +23128,29 @@ func (ec *executionContext) fieldContext_WinCCUaConnectionConfig_websocketEndpoi
 	return graphql.NewScalarFieldContext("WinCCUaConnectionConfig", field, false, false, errors.New("field of type String does not have child fields"))
 }
 
+func (ec *executionContext) _WinCCUaConnectionConfig_trustAllCertificates(ctx context.Context, field graphql.CollectedField, obj *WinCCUaConnectionConfig) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_WinCCUaConnectionConfig_trustAllCertificates(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.TrustAllCertificates, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_WinCCUaConnectionConfig_trustAllCertificates(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("WinCCUaConnectionConfig", field, false, false, errors.New("field of type Boolean does not have child fields"))
+}
+
 func (ec *executionContext) _WinCCUaConnectionConfig_username(ctx context.Context, field graphql.CollectedField, obj *WinCCUaConnectionConfig) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -27293,6 +27320,9 @@ func (ec *executionContext) unmarshalInputWinCCUaConnectionConfigInput(ctx conte
 	if _, present := asMap["dataAccessMode"]; !present {
 		asMap["dataAccessMode"] = "GRAPHQL"
 	}
+	if _, present := asMap["trustAllCertificates"]; !present {
+		asMap["trustAllCertificates"] = false
+	}
 	if _, present := asMap["reconnectDelay"]; !present {
 		asMap["reconnectDelay"] = 5000
 	}
@@ -27303,7 +27333,7 @@ func (ec *executionContext) unmarshalInputWinCCUaConnectionConfigInput(ctx conte
 		asMap["messageFormat"] = "JSON_ISO"
 	}
 
-	fieldsInOrder := [...]string{"dataAccessMode", "graphqlEndpoint", "websocketEndpoint", "username", "password", "pipePath", "reconnectDelay", "connectionTimeout", "messageFormat", "transformConfig"}
+	fieldsInOrder := [...]string{"dataAccessMode", "graphqlEndpoint", "websocketEndpoint", "trustAllCertificates", "username", "password", "pipePath", "reconnectDelay", "connectionTimeout", "messageFormat", "transformConfig"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -27331,6 +27361,13 @@ func (ec *executionContext) unmarshalInputWinCCUaConnectionConfigInput(ctx conte
 				return it, err
 			}
 			it.WebsocketEndpoint = data
+		case "trustAllCertificates":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("trustAllCertificates"))
+			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.TrustAllCertificates = data
 		case "username":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("username"))
 			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
@@ -36430,6 +36467,11 @@ func (ec *executionContext) _WinCCUaConnectionConfig(ctx context.Context, sel as
 		case "websocketEndpoint":
 			out.Values[i] = ec._WinCCUaConnectionConfig_websocketEndpoint(ctx, field, obj)
 			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		case "trustAllCertificates":
+			out.Values[i] = ec._WinCCUaConnectionConfig_trustAllCertificates(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
 		case "username":

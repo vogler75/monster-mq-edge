@@ -3,6 +3,7 @@ package winccua
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,14 +21,14 @@ import (
 // graphqlConnector is the WebSocket-based transport.
 //
 // Lifecycle (per Start invocation):
-//   1. POST login mutation, capture bearer token.
-//   2. Open ws/wss with the graphql-transport-ws subprotocol.
-//   3. Send connection_init with {"Authorization":"Bearer ..."} payload.
-//   4. After connection_ack, for each address run setupSubscription:
-//      - TAG_VALUES: HTTP browse query → tag list → "subscribe" with that list.
-//      - ACTIVE_ALARMS: "subscribe" directly.
-//   5. Read loop dispatches "next" messages to handleSubscriptionData.
-//   6. On disconnect or error, sleep ReconnectDelay and retry.
+//  1. POST login mutation, capture bearer token.
+//  2. Open ws/wss with the graphql-transport-ws subprotocol.
+//  3. Send connection_init with {"Authorization":"Bearer ..."} payload.
+//  4. After connection_ack, for each address run setupSubscription:
+//     - TAG_VALUES: HTTP browse query → tag list → "subscribe" with that list.
+//     - ACTIVE_ALARMS: "subscribe" directly.
+//  5. Read loop dispatches "next" messages to handleSubscriptionData.
+//  6. On disconnect or error, sleep ReconnectDelay and retry.
 type graphqlConnector struct {
 	name    string
 	cfg     *ConnectionConfig
@@ -40,16 +41,24 @@ type graphqlConnector struct {
 	cancel  context.CancelFunc
 	stopped chan struct{}
 
-	mu           sync.Mutex
-	ws           *websocket.Conn
-	subSeq       int64
+	mu            sync.Mutex
+	ws            *websocket.Conn
+	subSeq        int64
 	subscriptions map[string]Address // subscription id → address
-	authToken    string
+	authToken     string
 
 	httpClient *http.Client
 }
 
 func newGraphQLConnector(name string, cfg *ConnectionConfig, pub *publisher, publish LocalPublisher, logger *slog.Logger) *graphqlConnector {
+	httpClient := &http.Client{
+		Timeout: time.Duration(cfg.ConnectionTimeout) * time.Millisecond,
+	}
+	if tlsCfg := cfg.tlsConfig(); tlsCfg != nil {
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.TLSClientConfig = tlsCfg
+		httpClient.Transport = transport
+	}
 	return &graphqlConnector{
 		name:          name,
 		cfg:           cfg,
@@ -58,10 +67,17 @@ func newGraphQLConnector(name string, cfg *ConnectionConfig, pub *publisher, pub
 		logger:        logger.With("device", name, "transport", "graphql"),
 		subscriptions: map[string]Address{},
 		stopped:       make(chan struct{}),
-		httpClient: &http.Client{
-			Timeout: time.Duration(cfg.ConnectionTimeout) * time.Millisecond,
-		},
+		httpClient:    httpClient,
 	}
+}
+
+// tlsConfig returns an insecure TLS config when TrustAllCertificates is set,
+// otherwise nil (use Go's default verification).
+func (c *ConnectionConfig) tlsConfig() *tls.Config {
+	if !c.TrustAllCertificates {
+		return nil
+	}
+	return &tls.Config{InsecureSkipVerify: true} //nolint:gosec // explicit user opt-in for self-signed test systems
 }
 
 func (g *graphqlConnector) MessagesIn() float64 { return g.metrics.sampleRate() }
@@ -193,6 +209,7 @@ func (g *graphqlConnector) openWebSocket(ctx context.Context) error {
 	dialer := websocket.Dialer{
 		HandshakeTimeout: time.Duration(g.cfg.ConnectionTimeout) * time.Millisecond,
 		Subprotocols:     []string{"graphql-transport-ws"},
+		TLSClientConfig:  g.cfg.tlsConfig(),
 	}
 	headers := http.Header{}
 	conn, _, err := dialer.DialContext(ctx, u.String(), headers)

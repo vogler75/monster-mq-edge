@@ -43,6 +43,7 @@ type WinCCUaConnectionConfig {
     dataAccessMode: WinCCUaDataAccessMode!
     graphqlEndpoint: String
     websocketEndpoint: String
+    trustAllCertificates: Boolean!
     username: String
     password: String
     pipePath: String
@@ -87,6 +88,7 @@ input WinCCUaConnectionConfigInput {
     dataAccessMode: WinCCUaDataAccessMode = GRAPHQL
     graphqlEndpoint: String
     websocketEndpoint: String
+    trustAllCertificates: Boolean = false
     username: String
     password: String
     pipePath: String

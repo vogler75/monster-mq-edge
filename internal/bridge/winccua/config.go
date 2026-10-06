@@ -96,11 +96,11 @@ func (t TransformConfig) Validate() []string {
 
 // TransformTagName converts a tag name to the corresponding MQTT topic
 // fragment using the configured rules. Rules apply in this order:
-//   1. trim trailing dots,
-//   2. dot → slash (if enabled),
-//   3. underscore → slash (if enabled),
-//   4. regex replace (if pattern set),
-//   5. trim leading/trailing slashes.
+//  1. trim trailing dots,
+//  2. dot → slash (if enabled),
+//  3. underscore → slash (if enabled),
+//  4. regex replace (if pattern set),
+//  5. trim leading/trailing slashes.
 func (t *TransformConfig) TransformTagName(tagName string) string {
 	r := strings.TrimRight(tagName, ".")
 	if t.ConvertDotToSlash {
@@ -126,17 +126,20 @@ func (t *TransformConfig) TransformTagName(tagName string) string {
 // ConnectionConfig mirrors WinCCUaConnectionConfig — the JSON payload stored
 // in DeviceConfig.Config.
 type ConnectionConfig struct {
-	GraphqlEndpoint   string          `json:"graphqlEndpoint,omitempty"`
-	WebsocketEndpoint string          `json:"websocketEndpoint,omitempty"`
-	Username          string          `json:"username,omitempty"`
-	Password          string          `json:"password,omitempty"`
-	ReconnectDelay    int64           `json:"reconnectDelay,omitempty"`
-	ConnectionTimeout int64           `json:"connectionTimeout,omitempty"`
-	Addresses         []Address       `json:"addresses,omitempty"`
-	TransformConfig   TransformConfig `json:"transformConfig"`
-	MessageFormat     string          `json:"messageFormat,omitempty"`
-	DataAccessMode    string          `json:"dataAccessMode,omitempty"`
-	PipePath          string          `json:"pipePath,omitempty"`
+	GraphqlEndpoint   string `json:"graphqlEndpoint,omitempty"`
+	WebsocketEndpoint string `json:"websocketEndpoint,omitempty"`
+	// TrustAllCertificates disables TLS certificate and hostname
+	// verification for https/wss endpoints (self-signed test systems).
+	TrustAllCertificates bool            `json:"trustAllCertificates"`
+	Username             string          `json:"username,omitempty"`
+	Password             string          `json:"password,omitempty"`
+	ReconnectDelay       int64           `json:"reconnectDelay,omitempty"`
+	ConnectionTimeout    int64           `json:"connectionTimeout,omitempty"`
+	Addresses            []Address       `json:"addresses,omitempty"`
+	TransformConfig      TransformConfig `json:"transformConfig"`
+	MessageFormat        string          `json:"messageFormat,omitempty"`
+	DataAccessMode       string          `json:"dataAccessMode,omitempty"`
+	PipePath             string          `json:"pipePath,omitempty"`
 }
 
 // applyDefaults fills any zero-valued fields with the same defaults the Java
