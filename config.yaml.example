@@ -217,3 +217,4 @@ PeerLink:
       Receive:
         Include: ["#"]
         Exclude: []
+      RedundancyPartner: false           # other host of this node's redundant WinCC OA system (oaRetained)

@@ -511,7 +511,8 @@
             "Include": { "$ref": "#/$defs/TopicFilters", "default": ["#"], "description": "Empty = [\"#\"]." },
             "Exclude": { "$ref": "#/$defs/TopicFilters", "default": [] }
           }
-        }
+        },
+        "RedundancyPartner": { "type": "boolean", "default": false, "description": "The peer is the other host of this node's redundant WinCC OA system. With RetainedStoreType WINCCOA on both sides and the same system name, retained replicas only update the in-memory view (oaRetained); WinCC OA replicates MMQRetained itself." }
       }
     },
     "TopicFilters": {

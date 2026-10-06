@@ -36,14 +36,14 @@ type consumerSlot struct {
 	tlsPeer tlsutil.Peer
 	secrets [][]byte
 
-	mu           sync.Mutex
-	active       *session
-	takeovers    []takeover
-	refused      map[uint64]time.Time
-	remote       string
-	authFailures map[string]uint64
-	warnedRoot   bool
-	warnedClass  bool
+	mu            sync.Mutex
+	active        *session
+	takeovers     []takeover
+	refused       map[uint64]time.Time
+	remote        string
+	authFailures  map[string]uint64
+	warnedRoot    bool
+	warnedPartner bool
 	// logConnected: the log state of this consumer is CONNECTED. Changed only under mu together
 	// with active, so a superseded or failed session never leaves a stale state behind.
 	logConnected bool
@@ -642,12 +642,12 @@ func (m *Manager) servePeer(conn net.Conn, tcp *net.TCPConn, br *bufio.Reader, c
 		return
 	}
 
-	oaRet := oaRetainedFor(m.deps.RetainedClass, m.oaSystem, hello.RetainedClass, hello.OASystem)
+	oaRet, why := oaRetainedFor(slot.peer.RedundancyPartner, m.deps.RetainedClass, m.oaSystem, hello.RetainedClass, hello.OASystem)
 	slot.oaRetained.Store(oaRet)
 	root := m.namespaceRoot()
 	slot.topicRootMismatch.Store(root != "" && hello.TopicRoot != "" && root != hello.TopicRoot)
 	slot.retainedClassMismatch.Store(hello.RetainedClass != m.deps.RetainedClass)
-	m.handshakeWarnings(slot, &hello, root, oaRet)
+	m.handshakeWarnings(slot, &hello, root, oaRet, why)
 
 	sess.snapOK = sess.caps&(wire.CapSnapshotFill|wire.CapResyncNewer) != 0 && m.retained != nil
 	now := time.Now()
@@ -744,23 +744,23 @@ func (m *Manager) refuse(conn net.Conn, hr helloResult, remote, claimed string) 
 	_ = writeRaw(conn, &ga)
 }
 
-func (m *Manager) handshakeWarnings(slot *consumerSlot, h *wire.Hello, root string, oaRet bool) {
+func (m *Manager) handshakeWarnings(slot *consumerSlot, h *wire.Hello, root string, oaRet bool, partnerWhy string) {
 	slot.mu.Lock()
 	warnRoot := slot.topicRootMismatch.Load() && !slot.warnedRoot
 	if warnRoot {
 		slot.warnedRoot = true
 	}
-	warnClass := slot.retainedClassMismatch.Load() && !slot.warnedClass
-	if warnClass {
-		slot.warnedClass = true
+	warnPartner := partnerWhy != "" && !slot.warnedPartner
+	if warnPartner {
+		slot.warnedPartner = true
 	}
 	slot.mu.Unlock()
 	if warnRoot {
 		m.logger.Warn("peerlink: TopicRoot differs from the consumer's", "peer", slot.nodeID, "own", root, "consumer", h.TopicRoot)
 	}
-	if warnClass {
-		m.logger.Warn("peerlink: retained store class differs from the consumer's", "peer", slot.nodeID,
-			"own", m.deps.RetainedClass.String(), "consumer", h.RetainedClass.String())
+	if warnPartner {
+		m.logger.Warn("peerlink: RedundancyPartner set but the link is not oaRetained", "peer", slot.nodeID,
+			"reason", partnerWhy, "own", m.oaSystem, "consumer", h.OASystem)
 	}
 	if oaRet {
 		m.logger.Info("peerlink: retained store replicated by WinCC OA on this link (oaRetained)", "peer", slot.nodeID, "oaSystem", m.oaSystem)

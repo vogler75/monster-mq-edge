@@ -951,6 +951,10 @@ type PeerConfig struct {
 	SharedSecrets []string    `yaml:"SharedSecrets"` // replaces the group secrets for this peer
 	Tls           PeerTLS     `yaml:"Tls"`
 	Receive       PeerReceive `yaml:"Receive"`
+	// RedundancyPartner: the peer is the other half of this node's redundant WinCC OA system.
+	// With RetainedStoreType WINCCOA on both sides, WinCC OA already replicates the retained
+	// datapoints, so replicas from this peer only update the in-memory view (oaRetained).
+	RedundancyPartner bool `yaml:"RedundancyPartner"`
 }
 
 // PeerTLS holds the per-peer TLS overrides.

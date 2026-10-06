@@ -357,6 +357,8 @@ them is also delivered by the others, with the same MQTT semantics. It is
 generic: any two or more brokers can be linked, with or without WinCC OA. For
 WinCC OA redundant pairs see
 [winccoa/README.md](winccoa/README.md#peerlink-for-redundant-pairs).
+The full guide with every configuration key is
+[doc/peerlink.md](doc/peerlink.md).
 
 - **Pull-based, in memory.** Every broker keeps the publishes it accepted in
   an in-memory log (nothing is written to disk). Each peer pulls from that log

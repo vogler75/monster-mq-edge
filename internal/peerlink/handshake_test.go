@@ -375,7 +375,8 @@ func TestAdmission(t *testing.T) {
 }
 
 func TestSnapshotFetchSkippedForOARetained(t *testing.T) {
-	oa := func(_ *config.PeerLinkConfig, d *Deps) {
+	oa := func(c *config.PeerLinkConfig, d *Deps) {
+		c.Peers[0].RedundancyPartner = true
 		d.RetainedClass = wire.RetainedWinCCOA
 		d.OASystem = func() string { return "System1" }
 		d.NamespaceRoot = func() string { return "winccoa" }
@@ -399,21 +400,39 @@ func TestSnapshotFetchSkippedForOARetained(t *testing.T) {
 	}
 }
 
+func TestNoOARetainedWithoutRedundancyPartner(t *testing.T) {
+	a := sourceNode(t, func(_ *config.PeerLinkConfig, d *Deps) {
+		d.RetainedClass = wire.RetainedWinCCOA
+		d.OASystem = func() string { return "System1" }
+	})
+	ok := dialRaw(t, a.addr).hello("node-b", "node-a", func(h *wire.Hello) {
+		h.RetainedClass, h.OASystem = wire.RetainedWinCCOA, "System1"
+	}).(*wire.HelloOK)
+	if ok.Flags&wire.HelloOKSnapshotAvailable == 0 || consumerStatus(a, "node-b").OARetained {
+		t.Fatal("two standalone OA systems treated as one redundant system")
+	}
+}
+
 func TestOARetainedDecision(t *testing.T) {
 	cases := []struct {
+		partner    bool
 		l, r       wire.RetainedClass
 		ls, rs     string
 		oaRetained bool
+		warn       bool
 	}{
-		{wire.RetainedWinCCOA, wire.RetainedWinCCOA, "System1", "System1", true},
-		{wire.RetainedWinCCOA, wire.RetainedWinCCOA, "System1", "System2", false},
-		{wire.RetainedWinCCOA, wire.RetainedWinCCOA, "", "", false},
-		{wire.RetainedWinCCOA, wire.RetainedDB, "System1", "System1", false},
-		{wire.RetainedMemory, wire.RetainedMemory, "System1", "System1", false},
+		{true, wire.RetainedWinCCOA, wire.RetainedWinCCOA, "System1", "System1", true, false},
+		{false, wire.RetainedWinCCOA, wire.RetainedWinCCOA, "System1", "System1", false, false},
+		{true, wire.RetainedWinCCOA, wire.RetainedWinCCOA, "System1", "System2", false, true},
+		{true, wire.RetainedWinCCOA, wire.RetainedWinCCOA, "", "", false, true},
+		{true, wire.RetainedWinCCOA, wire.RetainedDB, "System1", "System1", false, true},
+		{false, wire.RetainedWinCCOA, wire.RetainedDB, "System1", "System1", false, false},
+		{true, wire.RetainedMemory, wire.RetainedMemory, "System1", "System1", false, false},
 	}
 	for i, c := range cases {
-		if got := oaRetainedFor(c.l, c.ls, c.r, c.rs); got != c.oaRetained {
-			t.Errorf("case %d: %v", i, got)
+		got, why := oaRetainedFor(c.partner, c.l, c.ls, c.r, c.rs)
+		if got != c.oaRetained || (why != "") != c.warn {
+			t.Errorf("case %d: %v %q", i, got, why)
 		}
 	}
 }

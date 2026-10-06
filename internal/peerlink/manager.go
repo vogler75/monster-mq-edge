@@ -711,9 +711,19 @@ func (m *Manager) ownCaps(tlsLink bool) uint64 {
 	return caps
 }
 
-// oaRetainedFor computes the per-link oaRetained flag (9.5) from both sides' announcements.
-func oaRetainedFor(local wire.RetainedClass, localSys string, remote wire.RetainedClass, remoteSys string) bool {
-	return local == wire.RetainedWinCCOA && remote == wire.RetainedWinCCOA && localSys != "" && localSys == remoteSys
+// oaRetainedFor computes the per-link oaRetained flag (9.5): the peer is configured as the
+// redundancy partner and both sides announce the WINCCOA retained class of the same OA system.
+// When the partner flag is set on a WINCCOA node but the link does not qualify, why says why.
+func oaRetainedFor(partner bool, local wire.RetainedClass, localSys string, remote wire.RetainedClass, remoteSys string) (ok bool, why string) {
+	switch {
+	case !partner || local != wire.RetainedWinCCOA:
+		return false, ""
+	case remote != wire.RetainedWinCCOA:
+		return false, "peer retained store class is " + remote.String()
+	case localSys == "" || localSys != remoteSys:
+		return false, "WinCC OA systems differ"
+	}
+	return true, ""
 }
 
 // memoryRetained reads the engine's in-memory retained map (RetainedStoreType MEMORY).

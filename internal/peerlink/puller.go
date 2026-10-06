@@ -92,7 +92,7 @@ type puller struct {
 	paced, snapInterrupted, flushErrors, willResent         atomic.Uint64
 	clockSkewMs                                             atomic.Int64
 	rttUs                                                   atomic.Int64
-	topicRootMismatch, retainedClassMismatch                atomic.Bool
+	topicRootMismatch, retainedClassMismatch, partnerWarned atomic.Bool
 	hist                                                    latencyHist
 	lastErrMu                                               sync.Mutex
 	lastErr                                                 string
@@ -563,9 +563,13 @@ func (p *puller) handshake(conn net.Conn, cs *tls.ConnectionState) (*handshakeSt
 		p.gapLost.Add(ok.LostOnResume)
 		m.logger.Warn("peerlink: records lost before resume (source log overflow)", "peer", p.nodeID, "lostOnResume", ok.LostOnResume)
 	}
-	oaRet := oaRetainedFor(m.deps.RetainedClass, m.oaSystem, ok.RetainedClass, ok.OASystem)
+	oaRet, why := oaRetainedFor(p.peer.RedundancyPartner, m.deps.RetainedClass, m.oaSystem, ok.RetainedClass, ok.OASystem)
 	if p.oaRetained.Swap(oaRet) != oaRet || oaRet {
 		m.logger.Info("peerlink: oaRetained decision", "peer", p.nodeID, "oaRetained", oaRet)
+	}
+	if !p.partnerWarned.Swap(why != "") && why != "" {
+		m.logger.Warn("peerlink: RedundancyPartner set but the link is not oaRetained; replicas are written to WinCC OA",
+			"peer", p.nodeID, "reason", why, "own", m.oaSystem, "source", ok.OASystem)
 	}
 	own := m.namespaceRoot()
 	mism := own != "" && ok.TopicRoot != "" && own != ok.TopicRoot
@@ -573,11 +577,7 @@ func (p *puller) handshake(conn net.Conn, cs *tls.ConnectionState) (*handshakeSt
 		m.logger.Warn("peerlink: TopicRoot differs from the source's; both roots are filtered", "peer", p.nodeID,
 			"own", own, "source", ok.TopicRoot)
 	}
-	cm := ok.RetainedClass != m.deps.RetainedClass
-	if !p.retainedClassMismatch.Swap(cm) && cm {
-		m.logger.Warn("peerlink: retained store class differs from the source's", "peer", p.nodeID,
-			"own", m.deps.RetainedClass.String(), "source", ok.RetainedClass.String())
-	}
+	p.retainedClassMismatch.Store(ok.RetainedClass != m.deps.RetainedClass)
 	_ = conn.SetDeadline(time.Time{})
 	return hs, nil
 }

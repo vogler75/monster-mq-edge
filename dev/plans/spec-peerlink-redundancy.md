@@ -39,7 +39,7 @@ PeerLink is a generic, pull-based, in-memory link between MonsterMQ brokers.
 | RPO in memory | PUBACK means "accepted locally". Losses are bounded by the log size and counted on both sides (section 9). |
 | PEM only | Certificates and keys are PEM files. Truststores are PEM or a simple PKCS12. No JKS, no encrypted keys. |
 | Active-active without special handling | Clients may connect to both brokers. Retained conflicts resolve by arrival order; there is no newest-wins policy. |
-| `oaRetained` | With `RetainedStoreType: WINCCOA` on both sides of one WinCC OA system, the receiver updates only its in-memory retained view; WinCC OA replicates `MMQRetained` itself. |
+| `oaRetained` | For a peer configured as `RedundancyPartner`, with `RetainedStoreType: WINCCOA` on both sides of one WinCC OA system, the receiver updates only its in-memory retained view; WinCC OA replicates `MMQRetained` itself. |
 | Q29 write forwarding | Forwarding WinCC OA writes from the passive to the active host is a follow-up with its own plan, not part of v1. |
 
 ---
@@ -416,7 +416,7 @@ After the checks pass (S:620-681):
 1. **Admit.** An existing active session of this consumer gets `GOAWAY(superseded)`. Duplicate detection: if, within 60 s, three or more takeovers alternate between exactly two instanceIds, the newer instance gets `GOAWAY(duplicate_node, "duplicate NodeId")` and that instanceId is refused for 5 min.
 2. If the broker is shutting down: `GOAWAY(shutdown)`.
 3. **Resume** (3.10). An error gets `GOAWAY(offset_out_of_range)`.
-4. Compute `oaRetained`, `topicRootMismatch` (both roots non-empty and different) and `retainedClassMismatch`; each mismatch logs one WARN per consumer.
+4. Compute `oaRetained`, `topicRootMismatch` (both roots non-empty and different) and `retainedClassMismatch` (status only). A TopicRoot mismatch logs one WARN per consumer; so does a `RedundancyPartner` peer that does not qualify for `oaRetained` while this node is WINCCOA.
 5. `SNAPSHOT_AVAILABLE` is set only when all hold: (`lastEpoch == 0` or SOURCE_RESET), SNAPSHOT_FILL agreed, not `oaRetained`, and a retained store exists.
 6. `macS` is computed with the secret whose index matched; otherwise it stays zero.
 7. Send HELLO_OK. Release the pre-auth slot. Remember the remote IP as authenticated. The consumer state becomes CONNECTED.
@@ -454,7 +454,7 @@ macS     = HMAC-SHA256(secret, lp("mmq-peer/1 S") | lp(nonceC) | lp(nonceS) | lp
 - The consumer sets the MAC flag only on TLS, with secrets, and with a non-empty exporter.
 - Go's `ExportKeyingMaterial(label, nil, 32)` under TLS 1.3 equals the RFC 8446 exporter with an empty context.
 
-**`oaRetained`** = both retainedClass values are WINCCOA and both oaSystem strings are equal and non-empty (`peerlink/manager.go:715-717`). Both sides compute it independently.
+**`oaRetained`** = the peer entry has `RedundancyPartner: true`, both retainedClass values are WINCCOA and both oaSystem strings are equal and non-empty (`oaRetainedFor`, `peerlink/manager.go`). Both sides compute it independently from their own peer entry, so both must set the flag. A differing retained class alone is not reported: replicas go into whatever store the receiver has.
 
 ### 3.10 Resume rules (`Log.Resume`, `peerlink/log.go:859-900`)
 
@@ -888,6 +888,7 @@ All keys live under `PeerLink` (`config/config.go:806-960`, getters `:983-1148`)
 | `Peers[].Tls.RequireClientCert` | bool | false | needs `ClientAuth` REQUEST or REQUIRED |
 | `Peers[].Tls.InsecureSkipVerify` | bool | false | |
 | `Peers[].Receive.Include` / `Exclude` | []filter | `["#"]` / – | valid filters |
+| `Peers[].RedundancyPartner` | bool | false | the peer is the other host of this node's redundant WinCC OA system; enables `oaRetained` |
 
 **NodeId.** Resolution order: explicit `NodeId`, then the hostname, then `edge`; with PeerLink enabled the `edge` fallback is an error. The canonical form is lowercase, 1-64 bytes of `[a-z0-9._-]`. The `Peers` entry equal to the own NodeId is ignored (INFO), so one file can serve every host. When the NodeId came from the hostname, an entry equal to the hostname's first DNS label also matches, and the link then uses that label as its NodeId (HELLO, MAC, certificate URI SAN, injector ids). At least one other peer is required.
 
@@ -1006,7 +1007,7 @@ GraphQL `BrokerMetrics.messageBusIn` / `messageBusOut` are filled from PeerLink 
 | Level | Events |
 |---|---|
 | INFO | listening; consumer connected / disconnected; consumer sent GOAWAY; streaming from source; source closed the link; snapshot applied; oaRetained decision; consumer drained |
-| WARN (rate-limited, 10 s per key unless noted) | link down; gap; lost before resume; source restarted; snapshot interrupted / truncated / scan failed; flush failed; clock skew (10 min); malformed record; replica rejected; retained diverged; never connected (once); TopicRoot or retained class mismatch (once); shutdownUnserved; uncaptured; InjectWorkers reserved; AllowUnauthenticatedPeers; pull-only status port |
+| WARN (rate-limited, 10 s per key unless noted) | link down; gap; lost before resume; source restarted; snapshot interrupted / truncated / scan failed; flush failed; clock skew (10 min); malformed record; replica rejected; retained diverged; never connected (once); TopicRoot mismatch (once); RedundancyPartner without oaRetained (once); shutdownUnserved; uncaptured; InjectWorkers reserved; AllowUnauthenticatedPeers; pull-only status port |
 | ERROR | handshake refused (10 s per peer and code); link refused, config error (5 min per code); duplicate NodeId; poison batch; batch-structural fault; MaxFrameBytes too small (once) |
 
 ---
@@ -1072,7 +1073,7 @@ The status is the retained JSON on `<Root>/<Systems>/<sys>` and `<Root>`, QoS 1;
 - `oaSystem` is the local WinCC OA system name, sent in HELLO and HELLO_OK only when embedded with native mode. It comes from `SysInfo` at store setup when `RetainedStoreType` is WINCCOA (also with `WinCCOaNative.Namespace` off), else from the native service.
 - `oaRetained` (3.9): no snapshot on that link; retained replicas from that source only update the cache (`ApplyCached`); shown per link in the status.
 - Retained capture is not serialised for the WINCCOA store class.
-- Deployment rule: two independent WinCC OA projects linked by PeerLink need different system names, or they are taken for one system and forwarded retained values are not stored.
+- `oaRetained` needs `Peers[].RedundancyPartner: true` on both nodes; independent WinCC OA projects (even with the same system name) and distributed systems leave it off and write forwarded retained values to their own `MMQRetained`.
 
 ### 14.5 Topics branch (summary)
 
