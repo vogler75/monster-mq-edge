@@ -13,3 +13,6 @@ internal/dashboard/dist/*
 /dist/
 /build/
 winccoa
+
+# PeerLink TLS certificates and private keys
+/certs/
