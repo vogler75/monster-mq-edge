@@ -153,17 +153,19 @@ func mmq_create(cfg *C.mmq_config, host *C.mmq_host, out *C.uint64_t) (rc C.int3
 	if inst != nil {
 		return C.int32_t(oahost.StatusState)
 	}
+	chost := (*C.mmq_host)(C.malloc(C.sizeof_mmq_host))
+	C.memcpy(unsafe.Pointer(chost), unsafe.Pointer(host), C.sizeof_mmq_host)
+	h := &cHost{h: chost}
+
 	bc, err := config.Load(path)
 	if err != nil {
+		h.log(3, fmt.Sprintf("monstermq config error: %v", err))
+		C.free(unsafe.Pointer(chost))
 		return C.int32_t(oahost.StatusInvalid)
 	}
 	if !bc.WinCCOaNative.Enabled {
 		bc.WinCCOaNative.Enabled = true
 	}
-
-	chost := (*C.mmq_host)(C.malloc(C.sizeof_mmq_host))
-	C.memcpy(unsafe.Pointer(chost), unsafe.Pointer(host), C.sizeof_mmq_host)
-	h := &cHost{h: chost}
 	limits := oahost.Limits{
 		MaxPending:     int(cfg.max_pending),
 		EventQueue:     int(cfg.event_queue),
