@@ -82,8 +82,9 @@ func TestNativeAccessIsolation(t *testing.T) {
 		sub("#", 0), // broad filter
 	)
 	// The wildcard is accepted; delivery-time ACL checks keep the denied
-	// element out of it (checked below).
-	want := []byte{0x01, 0x87, 0x87, 0x87, 0x87, 0x9E, 0x01, 0x87, 0x00}
+	// element out of it (checked below). The shared form is denied by the ACL
+	// before the shared-subscription check: "#" does not cover $-topics.
+	want := []byte{0x01, 0x87, 0x87, 0x87, 0x87, 0x87, 0x01, 0x87, 0x00}
 	if string(codes) != string(want) {
 		t.Fatalf("reader SUBACK\n got % x\nwant % x", codes, want)
 	}

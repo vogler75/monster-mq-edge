@@ -40,7 +40,6 @@ func IsLocalhostRequest(r *http.Request) bool {
 	return IsLocalhost(r.RemoteAddr)
 }
 
-
 // AuthenticateHeader applies the same Basic and bearer credentials to HTTP APIs.
 func AuthenticateHeader(ctx context.Context, cache *Cache, header string) (context.Context, error) {
 	if strings.TrimSpace(header) == "" {

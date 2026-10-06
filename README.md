@@ -332,6 +332,15 @@ startup leaves it unchanged.
 
 With `AnonymousEnabled: true`, GraphQL login and MQTT clients can still use
 anonymous access. Set `AnonymousEnabled: false` to require configured users.
+If a user named `Anonymous` exists (the Kotlin broker creates one), anonymous
+clients get its enabled state, permissions and ACL rules, as on the Kotlin
+broker; without it, anonymous access is unrestricted.
+
+ACL rules are evaluated by descending priority and the first matching rule
+that decides wins. A rule with `canPublish` and `canSubscribe` both false is a
+deny rule; any other rule allows only the operations set to true. See
+`doc/acl.md` in the Kotlin broker for the full reference; both brokers behave
+identically.
 
 ### Localhost unauthenticated access
 

@@ -207,11 +207,11 @@ func (r *Resolver) allowTopic(ctx context.Context, topic string, write bool) boo
 	if !r.Cfg.UserManagement.Enabled {
 		return true
 	}
-	user, ok := auth.Principal(ctx)
-	if !ok {
-		return r.Cfg.UserManagement.AnonymousEnabled
+	username := ""
+	if user, ok := auth.Principal(ctx); ok {
+		username = user.Username
 	}
-	return r.AuthCache.Allow(user.Username, topic, write)
+	return r.AuthCache.Allow(username, topic, write)
 }
 
 func (r *Resolver) requireTopic(ctx context.Context, topic string, write bool) error {

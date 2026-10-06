@@ -174,9 +174,9 @@
       "properties": {
         "Enabled":           { "type": "boolean", "description": "When false, all clients are accepted (anonymous)." },
         "PasswordAlgorithm": { "type": "string", "enum": ["BCRYPT", "PLAIN"], "default": "BCRYPT" },
-        "AnonymousEnabled":  { "type": "boolean", "description": "When true, missing credentials are allowed even with UserManagement.Enabled=true." },
+        "AnonymousEnabled":  { "type": "boolean", "description": "When true, missing credentials are allowed even with UserManagement.Enabled=true. If a user named Anonymous exists (as created by the Kotlin broker), anonymous clients get its enabled state, permissions and ACL rules; otherwise anonymous access is unrestricted." },
         "AclCacheEnabled":   { "type": "boolean" },
-        "AclCheckOnSubscription": { "type": "boolean", "description": "When false, wildcard subscriptions (e.g. #) are allowed and ACL is enforced at message delivery time instead. Default true." },
+        "AclCheckOnSubscription": { "type": "boolean", "description": "When true (default), ACL is checked at subscribe time against the topic filter. When false, wildcard subscriptions (e.g. #) are admitted without an ACL check. In both modes every delivered message is checked against its concrete topic for non-admin users." },
         "AllowAnonymousLocalhost": { "type": "boolean", "default": false, "description": "When true, requests and connections originating from 127.0.0.1 (localhost) are allowed without authentication for MQTT, GraphQL, and HMI." }
       }
     },

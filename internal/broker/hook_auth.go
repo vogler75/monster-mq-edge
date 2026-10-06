@@ -181,14 +181,14 @@ func (h *AuthHook) OnACLCheck(cl *mqtt.Client, topic string, write bool) bool {
 	if h.allowAnonymousLocalhost && username == "localhost" && h.isLocalhost(cl) {
 		return true
 	}
-	if !h.cache.Allow(username, topic, write) {
+	if !h.cache.AllowClient(username, cl.ID, topic, write) {
 		return false
 	}
 	// A native WinCC OA alias (type path, explicit attribute) must never
 	// widen access: the tags form of the same element has to be allowed too.
 	// This covers subscribe filters and delivery to broad filters alike.
 	if c, ok := h.native().CanonicalOf(topic); ok && c != topic {
-		return h.cache.Allow(username, c, write)
+		return h.cache.AllowClient(username, cl.ID, c, write)
 	}
 	return true
 }

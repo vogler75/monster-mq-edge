@@ -99,7 +99,12 @@ func (c *Cache) Refresh(ctx context.Context) error {
 		rulesByUser[r.Username] = append(rulesByUser[r.Username], r)
 	}
 	for u, list := range rulesByUser {
-		sort.Slice(list, func(i, j int) bool { return list[i].Priority > list[j].Priority })
+		sort.SliceStable(list, func(i, j int) bool {
+			if list[i].Priority != list[j].Priority {
+				return list[i].Priority > list[j].Priority
+			}
+			return isDenyRule(list[i]) && !isDenyRule(list[j])
+		})
 		rulesByUser[u] = list
 	}
 	usersMap := map[string]stores.User{}
@@ -129,10 +134,21 @@ func (c *Cache) StartRefresher(ctx context.Context, every time.Duration) {
 	}()
 }
 
+// AnonymousUser is the user record that holds the permissions and ACL rules
+// for unauthenticated clients (same name as in the Kotlin broker).
+const AnonymousUser = "Anonymous"
+
 // Validate returns true if (username, password) match an enabled user.
 func (c *Cache) Validate(username, password string) bool {
 	if username == "" {
-		return c.anonymousAllow
+		if !c.anonymousAllow {
+			return false
+		}
+		// An existing Anonymous user record decides, as in the Kotlin broker.
+		if u, ok := c.lookup(AnonymousUser); ok {
+			return u.Enabled
+		}
+		return true
 	}
 	u, ok := c.lookup(username)
 	if !ok || !u.Enabled {
@@ -156,15 +172,32 @@ func (c *Cache) lookup(username string) (stores.User, bool) {
 }
 
 // Allow returns true if the user is permitted to publish (write=true) or subscribe
-// (write=false) to topic.
+// (write=false) to topic. ACL patterns containing %c never match, because no
+// client ID is known; use AllowClient for MQTT clients.
+//
+// An unauthenticated caller (empty username) is checked against the Anonymous
+// user record when it exists, like in the Kotlin broker; without that record
+// anonymous access is all-or-nothing by AnonymousEnabled.
 //
 // When aclCheckOnSubscribe is false, subscribe-time checks (write=false with a
 // wildcard topic) always pass. Delivery-time checks (write=false with a concrete
 // topic) are still evaluated against ACL rules — the MQTT engine calls OnACLCheck in
 // publishToClient with the actual topic before delivering each message.
 func (c *Cache) Allow(username, topic string, write bool) bool {
+	return c.AllowClient(username, "", topic, write)
+}
+
+// AllowClient is Allow with the MQTT client ID used for %c substitution in ACL
+// patterns (%u is replaced with the username).
+func (c *Cache) AllowClient(username, clientID, topic string, write bool) bool {
 	if username == "" {
-		return c.anonymousAllow
+		if !c.anonymousAllow {
+			return false
+		}
+		if _, ok := c.lookup(AnonymousUser); !ok {
+			return true
+		}
+		username = AnonymousUser
 	}
 	u, ok := c.lookup(username)
 	if !ok || !u.Enabled {
@@ -191,24 +224,67 @@ func (c *Cache) Allow(username, topic string, write bool) bool {
 	if len(rules) == 0 {
 		return true
 	}
+	// Rules are checked in priority order (deny first on equal priority);
+	// the first matching rule that decides wins. Same semantics as the Kotlin
+	// AclCache:
+	//   - canPublish=false and canSubscribe=false: deny rule for both
+	//     operations.
+	//   - otherwise: allow rule for the operations set to true; it is skipped
+	//     for the other operation.
+	// No deciding rule means deny. A wildcard subscription that only partly
+	// overlaps a deny rule is admitted; the engine re-checks every delivered
+	// message against its concrete topic, so denied topics are filtered out.
 	for _, r := range rules {
-		if topicMatches(r.TopicPattern, topic) {
-			if write {
-				return r.CanPublish
-			}
-			return r.CanSubscribe
+		deny := isDenyRule(r)
+		grants := r.CanSubscribe
+		if write {
+			grants = r.CanPublish
+		}
+		if !deny && !grants {
+			continue
+		}
+		pattern, ok := resolvePattern(r.TopicPattern, username, clientID)
+		if ok && topicMatches(pattern, topic) {
+			return !deny
 		}
 	}
 	return false
+}
+
+func isDenyRule(r stores.AclRule) bool {
+	return !r.CanPublish && !r.CanSubscribe
 }
 
 func containsWildcard(topic string) bool {
 	return strings.Contains(topic, "#") || strings.Contains(topic, "+")
 }
 
+// resolvePattern replaces %u with the username and %c with the client ID. It
+// reports false when the pattern needs a client ID and none is known.
+func resolvePattern(pattern, username, clientID string) (string, bool) {
+	if !strings.Contains(pattern, "%") {
+		return pattern, true
+	}
+	resolved := strings.ReplaceAll(pattern, "%u", username)
+	if strings.Contains(resolved, "%c") {
+		if clientID == "" {
+			return "", false
+		}
+		resolved = strings.ReplaceAll(resolved, "%c", clientID)
+	}
+	return resolved, true
+}
+
+// topicMatches reports whether the ACL pattern covers topic, which is either a
+// concrete topic or a subscription filter (then every topic the filter can
+// match must be covered). Wildcards at the first level do not cover topics
+// starting with '$' (MQTT 4.7.2). Same as AclCache.aclMatches in Kotlin.
 func topicMatches(pattern, topic string) bool {
 	pp := strings.Split(pattern, "/")
 	tt := strings.Split(topic, "/")
+	if strings.HasPrefix(tt[0], "$") && !strings.HasPrefix(pp[0], "$") && (pp[0] == "+" || pp[0] == "#") {
+		return false
+	}
 	for i, p := range pp {
 		if p == "#" {
 			return true
@@ -217,6 +293,10 @@ func topicMatches(pattern, topic string) bool {
 			return false
 		}
 		if p == "+" {
+			// A single-level wildcard does not cover a multi-level filter.
+			if tt[i] == "#" {
+				return false
+			}
 			continue
 		}
 		if p != tt[i] {
