@@ -14,6 +14,7 @@ import (
 
 	"monstermq.io/edge/internal/config"
 	"monstermq.io/edge/internal/stores"
+	storecratedb "monstermq.io/edge/internal/stores/cratedb"
 	storememory "monstermq.io/edge/internal/stores/memory"
 	storemongo "monstermq.io/edge/internal/stores/mongodb"
 	storepg "monstermq.io/edge/internal/stores/postgres"
@@ -156,7 +157,7 @@ func (m *Manager) startGroup(ctx context.Context, c stores.ArchiveGroupConfig) e
 	if err != nil {
 		return err
 	}
-	arch, err := m.buildArchiveStore(ctx, c, handles)
+	arch, err := m.buildArchiveStore(ctx, c, &handles)
 	if err != nil {
 		return err
 	}
@@ -219,6 +220,7 @@ type groupDatabaseHandles struct {
 	sqliteDB  *storesqlite.DB
 	pgDB      *storepg.DB
 	questdbDB *storequestdb.DB
+	cratedbDB *storecratedb.DB
 	mongoDB   *storemongo.DB
 	owned     []func() error
 }
@@ -252,7 +254,7 @@ func (m *Manager) openGroupDatabaseHandles(ctx context.Context, c stores.Archive
 		return handles, nil
 	}
 	if len(required) == 0 {
-		return handles, fmt.Errorf("group %s: databaseConnectionName can only be used with SQLite, Postgres, QuestDB, or MongoDB stores", c.Name)
+		return handles, fmt.Errorf("group %s: databaseConnectionName can only be used with SQLite, Postgres, CrateDB, QuestDB, or MongoDB stores", c.Name)
 	}
 	if len(required) > 1 {
 		if IsDefaultDatabaseConnectionName(selectedName) {
@@ -279,6 +281,16 @@ func (m *Manager) openGroupDatabaseHandles(ctx context.Context, c stores.Archive
 				return handles, fmt.Errorf("group %s: open default QuestDB connection: %w", c.Name, err)
 			}
 			handles.questdbDB = db
+			handles.owned = append(handles.owned, db.Close)
+		case stores.DatabaseConnectionCrateDB:
+			if m.cfg.CrateDB.URL == "" {
+				return handles, fmt.Errorf("group %s: default CrateDB database connection is not configured", c.Name)
+			}
+			db, err := storecratedb.Open(ctx, m.cfg.CrateDB.URL, m.cfg.CrateDB.User, m.cfg.CrateDB.Pass)
+			if err != nil {
+				return handles, fmt.Errorf("group %s: open default CrateDB connection: %w", c.Name, err)
+			}
+			handles.cratedbDB = db
 			handles.owned = append(handles.owned, db.Close)
 		case stores.DatabaseConnectionMongoDB:
 			if m.mongoDB == nil {
@@ -318,6 +330,13 @@ func (m *Manager) openGroupDatabaseHandles(ctx context.Context, c stores.Archive
 			return handles, err
 		}
 		handles.questdbDB = db
+		handles.owned = append(handles.owned, db.Close)
+	case stores.DatabaseConnectionCrateDB:
+		db, err := storecratedb.Open(ctx, conn.URL, conn.Username, conn.Password)
+		if err != nil {
+			return handles, err
+		}
+		handles.cratedbDB = db
 		handles.owned = append(handles.owned, db.Close)
 	case stores.DatabaseConnectionMongoDB:
 		dbName := conn.Database
@@ -395,7 +414,9 @@ func (m *Manager) buildLastValStore(ctx context.Context, c stores.ArchiveGroupCo
 	return nil, fmt.Errorf("group %s: unsupported lastValType %q", c.Name, c.LastValType)
 }
 
-func (m *Manager) buildArchiveStore(ctx context.Context, c stores.ArchiveGroupConfig, handles groupDatabaseHandles) (stores.MessageArchive, error) {
+// buildArchiveStore takes handles by pointer: a default connection it opens
+// itself is added to handles.owned and closed with the group.
+func (m *Manager) buildArchiveStore(ctx context.Context, c stores.ArchiveGroupConfig, handles *groupDatabaseHandles) (stores.MessageArchive, error) {
 	name := ArchiveName(c.Name)
 	switch c.ArchiveType {
 	case stores.ArchiveSQLite:
@@ -432,6 +453,23 @@ func (m *Manager) buildArchiveStore(ctx context.Context, c stores.ArchiveGroupCo
 		a := storequestdb.NewMessageArchive(name, handles.questdbDB, c.PayloadFormat)
 		if err := a.EnsureTable(ctx); err != nil {
 			return nil, fmt.Errorf("ensure %s on questdb: %w", name, err)
+		}
+		return a, nil
+	case stores.ArchiveCrateDB:
+		if handles.cratedbDB == nil {
+			if m.cfg.CrateDB.URL == "" {
+				return nil, fmt.Errorf("group %s: archiveType=CRATEDB but no CrateDB connection configured", c.Name)
+			}
+			db, err := storecratedb.Open(ctx, m.cfg.CrateDB.URL, m.cfg.CrateDB.User, m.cfg.CrateDB.Pass)
+			if err != nil {
+				return nil, fmt.Errorf("group %s: open default CrateDB: %w", c.Name, err)
+			}
+			handles.cratedbDB = db
+			handles.owned = append(handles.owned, db.Close)
+		}
+		a := storecratedb.NewMessageArchive(name, handles.cratedbDB, c.PayloadFormat)
+		if err := a.EnsureTable(ctx); err != nil {
+			return nil, fmt.Errorf("ensure %s on cratedb: %w", name, err)
 		}
 		return a, nil
 	case stores.ArchiveMongoDB:

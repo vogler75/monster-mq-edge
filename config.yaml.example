@@ -37,6 +37,13 @@ MongoDB:
   Url: "mongodb://localhost:27017"
   Database: monstermq
 
+# Default connection of archive groups with archiveType CRATEDB (history only).
+# The Java form jdbc:postgresql://host:5432/doc works too; User defaults to crate.
+# CrateDB:
+#   Url: "postgres://localhost:5432/doc"
+#   User: crate
+#   Pass: ""
+
 UserManagement:
   Enabled: false
   PasswordAlgorithm: BCRYPT

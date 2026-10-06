@@ -139,6 +139,16 @@
       },
       "required": ["Url"]
     },
+    "CrateDB": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "Url":  { "type": "string", "description": "CrateDB PostgreSQL-wire URL (postgres://host:5432/doc or the Java form jdbc:postgresql://host:5432/doc). Default connection of archive groups with archiveType CRATEDB." },
+        "User": { "type": "string", "description": "Defaults to crate." },
+        "Pass": { "type": "string" }
+      },
+      "required": ["Url"]
+    },
     "QuestDB": {
       "type": "object",
       "additionalProperties": false,

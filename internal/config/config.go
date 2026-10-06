@@ -101,6 +101,15 @@ type PostgresConfig struct {
 	Pass string `yaml:"Pass"`
 }
 
+// CrateDBConfig is the default CrateDB connection of archive groups
+// (archiveType CRATEDB). Url may keep the JDBC form of the Java broker
+// (jdbc:postgresql://host:5432/doc); User defaults to "crate".
+type CrateDBConfig struct {
+	URL  string `yaml:"Url"`
+	User string `yaml:"User"`
+	Pass string `yaml:"Pass"`
+}
+
 type QuestDBConfig struct {
 	URL  string `yaml:"Url"`
 	User string `yaml:"User"`
@@ -366,6 +375,7 @@ type Config struct {
 
 	SQLite   SQLiteConfig   `yaml:"SQLite"`
 	Postgres PostgresConfig `yaml:"Postgres"`
+	CrateDB  CrateDBConfig  `yaml:"CrateDB"`
 	QuestDB  QuestDBConfig  `yaml:"QuestDB"`
 	MongoDB  MongoDBConfig  `yaml:"MongoDB"`
 

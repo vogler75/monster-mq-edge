@@ -735,7 +735,7 @@ func (r *queryResolver) BrokerConfig(ctx context.Context) (*generated.BrokerConf
 		SessionStoreType: string(c.SessionStore()), RetainedStoreType: string(c.RetainedStore()), ConfigStoreType: string(c.ConfigStore()),
 		UserManagementEnabled: c.UserManagement.Enabled, AnonymousEnabled: c.UserManagement.AnonymousEnabled,
 		PostgresURL: c.Postgres.URL, PostgresUser: c.Postgres.User,
-		CrateDbURL: "", CrateDbUser: "",
+		CrateDbURL: c.CrateDB.URL, CrateDbUser: c.CrateDB.User,
 		QuestDbURL: c.QuestDB.URL, QuestDbUser: c.QuestDB.User,
 		MongoDbURL: c.MongoDB.URL, MongoDbDatabase: c.MongoDB.Database,
 		SqlitePath: c.SQLite.Path, KafkaServers: "",
@@ -1472,7 +1472,7 @@ func (r *Resolver) validateDatabaseConnectionSelection(ctx context.Context, sele
 	}
 	required := archive.RequiredDatabaseConnectionTypes(lastValType, archiveType)
 	if len(required) == 0 {
-		return "", fmt.Errorf("a database connection can only be selected for PostgreSQL, MongoDB, or SQLite storage")
+		return "", fmt.Errorf("a database connection can only be selected for PostgreSQL, CrateDB, QuestDB, MongoDB, or SQLite storage")
 	}
 	if len(required) > 1 {
 		if archive.IsDefaultDatabaseConnectionName(selected) {

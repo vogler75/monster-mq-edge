@@ -124,6 +124,11 @@ Postgres: { Url: "postgres://localhost:5432/monstermq", User: monstermq, Pass: m
 MongoDB:  { Url: "mongodb://localhost:27017", Database: monstermq }
 ```
 
+Archive groups can also write their history to CrateDB (`archiveType: CRATEDB`,
+default connection `CrateDB: { Url: "postgres://localhost:5432/doc", User: crate }`)
+or QuestDB (`archiveType: QUESTDB`). Both are history-only; the last-value
+store of such a group uses one of the backends above.
+
 By default the stores live on the chosen backend. High-churn runtime stores can
 also be moved to memory with `SessionStoreType`, `RetainedStoreType`,
 `QueueStoreType`, and `Metrics.StoreType`.

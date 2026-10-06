@@ -67,6 +67,16 @@ func BuiltInDatabaseConnections(cfg *config.Config) []stores.DatabaseConnectionC
 			ReadOnly: true,
 		})
 	}
+	if cfg.CrateDB.URL != "" {
+		out = append(out, stores.DatabaseConnectionConfig{
+			Name:     DefaultDatabaseConnectionName,
+			Type:     stores.DatabaseConnectionCrateDB,
+			URL:      cfg.CrateDB.URL,
+			Username: cfg.CrateDB.User,
+			Password: cfg.CrateDB.Pass,
+			ReadOnly: true,
+		})
+	}
 	if cfg.QuestDB.URL != "" {
 		out = append(out, stores.DatabaseConnectionConfig{
 			Name:     DefaultDatabaseConnectionName,
@@ -98,6 +108,8 @@ func RequiredDatabaseConnectionTypes(lastVal stores.MessageStoreType, archiveTyp
 	switch archiveType {
 	case stores.ArchivePostgres:
 		add(stores.DatabaseConnectionPostgres)
+	case stores.ArchiveCrateDB:
+		add(stores.DatabaseConnectionCrateDB)
 	case stores.ArchiveQuestDB:
 		add(stores.DatabaseConnectionQuestDB)
 	case stores.ArchiveMongoDB:
@@ -106,7 +118,7 @@ func RequiredDatabaseConnectionTypes(lastVal stores.MessageStoreType, archiveTyp
 		add(stores.DatabaseConnectionSQLite)
 	}
 	out := make([]stores.DatabaseConnectionType, 0, len(seen))
-	for _, t := range []stores.DatabaseConnectionType{stores.DatabaseConnectionSQLite, stores.DatabaseConnectionPostgres, stores.DatabaseConnectionQuestDB, stores.DatabaseConnectionMongoDB} {
+	for _, t := range []stores.DatabaseConnectionType{stores.DatabaseConnectionSQLite, stores.DatabaseConnectionPostgres, stores.DatabaseConnectionCrateDB, stores.DatabaseConnectionQuestDB, stores.DatabaseConnectionMongoDB} {
 		if _, ok := seen[t]; ok {
 			out = append(out, t)
 		}
