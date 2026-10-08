@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MIT
-// SPDX-FileCopyrightText: 2022 mochi-mqtt, mochi-co
-// SPDX-FileContributor: mochi-co, thedevop, dgduncan
-
 package mqtt
 
 import (

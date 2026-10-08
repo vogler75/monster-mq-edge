@@ -28,8 +28,6 @@ Open work captured in this plan but not yet done:
   "MqttBridge"]`. Decide which set the dashboard expects and align.
 - Paho v5 (`paho.golang/paho`) is not yet pulled in — bridge currently
   uses `paho.mqtt.golang` v3.x only.
-- `scripts/sync-mochi.sh` for re-syncing upstream — ties in with
-  `PLAN-inline-mochi.md`, which has not been executed yet.
 
 ## Context
 
@@ -53,7 +51,7 @@ The target is a **field-deploy MQTT node** that talks to the central MonsterMQ v
 
 | Concern | Go pick | Rust pick | Verdict |
 |---|---|---|---|
-| Embeddable MQTT broker | `github.com/mochi-mqtt/server/v2` — purpose-built for embedding, **first-class hook system** (Auth, OnPublished, OnSubscribed, OnRetained, OnSelectClient, OnSession*, etc.), MQTT 3.0/3.1.1/5.0 fully compliant, MIT, with bundled storage hooks (Pebble, Badger, Bolt, Redis) as reference implementations. | `rumqttd` — excellent broker but exposes **only an auth handler closure and a "local link"** observer API. Custom retained/session/queue stores are not first-class extension points; you'd fork or shim heavily. | **Go wins decisively for our use case.** Mochi's hook contract maps almost 1:1 onto MonsterMQ's `IMessageStore` / `ISessionStoreAsync` / `IRetainedStore` / `IQueueStoreAsync` interfaces. |
+| Embeddable MQTT broker | an embeddable Go MQTT library — purpose-built for embedding, **first-class hook system** (Auth, OnPublished, OnSubscribed, OnRetained, OnSelectClient, OnSession*, etc.), MQTT 3.0/3.1.1/5.0 fully compliant, MIT, with bundled storage hooks (Pebble, Badger, Bolt, Redis) as reference implementations. | `rumqttd` — excellent broker but exposes **only an auth handler closure and a "local link"** observer API. Custom retained/session/queue stores are not first-class extension points; you'd fork or shim heavily. | **Go wins decisively for our use case.** The library's hook contract maps almost 1:1 onto MonsterMQ's `IMessageStore` / `ISessionStoreAsync` / `IRetainedStore` / `IQueueStoreAsync` interfaces. |
 | GraphQL server with subscriptions | `github.com/99designs/gqlgen` — **schema-first**, multi-file `.graphqls` globs, codegen produces strongly-typed resolver stubs, WebSocket + SSE transports, GraphQL-WS protocol supported. | `async-graphql` — code-first (SDL is exported, not consumed). | **Go wins** because our requirement is *schema parity* with the existing `.graphqls` files. gqlgen consumes those files directly; async-graphql would mean reverse-mapping the schema into Rust types by hand. |
 | SQL drivers | `database/sql` + `mattn/go-sqlite3` (or `modernc.org/sqlite` for pure-Go), `jackc/pgx/v5`. | `sqlx` (excellent). | Both fine. Pure-Go SQLite (`modernc.org/sqlite`) gives a true zero-CGO static binary. |
 | MongoDB | `go.mongodb.org/mongo-driver/v2` (official). | `mongodb` crate (official). | Both fine. |
@@ -61,7 +59,7 @@ The target is a **field-deploy MQTT node** that talks to the central MonsterMQ v
 | Memory on Pi 4/5 (1–8 GB) | ~25–50 MB RSS. | ~5–15 MB RSS. | **Irrelevant on Pi 4/5.** Would matter on Pi Zero. User confirmed Pi 4/5 is the target. |
 | Dev velocity | High. | Medium. | Go wins. |
 
-Both languages are native-compiled and meet the binary-size/no-GC-pause-vs-acceptable trade-off on Pi-class hardware. The deciding factors are mochi-mqtt's hook architecture and gqlgen's schema-first flow — those two together remove most of the design risk from this project.
+Both languages are native-compiled and meet the binary-size/no-GC-pause-vs-acceptable trade-off on Pi-class hardware. The deciding factors are the MQTT library's hook architecture and gqlgen's schema-first flow — those two together remove most of the design risk from this project.
 
 ### Why not Rust
 On Pi Zero / sub-512 MB devices we would revisit. For Pi 4/5 the Go ecosystem fit is materially better and the implementation will land faster.
@@ -84,10 +82,10 @@ monster-mq-edge/
 │   │   ├── config.go                  # YAML schema (compatible subset of broker/yaml-json-schema.json)
 │   │   └── load.go
 │   ├── broker/
-│   │   ├── server.go                  # mochi-mqtt server bootstrap, listeners, lifecycle
-│   │   ├── hook_storage.go            # mochi Hook -> session/retained/queue stores
-│   │   ├── hook_auth.go               # mochi Hook -> IUserStore-backed auth + ACL
-│   │   ├── hook_archive.go            # mochi Hook -> archive groups (last-value + history fanout)
+│   │   ├── server.go                  # MQTT server bootstrap, listeners, lifecycle
+│   │   ├── hook_storage.go            # MQTT hook -> session/retained/queue stores
+│   │   ├── hook_auth.go               # MQTT hook -> IUserStore-backed auth + ACL
+│   │   ├── hook_archive.go            # MQTT hook -> archive groups (last-value + history fanout)
 │   │   └── hook_metrics.go            # in-memory rate counters, drained by metrics writer
 │   ├── stores/
 │   │   ├── types.go                   # BrokerMessage, MqttSubscription, ArchiveGroupConfig, User, AclRule, MetricKind, etc.
@@ -142,7 +140,7 @@ A separate Go module keeps Kotlin/Maven and Go toolchains independent. Top-level
 
 | Concern | Library | Notes |
 |---|---|---|
-| MQTT broker | `github.com/mochi-mqtt/server/v2` | Hook-based extensibility. Use built-in TCP/TLS/WS listeners. |
+| MQTT broker | an embeddable Go MQTT library | Hook-based extensibility. Use built-in TCP/TLS/WS listeners. |
 | MQTT client (bridge) | `github.com/eclipse/paho.mqtt.golang` for v3.1.1, `github.com/eclipse/paho.golang/paho` for v5 | Match what the existing Kotlin bridge supports. Pick at runtime by config. |
 | GraphQL | `github.com/99designs/gqlgen` | Schema-first, codegen, WebSocket subscriptions via `transport.Websocket` (graphql-ws + graphql-transport-ws). |
 | HTTP router | `github.com/go-chi/chi/v5` | Lightweight, idiomatic; gqlgen examples assume it. |
@@ -213,11 +211,11 @@ We use the **V2 (PGMQ-style single-table) queue store** schema only — V1 is le
 
 ---
 
-## How mochi-mqtt Hooks Wire to Our Stores
+## How MQTT Library Hooks Wire to Our Stores
 
-mochi exposes a `Hook` interface; we register one composite hook (or several) that fan out to our store interfaces:
+The MQTT library exposes a `Hook` interface; we register one composite hook (or several) that fan out to our store interfaces:
 
-| mochi hook callback | Routed to |
+| Hook callback | Routed to |
 |---|---|
 | `OnConnectAuthenticate` | `auth.Cache.Validate(username, password)` |
 | `OnACLCheck` | `auth.Cache.CheckTopic(username, topic, write)` |
@@ -228,7 +226,7 @@ mochi exposes a `Hook` interface; we register one composite hook (or several) th
 | `OnRetainMessage` | `RetainedStore.AddAll([msg])` (or delete on empty payload) |
 | `OnQosPublish` / `OnQosComplete` | in-flight bookkeeping (stored in-memory; persisted via `QueueStore` for offline persistent sessions) |
 
-Mochi already implements MQTT 5 topic aliases, flow control, will delay, session expiry, retained-handling — we don't reimplement them.
+The library already implements MQTT 5 topic aliases, flow control, will delay, session expiry, retained-handling — we don't reimplement them.
 
 ---
 
@@ -265,7 +263,7 @@ Files to mirror:
 
 Implementation in `monster-mq-edge/internal/bridge/mqttclient/`:
 - `manager.go` — on startup: `DeviceConfigStore.GetEnabledDevicesByNode(nodeId)`, deploy a connector per device. On GraphQL mutation: reload diff.
-- `connector.go` — paho client. Outbound (subscribe locally via mochi, publish to remote). Inbound (subscribe on remote, inject into mochi via `server.Publish`). TLS, WS, MQTT v3.1.1 + v5.
+- `connector.go` — paho client. Outbound (subscribe locally via the broker, publish to remote). Inbound (subscribe on remote, inject into the broker via `server.Publish`). TLS, WS, MQTT v3.1.1 + v5.
 - Buffering when remote is down: optional disk-backed buffer using a small SQLite file (matches existing behavior).
 
 ---
@@ -339,9 +337,9 @@ with the binary — the GraphQL endpoint is the only HTTP surface.)
 Each milestone is independently shippable / testable.
 
 1. **Skeleton + config + logging** — module bootstrap, YAML loader against JSON Schema, slog wiring, `--version` flag, smoke `go run`.
-2. **Mochi-mqtt with in-memory stores + anonymous auth** — TCP/WS listeners, retained/sessions/queue/subscriptions all in-memory. Use `mosquitto_pub`/`mosquitto_sub` for end-to-end check, including QoS 1/2 and retained.
+2. **MQTT engine with in-memory stores + anonymous auth** — TCP/WS listeners, retained/sessions/queue/subscriptions all in-memory. Use `mosquitto_pub`/`mosquitto_sub` for end-to-end check, including QoS 1/2 and retained.
 3. **SQLite backend** — implement all seven store interfaces, ensure tables are byte-compatible with the Kotlin SQLite implementations (open the same file with both brokers). Restart-survives test for retained + persistent sessions + queued messages.
-4. **Users + ACL** — IUserStore + bcrypt + ACL cache + mochi auth/ACL hooks. CLI/SQL bootstrap of an admin user. Verify with authenticated `mosquitto_pub`/`_sub`.
+4. **Users + ACL** — IUserStore + bcrypt + ACL cache + broker auth/ACL hooks. CLI/SQL bootstrap of an admin user. Verify with authenticated `mosquitto_pub`/`_sub`.
 5. **Archive groups** — IArchiveConfigStore + ArchiveGroup orchestrator + last-value store + message archive (SQLite). Verify by publishing and reading rows from SQLite directly.
 6. **GraphQL read surface** — gqlgen integration, copy/slim `.graphqls` files, implement queries (`currentValue(s)`, `retainedMessage(s)`, `archivedMessages`, `aggregatedMessages`, `searchTopics`, `browseTopics`, `sessions`, `broker(s)`, `brokerConfig`, `users`, `archiveGroups`). Test against the existing dashboard pages that use these queries.
 7. **GraphQL write surface + subscriptions** — `publish`, `publishBatch`, `purgeQueuedMessages`, `user.*`, `archiveGroup.*`, `session.removeSessions`, `topicUpdates`, `topicUpdatesBulk`, `systemLogs`. Test the dashboard "Publish" page and live subscription panes.
@@ -363,7 +361,7 @@ All Kotlin source paths below live in the sibling repo `../monster-mq/`
 (the JVM broker). For every milestone, read the **Kotlin original first**
 and mirror behavior. Key entry points:
 
-- Mochi hooks ↔ MonsterMQ behavior:
+- Hooks ↔ MonsterMQ behavior:
   - `broker/src/main/kotlin/MqttClient.kt` (per-connection state machine)
   - `broker/src/main/kotlin/handlers/SessionHandler.kt` (session/subscription lifecycle)
 - Storage interfaces:

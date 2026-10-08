@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MIT
-// SPDX-FileCopyrightText: 2022 mochi-mqtt, mochi-co
-// SPDX-FileContributor: mochi-co
-
 package packets
 
 // TPacketCase contains data for cross-checking the encoding and decoding
@@ -451,7 +447,7 @@ var TPacketData = map[byte]TPacketCases{
 					ClientIdentifier: "zen",
 					UsernameFlag:     true,
 					PasswordFlag:     true,
-					Username:         []byte("mochi"),
+					Username:         []byte("relay"),
 					Password:         []byte(",./;"),
 				},
 			},
@@ -491,7 +487,7 @@ var TPacketData = map[byte]TPacketCases{
 					ClientIdentifier: "zen",
 					UsernameFlag:     true,
 					PasswordFlag:     true,
-					Username:         []byte("mochi"),
+					Username:         []byte("relay"),
 					Password:         []byte(",./;"),
 					WillFlag:         true,
 					WillTopic:        "lwt",
@@ -1150,13 +1146,13 @@ var TPacketData = map[byte]TPacketCases{
 				Properties: Properties{
 					SessionExpiryInterval:     uint32(120),
 					SessionExpiryIntervalFlag: true,
-					AssignedClientID:          "mochi-v5",
+					AssignedClientID:          "relay-v5",
 					ServerKeepAlive:           uint16(20),
 					ServerKeepAliveFlag:       true,
 					AuthenticationMethod:      "SHA-1",
 					AuthenticationData:        []byte("auth-data"),
 					ResponseInfo:              "response",
-					ServerReference:           "mochi-2",
+					ServerReference:           "relay-2",
 					ReasonString:              "reason",
 					ReceiveMaximum:            uint16(500),
 					TopicAliasMaximum:         uint16(999),
@@ -1205,7 +1201,7 @@ var TPacketData = map[byte]TPacketCases{
 				SessionPresent: true,
 				ReasonCode:     CodeSuccess.Code,
 				Properties: Properties{
-					AssignedClientID: "mochi",
+					AssignedClientID: "relay",
 					MaximumQos:       byte(1),
 					MaximumQosFlag:   true,
 				},
@@ -1452,7 +1448,7 @@ var TPacketData = map[byte]TPacketCases{
 				ReasonCode: CodeSuccess.Code,
 				Properties: Properties{
 					ReasonString:    "reason",
-					ServerReference: "mochi-2",
+					ServerReference: "relay-2",
 					User: []UserProperty{
 						{
 							Key: "hello",
@@ -1497,7 +1493,7 @@ var TPacketData = map[byte]TPacketCases{
 				ReasonCode: CodeSuccess.Code,
 				Properties: Properties{
 					ReasonString:    "reason",
-					ServerReference: "mochi-2",
+					ServerReference: "relay-2",
 					User: []UserProperty{
 						{
 							Key: "hello",
@@ -1580,7 +1576,7 @@ var TPacketData = map[byte]TPacketCases{
 					Remaining: 18,
 				},
 				TopicName: "a/b/c",
-				Payload:   []byte("hello mochi"),
+				Payload:   []byte("hello relay"),
 			},
 		},
 
@@ -1629,7 +1625,7 @@ var TPacketData = map[byte]TPacketCases{
 						},
 					},
 				},
-				Payload: []byte("hello mochi"),
+				Payload: []byte("hello relay"),
 			},
 		},
 		{
@@ -1653,7 +1649,7 @@ var TPacketData = map[byte]TPacketCases{
 					TopicAlias:     1,
 					TopicAliasFlag: true,
 				},
-				Payload: []byte("hello mochi"),
+				Payload: []byte("hello relay"),
 			},
 		},
 		{
@@ -1679,7 +1675,7 @@ var TPacketData = map[byte]TPacketCases{
 					TopicAlias:     uint16(1),
 					TopicAliasFlag: true,
 				},
-				Payload: []byte("hello mochi"),
+				Payload: []byte("hello relay"),
 			},
 		},
 
@@ -1701,7 +1697,7 @@ var TPacketData = map[byte]TPacketCases{
 					Remaining: 20,
 				},
 				TopicName: "a/b/c",
-				Payload:   []byte("hello mochi"),
+				Payload:   []byte("hello relay"),
 				PacketID:  7,
 			},
 		},
@@ -1738,7 +1734,7 @@ var TPacketData = map[byte]TPacketCases{
 						},
 					},
 				},
-				Payload: []byte("hello mochi"),
+				Payload: []byte("hello relay"),
 			},
 		},
 
@@ -1761,7 +1757,7 @@ var TPacketData = map[byte]TPacketCases{
 					Dup:       true,
 				},
 				TopicName: "a/b/c",
-				Payload:   []byte("hello mochi"),
+				Payload:   []byte("hello relay"),
 				PacketID:  7,
 			},
 		},
@@ -1841,7 +1837,7 @@ var TPacketData = map[byte]TPacketCases{
 						},
 					},
 				},
-				Payload: []byte("hello mochi"),
+				Payload: []byte("hello relay"),
 			},
 		},
 		{
@@ -1867,7 +1863,7 @@ var TPacketData = map[byte]TPacketCases{
 				Properties: Properties{
 					SubscriptionIdentifier: []int{2, 3},
 				},
-				Payload: []byte("hello mochi"),
+				Payload: []byte("hello relay"),
 			},
 		},
 
@@ -1889,7 +1885,7 @@ var TPacketData = map[byte]TPacketCases{
 					Remaining: 18,
 				},
 				TopicName: "a/b/c",
-				Payload:   []byte("hello mochi"),
+				Payload:   []byte("hello relay"),
 				PacketID:  1,
 			},
 		},
@@ -1908,7 +1904,7 @@ var TPacketData = map[byte]TPacketCases{
 					Retain: true,
 				},
 				TopicName: "a/b/c",
-				Payload:   []byte("hello mochi"),
+				Payload:   []byte("hello relay"),
 			},
 		},
 		{
@@ -1930,7 +1926,7 @@ var TPacketData = map[byte]TPacketCases{
 				},
 				TopicName:  "a/b/c",
 				Properties: Properties{},
-				Payload:    []byte("hello mochi"),
+				Payload:    []byte("hello relay"),
 			},
 		},
 		{
@@ -2012,7 +2008,7 @@ var TPacketData = map[byte]TPacketCases{
 					Qos:    1,
 				},
 				TopicName: "z/e/n",
-				Payload:   []byte("mochi mochi"),
+				Payload:   []byte("relay relay"),
 			},
 		},
 
@@ -3898,7 +3894,7 @@ var TPacketData = map[byte]TPacketCases{
 				ReasonCode: CodeSuccess.Code,
 				Properties: Properties{
 					ReasonString:    "reason",
-					ServerReference: "mochi-2",
+					ServerReference: "relay-2",
 					User: []UserProperty{
 						{
 							Key: "hello",

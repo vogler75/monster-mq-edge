@@ -30,7 +30,7 @@ The Features name `Kafka` belongs to the client bridge, not to this server.
 ### monster-mq-edge (Go) today
 
 - Single static binary, zero CGO (only exception: the opt-in WinCC OA
-  embedding library); MQTT via the vendored mochi-mqtt fork in `internal/mqtt/`.
+  embedding library); MQTT via the in-house MQTT engine in `internal/mqtt/`.
 - SQLite, PostgreSQL and MongoDB with the main broker's schemas; device configs
   with one manager per device type (`bridge/mqttclient`, `bridge/winccua`);
   PeerLink broker-to-broker forwarding.

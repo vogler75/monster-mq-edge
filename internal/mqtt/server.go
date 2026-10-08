@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MIT
-// SPDX-FileCopyrightText: 2022 mochi-mqtt, mochi-co
-// SPDX-FileContributor: mochi-co
-
 // Package mqtt provides a high performance, fully compliant MQTT v5 broker server with v3.1.1 backward compatibility.
 package mqtt
 
@@ -179,7 +175,7 @@ type ops struct {
 	log     *slog.Logger // a structured logger for the client
 }
 
-// New returns a new instance of mochi mqtt broker. Optional parameters
+// New returns a new instance of the MQTT broker. Optional parameters
 // can be specified to override some default settings (see Options).
 func New(opts *Options) *Server {
 	if opts == nil {
@@ -1042,7 +1038,7 @@ func (s *Server) processPublish(cl *Client, pk packets.Packet) error {
 			return nil
 		}
 		// qos 1&2, client version < 5
-		return s.DisconnectClient(cl, err.(packets.Code)) //  [MQTT-3.3.5-2] https://github.com/mochi-mqtt/server/issues/290#issuecomment-1709193269
+		return s.DisconnectClient(cl, err.(packets.Code)) //  [MQTT-3.3.5-2]
 	} else {
 		// error was not a packets.Code, so we return it as is.
 		return err
@@ -1762,7 +1758,7 @@ func (s *Server) Close() error {
 		s.Listeners.CloseAll(s.closeListenerClients)
 		s.hooks.OnStopped()
 		s.hooks.Stop()
-		s.Log.Info("mochi mqtt server stopped")
+		s.Log.Info("MQTT server stopped")
 	})
 	return nil
 }
