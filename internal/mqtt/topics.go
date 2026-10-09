@@ -618,7 +618,7 @@ func (x *TopicsIndex) scanSubscribers(topic string, d int, n *particle, subs *Su
 				if wild := particle.particles.get("#"); wild != nil && partKey != "+" {
 					x.gatherSubscriptions(topic, wild, subs) // also match any subs where filter/# is filter as per 4.7.1.2
 					x.gatherSharedSubscriptions(wild, subs)
-					x.gatherInlineSubscriptions(particle, subs)
+					x.gatherInlineSubscriptions(wild, subs)
 				}
 			}
 		}
@@ -749,8 +749,20 @@ func IsValidFilter(filter string, forPublish bool) bool {
 			return false // [MQTT-4.8.2-1]
 		}
 
-		if strings.ContainsRune(group, '+') || strings.ContainsRune(group, '#') {
-			return false // [MQTT-4.8.2-2]
+		if group == "" || strings.ContainsRune(group, '+') || strings.ContainsRune(group, '#') {
+			return false // [MQTT-4.8.2-1] [MQTT-4.8.2-2]
+		}
+
+		// the nested filter after $share/<group>/ must be non-empty
+		if len(filter) <= len(prefix)+1+len(group)+1 {
+			return false
+		}
+	}
+
+	// wildcards must occupy an entire topic level [MQTT-4.7.1-2] [MQTT-4.7.1-3]
+	for _, level := range strings.Split(filter, "/") {
+		if (strings.ContainsRune(level, '+') && level != "+") || (strings.ContainsRune(level, '#') && level != "#") {
+			return false
 		}
 	}
 

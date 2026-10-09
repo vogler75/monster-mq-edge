@@ -599,7 +599,8 @@ func (pk *Packet) DisconnectEncode(buf *bytes.Buffer) error {
 
 // DisconnectDecode decodes a Disconnect packet.
 func (pk *Packet) DisconnectDecode(buf []byte) error {
-	if pk.ProtocolVersion == 5 && pk.FixedHeader.Remaining > 1 {
+	// MQTT v5 3.14.2.1: a reason code alone (Remaining Length 1) is valid; properties follow only if more bytes remain.
+	if pk.ProtocolVersion == 5 && pk.FixedHeader.Remaining > 0 {
 		var err error
 		var offset int
 		pk.ReasonCode, offset, err = decodeByte(buf, offset)
@@ -607,7 +608,7 @@ func (pk *Packet) DisconnectDecode(buf []byte) error {
 			return fmt.Errorf("%s: %w", err, ErrMalformedReasonCode)
 		}
 
-		if pk.FixedHeader.Remaining > 2 {
+		if pk.FixedHeader.Remaining > 1 {
 			_, err = pk.Properties.Decode(pk.FixedHeader.Type, bytes.NewBuffer(buf[offset:]))
 			if err != nil {
 				return fmt.Errorf("%s: %w", err, ErrMalformedProperties)
@@ -990,8 +991,11 @@ func (pk *Packet) SubscribeDecode(buf []byte) error {
 		}
 
 		if pk.ProtocolVersion == 5 {
-			sub.decode(buf[offset])
-			offset += 1
+			option, offset, err = decodeByte(buf, offset) // bounds-checked: a truncated packet must not panic
+			if err != nil {
+				return ErrMalformedQos
+			}
+			sub.decode(option)
 		} else {
 			option, offset, err = decodeByte(buf, offset)
 			if err != nil {
@@ -1176,14 +1180,22 @@ func (pk *Packet) AuthDecode(buf []byte) error {
 	var offset int
 	var err error
 
+	// MQTT v5 3.15.2.1: an empty AUTH packet means Success with no properties.
+	if len(buf) == 0 {
+		pk.ReasonCode = CodeSuccess.Code
+		return nil
+	}
+
 	pk.ReasonCode, offset, err = decodeByte(buf, offset)
 	if err != nil {
 		return fmt.Errorf("%s: %w", err, ErrMalformedReasonCode)
 	}
 
-	_, err = pk.Properties.Decode(pk.FixedHeader.Type, bytes.NewBuffer(buf[offset:]))
-	if err != nil {
-		return fmt.Errorf("%s: %w", err, ErrMalformedProperties)
+	if offset < len(buf) { // properties may be omitted when only a reason code is present
+		_, err = pk.Properties.Decode(pk.FixedHeader.Type, bytes.NewBuffer(buf[offset:]))
+		if err != nil {
+			return fmt.Errorf("%s: %w", err, ErrMalformedProperties)
+		}
 	}
 
 	return nil

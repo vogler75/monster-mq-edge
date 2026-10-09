@@ -787,7 +787,7 @@ func (s *Server) processPacket(cl *Client, pk packets.Packet) error {
 		return err
 	}
 
-	if cl.State.Inflight.Len() > 0 && atomic.LoadInt32(&cl.State.Inflight.sendQuota) > 0 {
+	if cl.State.Inflight.Len() > 0 && cl.State.Inflight.SendQuota() > 0 {
 		next, ok := cl.State.Inflight.NextImmediate()
 		if ok {
 			_ = cl.WritePacket(next)
@@ -971,7 +971,7 @@ func (s *Server) processPublish(cl *Client, pk packets.Packet) error {
 		return nil
 	}
 
-	if atomic.LoadInt32(&cl.State.Inflight.receiveQuota) == 0 {
+	if pk.FixedHeader.Qos > 0 && cl.State.Inflight.ReceiveQuota() == 0 { // Receive Maximum only limits QoS 1/2
 		return s.DisconnectClient(cl, packets.ErrReceiveMaximum) // ~[MQTT-3.3.4-7] ~[MQTT-3.3.4-8]
 	}
 
@@ -1299,7 +1299,7 @@ func (s *Server) publishToClient(cl *Client, sub packets.Subscription, pk packet
 		}
 
 		out.PacketID = uint16(i) // [MQTT-2.2.1-4]
-		sentQuota := atomic.LoadInt32(&cl.State.Inflight.sendQuota)
+		sentQuota := cl.State.Inflight.SendQuota()
 
 		if ok := cl.State.Inflight.Set(out); ok { // [MQTT-4.3.2-3] [MQTT-4.3.3-3]
 			atomic.AddInt64(&s.Info.Inflight, 1)
@@ -1307,7 +1307,7 @@ func (s *Server) publishToClient(cl *Client, sub packets.Subscription, pk packet
 			cl.State.Inflight.DecreaseSendQuota()
 		}
 
-		if sentQuota == 0 && atomic.LoadInt32(&cl.State.Inflight.maximumSendQuota) > 0 {
+		if sentQuota == 0 && cl.State.Inflight.MaximumSendQuota() > 0 {
 			out.Expiry = -1
 			cl.State.Inflight.Set(out)
 			return out, nil
@@ -2017,11 +2017,8 @@ func (s *Server) clearExpiredRetainedMessages(now int64) {
 // clearExpiredInflights deletes any inflight messages which have expired.
 func (s *Server) clearExpiredInflights(now int64) {
 	for _, client := range s.Clients.GetAll() {
-		if deleted := client.ClearExpiredInflights(now, s.Options.Capabilities.MaximumMessageExpiryInterval); len(deleted) > 0 {
-			for _, id := range deleted {
-				s.hooks.OnQosDropped(client, packets.Packet{PacketID: id})
-			}
-		}
+		// ClearExpiredInflights already invokes OnQosDropped with the full packet for each expiry.
+		client.ClearExpiredInflights(now, s.Options.Capabilities.MaximumMessageExpiryInterval)
 	}
 }
 

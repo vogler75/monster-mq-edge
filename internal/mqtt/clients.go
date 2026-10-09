@@ -479,9 +479,9 @@ func (cl *Client) ReadPacket(fh *packets.FixedHeader) (pk packets.Packet, err er
 
 	atomic.AddInt64(&cl.ops.info.BytesReceived, int64(n))
 
-	// Decode the remaining packet values using a fresh copy of the bytes,
-	// otherwise the next packet will change the data of this one.
-	px := append([]byte{}, p[:]...)
+	// p is freshly allocated for this packet, so decoded fields may safely reference it;
+	// no further copy is needed to protect it from the next read.
+	px := p
 	switch pk.FixedHeader.Type {
 	case packets.Connect:
 		err = pk.ConnectDecode(px)

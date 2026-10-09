@@ -89,10 +89,7 @@ func (i *Inflight) GetAll(immediate bool) []packets.Packet {
 // This typically occurs when the quota has been exhausted, and we need to wait until new quota
 // is free to continue sending.
 func (i *Inflight) NextImmediate() (packets.Packet, bool) {
-	i.RLock()
-	defer i.RUnlock()
-
-	m := i.GetAll(true)
+	m := i.GetAll(true) // GetAll takes the read lock; locking here too would recursively RLock
 	if len(m) > 0 {
 		return m[0], true
 	}
@@ -109,6 +106,27 @@ func (i *Inflight) Delete(id uint16) bool {
 	delete(i.internal, id)
 
 	return ok
+}
+
+// ReceiveQuota returns the remaining inbound qos quota.
+func (i *Inflight) ReceiveQuota() int32 {
+	i.quotaMu.Lock()
+	defer i.quotaMu.Unlock()
+	return i.receiveQuota
+}
+
+// SendQuota returns the remaining outbound qos quota.
+func (i *Inflight) SendQuota() int32 {
+	i.quotaMu.Lock()
+	defer i.quotaMu.Unlock()
+	return i.sendQuota
+}
+
+// MaximumSendQuota returns the maximum outbound qos quota.
+func (i *Inflight) MaximumSendQuota() int32 {
+	i.quotaMu.Lock()
+	defer i.quotaMu.Unlock()
+	return i.maximumSendQuota
 }
 
 // DecreaseReceiveQuota reduces the receive quota by 1.

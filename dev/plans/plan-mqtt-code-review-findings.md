@@ -6,6 +6,37 @@ Scope: `internal/mqtt/` and the direct broker integration needed to validate
 the retained-message behaviour. The package is the in-repository MQTT engine
 with edge-specific modifications.
 
+## Status
+
+Last verified against the source on 2026-10-09. Regression tests for the fixes
+are in `internal/mqtt/review_fixes_test.go` and
+`internal/mqtt/packets/review_fixes_test.go`.
+
+| Finding | Status |
+|---|---|
+| P0 Truncated v5 SUBSCRIBE panics | **Done** (`packets.go` `SubscribeDecode` bounds-checks the options byte) |
+| P1 Deferred QoS send removes ack state | Open |
+| P1 QoS 2 ack handlers skip state validation | Open |
+| P1 Quota mixed atomic/mutex access | **Partially done**: data race removed through locked getters (`ReceiveQuota`, `SendQuota`, `MaximumSendQuota`); check-then-decrement is still not atomic |
+| P1 MEMORY retained store retains nothing | **Done** (fixed earlier) |
+| P1 CONNECT has no deadline/client-limit slot | Open |
+| P1 MaxMessageSize not applied | **Done** (fixed earlier, `broker/server.go`) |
+| P1 Topic alias resolved after ACL | Open |
+| P1 StorageHook persists rejected subscriptions | **Done** (fixed earlier, `hook_storage.go`) |
+| P1 Expired sessions leave state in memory | **Done** (fixed earlier, `clearExpiredClients`) |
+| P2 `NextImmediate` recursive `RLock` | **Done** |
+| P2 Inline `#` misses nested topics | **Done** |
+| P2 Receive Maximum blocks QoS 0 | **Done** |
+| P2 Reason-only DISCONNECT decoded as success | **Done** |
+| P2 DB retained messages discard expiry | **Done** (fixed earlier); small gap: already-expired rows are not skipped at selection time |
+| P2 Malformed wildcard filters accepted | **Done** |
+| Improvement: `ReadPacket` double copy | **Done** |
+| Improvement: packet-size check omits length bytes | **Done** (fixed earlier) |
+| Improvement: `DecodeLength` > 4 bytes | **Done** |
+| Improvement: empty AUTH rejected | **Done** |
+| Improvement: double `OnQosDropped` | **Done** |
+| Improvement: listener accept-during-shutdown race | Open |
+
 ## Findings
 
 ### P1: Sending a deferred QoS message removes its acknowledgement state
@@ -63,7 +94,7 @@ the valid state transition, and adjust only the quota belonging to that flow:
 `receiveQuota` when an inbound QoS flow completes and `sendQuota` when an
 outbound QoS flow completes.
 
-### P1: Quota access mixes mutex-protected writes with atomic reads
+### P1: Quota access mixes mutex-protected writes with atomic reads — **Partially done**
 
 The edge change to `Inflight` writes quota fields as ordinary integers while
 holding `quotaMu`. Several server paths read those same fields through
@@ -83,7 +114,7 @@ use them exclusively, or return to fully atomic fields with compare-and-swap
 operations. Avoid a separate check followed later by an ignored decrement
 result.
 
-### P2: `NextImmediate` recursively acquires an `RWMutex`
+### P2: `NextImmediate` recursively acquires an `RWMutex` — **Done**
 
 `NextImmediate` acquires `Inflight.RLock` and then calls `GetAll`, which tries
 to acquire the same `RLock` again. Go explicitly prohibits recursive read
@@ -95,7 +126,7 @@ Location: `internal/mqtt/inflight.go:95`
 Recommendation: remove the outer lock and use `GetAll(true)`, or introduce an
 unlocked helper used while holding the outer lock.
 
-### P2: Inline `#` subscriptions miss nested topics
+### P2: Inline `#` subscriptions miss nested topics — **Done**
 
 In the wildcard branch of `scanSubscribers`, ordinary and shared subscriptions
 are collected from `wild`, but inline subscriptions are collected from
@@ -116,7 +147,7 @@ Location: `internal/mqtt/topics.go:622`
 
 Recommendation: call `x.gatherInlineSubscriptions(wild, subs)`.
 
-### P1: MEMORY retained-store mode retains nothing
+### P1: MEMORY retained-store mode retains nothing — **Done**
 
 The MQTT server treats every hook that provides `OnSelectRetainedMessages` as
 the retained-message source and bypasses its own in-memory retained index.
@@ -137,7 +168,7 @@ database-backed retained stores. That lets `Server.retainMessage` use
 
 ## Second-pass findings
 
-### P0: A truncated MQTT v5 SUBSCRIBE packet can panic the broker
+### P0: A truncated MQTT v5 SUBSCRIBE packet can panic the broker — **Done**
 
 `SubscribeDecode` decodes a topic filter and then reads its subscription
 options using `buf[offset]` without verifying that the byte exists. A packet
@@ -171,7 +202,7 @@ Recommendation: apply a short configurable CONNECT-handshake deadline before
 the first read and account for pending connections separately or reserve the
 connection slot as soon as the listener accepts the socket.
 
-### P1: The configured MaxMessageSize is not applied to the MQTT server
+### P1: The configured MaxMessageSize is not applied to the MQTT server — **Done**
 
 `config.Config.MaxMessageSize` defaults to 1 MiB and is present in the example
 configuration and JSON schema, but broker construction does not copy it into
@@ -215,7 +246,7 @@ Locations:
 Recommendation: resolve aliases first, distinguish lookup from registration,
 reject an unknown alias, then validate and authorize the resolved topic name.
 
-### P1: StorageHook persists subscriptions which the broker rejected
+### P1: StorageHook persists subscriptions which the broker rejected — **Done**
 
 `processSubscribe` calculates one SUBACK reason code per filter and skips
 adding invalid or unauthorized filters to the MQTT topic index. It still calls
@@ -243,7 +274,7 @@ Recommendation: persist only filters whose SUBACK reason code is a granted QoS.
 Extend unsubscribe hook handling so persistence is changed only for filters
 which the broker actually removed.
 
-### P1: Expired sessions leave subscriptions and inflight state in memory
+### P1: Expired sessions leave subscriptions and inflight state in memory — **Done**
 
 The regular clean-session disconnect path calls `ClearInflights` and
 `UnsubscribeClient` before deleting the client. The periodic expiry path only
@@ -262,7 +293,7 @@ Locations:
 Recommendation: clear inflights and unsubscribe the client before deleting an
 expired session, using the same takeover safeguards as the disconnect path.
 
-### P2: Receive Maximum incorrectly blocks QoS 0 publications
+### P2: Receive Maximum incorrectly blocks QoS 0 publications — **Done**
 
 `processPublish` disconnects a client whenever its inbound receive quota is
 zero without first checking the new packet's QoS. MQTT v5 Receive Maximum only
@@ -274,7 +305,7 @@ Location: `internal/mqtt/server.go:911`
 Recommendation: apply the receive-quota check and reservation only when
 `pk.FixedHeader.Qos > 0`.
 
-### P2: A valid reason-only MQTT v5 DISCONNECT is decoded as success
+### P2: A valid reason-only MQTT v5 DISCONNECT is decoded as success — **Done**
 
 `DisconnectDecode` reads the reason code only when Remaining Length is greater
 than one. MQTT v5 permits a packet containing a reason byte without a property
@@ -288,7 +319,7 @@ Recommendation: decode the reason when Remaining Length is at least one and
 decode properties when more bytes remain. Validate that the property-length
 field accounts for the entire remainder.
 
-### P2: Database-backed retained messages discard their expiry
+### P2: Database-backed retained messages discard their expiry — **Done**
 
 `StorageHook.OnRetainMessage` persists the topic, payload, QoS, client, and
 timestamp but does not copy `MessageExpiryInterval`. The database row therefore
@@ -310,7 +341,7 @@ Recommendation: persist the effective expiry interval and timestamp, omit
 expired rows, reconstruct an absolute expiry on load, and send the remaining
 interval to subscribers.
 
-### P2: Topic-filter validation accepts malformed wildcard filters
+### P2: Topic-filter validation accepts malformed wildcard filters — **Done**
 
 `IsValidFilter` checks only that `#` is the final character. It does not require
 `#` or `+` to occupy an entire topic level, and it does not reject an empty
@@ -326,21 +357,21 @@ must be non-empty.
 
 ## Improvement opportunities
 
-- `Client.ReadPacket` allocates the full remaining packet buffer and immediately
+- **Done:** `Client.ReadPacket` allocates the full remaining packet buffer and immediately
   copies it once more before decoding. The first allocation is already unique
   to this packet, so decoding directly from it eliminates one full payload-sized
   copy per inbound packet. Location: `internal/mqtt/clients.go:471`.
-- The maximum-packet-size comparison counts the fixed-header byte and payload
+- **Done:** The maximum-packet-size comparison counts the fixed-header byte and payload
   but omits the one to four bytes used to encode Remaining Length. Once the
   limit is wired to configuration, packets can exceed it by up to four bytes.
   Location: `internal/mqtt/clients.go:457`.
-- `DecodeLength` does not reject an encoding after its fourth byte. Continuation
+- **Done:** `DecodeLength` does not reject an encoding after its fourth byte. Continuation
   bytes whose low seven bits are zero can extend the read beyond the MQTT
   variable-byte integer limit. Location: `internal/mqtt/packets/codec.go:146`.
-- `AuthDecode` requires both a reason code and properties. MQTT v5 also permits
+- **Done:** `AuthDecode` requires both a reason code and properties. MQTT v5 also permits
   an empty AUTH packet, with success and no properties as the defaults.
   Location: `internal/mqtt/packets/packets.go:1141`.
-- `ClearExpiredInflights` invokes `OnQosDropped`, and the server invokes the same
+- **Done:** `ClearExpiredInflights` invokes `OnQosDropped`, and the server invokes the same
   hook again for every returned packet ID. Hooks receive two notifications per
   expiry, with the second lacking the original packet fields. Locations:
   `internal/mqtt/clients.go:343` and `internal/mqtt/server.go:1827`.

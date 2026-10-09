@@ -160,6 +160,10 @@ func DecodeLength(b io.ByteReader) (n, bu int, err error) {
 			break
 		}
 
+		if bu == 4 { // a Variable Byte Integer is at most four bytes [MQTT-1.5.5-1]
+			return 0, bu, ErrMalformedVariableByteInteger
+		}
+
 		multiplier += 7
 		bu++
 	}
