@@ -65,7 +65,7 @@ func TestPeerLinkSharedSubscriptions(t *testing.T) {
 func TestPeerLinkOfflineQueueAndNoLocal(t *testing.T) {
 	for _, queue := range []bool{false, true} {
 		t.Run(fmt.Sprintf("queue=%v", queue), func(t *testing.T) {
-			q := func(c *config.Config) { c.PeerLink.Receive.Queue = queue }
+			q := func(c *config.Config) { c.PeerLink.Receive.Queue = &queue }
 			a := startPL(t, "pl14a", 27335, 27336, []config.PeerConfig{plPeer("pl14b", 0)})
 			b := startPL(t, "pl14b", 27337, 0, []config.PeerConfig{plPullOnly("pl14a", 27336)}, q)
 			b.waitStreaming("pl14a")

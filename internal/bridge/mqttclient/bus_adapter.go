@@ -17,7 +17,13 @@ type BusAdapter struct {
 }
 
 func (a *BusAdapter) Subscribe(filters []string, buffer int) (int, <-chan LocalMessage) {
-	id, raw := a.Bus.Subscribe(filters, buffer)
+	var id int
+	var raw <-chan stores.BrokerMessage
+	if a.BridgeOutbound {
+		id, raw = a.Bus.Subscribe(filters, buffer)
+	} else {
+		id, raw = a.Bus.SubscribeLocal(filters, buffer)
+	}
 	out := make(chan LocalMessage, buffer)
 	go func() {
 		defer close(out)

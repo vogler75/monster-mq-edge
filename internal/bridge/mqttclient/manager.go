@@ -31,6 +31,49 @@ type Manager struct {
 
 	incIn  func(int)
 	incOut func(int)
+
+	onChange func()
+}
+
+// SetOnChange installs f, called after Start and Reload re-read the device configs.
+func (m *Manager) SetOnChange(f func()) {
+	m.mu.Lock()
+	m.onChange = f
+	m.mu.Unlock()
+}
+
+func (m *Manager) notifyChange() {
+	m.mu.Lock()
+	f := m.onChange
+	m.mu.Unlock()
+	if f != nil {
+		f()
+	}
+}
+
+// StandbyFilters returns the outbound filters of every bridge on this node with Redundancy
+// HOT_STANDBY or COLD_STANDBY, enabled or not (contract C6): PeerLink announces them so a
+// takeover finds the feed already in place.
+func (m *Manager) StandbyFilters(ctx context.Context) ([]string, error) {
+	devices, err := m.store.GetAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, d := range devices {
+		if d.Type != "" && d.Type != "MQTT_CLIENT" {
+			continue
+		}
+		if d.NodeID != m.nodeID && d.NodeID != "local" && d.NodeID != "*" {
+			continue
+		}
+		var cfg Config
+		if json.Unmarshal([]byte(d.Config), &cfg) != nil || !cfg.Standby() {
+			continue
+		}
+		out = append(out, cfg.OutboundFilters()...)
+	}
+	return out, nil
 }
 
 func (m *Manager) SetCounters(incIn, incOut func(int)) {
@@ -119,6 +162,7 @@ func (m *Manager) Start(ctx context.Context) error {
 		m.lastConfig[d.Name] = d.Config
 		m.mu.Unlock()
 	}
+	m.notifyChange()
 	return nil
 }
 
@@ -194,6 +238,7 @@ func (m *Manager) Reload(ctx context.Context) error {
 		m.lastConfig[name] = wantedRaw[name]
 		m.mu.Unlock()
 	}
+	m.notifyChange()
 	return nil
 }
 

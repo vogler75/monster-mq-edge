@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"path/filepath"
 	"runtime/debug"
@@ -434,6 +435,21 @@ func build(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus, opts Optio
 		*undo = append(*undo, func() { _ = m.Close() })
 		pl = m
 		storageHook.SetRetainedViaOA(pl.RetainedViaOA)
+		// Local interest that is not an MQTT session (plan-peerlink-interest-routing 4.1). The
+		// HOT/COLD bridge provider (C6) is wired with the bridge manager below.
+		if sink := pl.InterestSink(); sink != nil {
+			if cfg.PeerLink.Receive.GetBus() {
+				bus.SetObserver(sink)
+			}
+			if cfg.PeerLink.Receive.GetArchive() {
+				provide := func() { sink.SetProvided("archive", nil, archives.InterestFilters()) }
+				archives.SetOnChange(provide)
+				provide()
+			}
+			if err := restorePeerLinkInterest(ctx, pl, storage); err != nil {
+				logger.Warn("peerlink: restore interest of offline sessions failed", "err", err)
+			}
+		}
 		// Before StorageHook and QueueHook: the capture append runs ahead of
 		// the potentially blocking queue write in OnPublished.
 		if err := server.AddHook(pl.Hook(), nil); err != nil {
@@ -530,6 +546,18 @@ func build(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus, opts Optio
 		bridges = mqttclient.NewManager(storage.DeviceConfig, publishFn, busAdapter, cfg.NodeID, logger)
 		if collector != nil {
 			bridges.SetCounters(collector.IncBridgeIn, collector.IncBridgeOut)
+		}
+		if pl != nil {
+			if sink := pl.InterestSink(); sink != nil {
+				bridges.SetOnChange(func() {
+					filters, err := bridges.StandbyFilters(ctx)
+					if err != nil {
+						logger.Warn("peerlink: read standby bridge filters failed", "err", err)
+						return
+					}
+					sink.SetProvided("redundancy", filters, nil)
+				})
+			}
 		}
 	}
 
@@ -779,6 +807,43 @@ func hydrateSubscriptionIndex(ctx context.Context, subs *topic.SubscriptionIndex
 	})
 }
 
+// restorePeerLinkInterest announces the subscriptions of stored persistent sessions: the broker
+// restores them only when their client reconnects, yet they hold interest while offline.
+func restorePeerLinkInterest(ctx context.Context, pl *peerlink.Manager, storage *stores.Storage) error {
+	sessions := map[string]stores.SessionInfo{}
+	if err := storage.Sessions.IterateSessions(ctx, func(si stores.SessionInfo) bool {
+		if !si.CleanSession {
+			sessions[si.ClientID] = si
+		}
+		return true
+	}); err != nil {
+		return err
+	}
+	if len(sessions) == 0 {
+		return nil
+	}
+	filters := map[string][]string{}
+	if err := storage.Subscriptions.IterateSubscriptions(ctx, func(sub stores.MqttSubscription) bool {
+		if _, ok := sessions[sub.ClientID]; ok && mqtt.IsValidFilter(sub.TopicFilter, false) {
+			filters[sub.ClientID] = append(filters[sub.ClientID], sub.TopicFilter)
+		}
+		return true
+	}); err != nil {
+		return err
+	}
+	now := time.Now()
+	for client, fs := range filters {
+		si := sessions[client]
+		updated := si.UpdateTime
+		if si.Connected {
+			updated = now // not marked offline: the node stopped while the client was connected
+		}
+		pl.RestoreInterest(client, fs, byte(si.ProtocolVersion), si.CleanSession,
+			uint32(max(0, min(si.SessionExpiryInterval, math.MaxUint32))), updated)
+	}
+	return nil
+}
+
 // startNative resolves the OA local system, restores persisted native
 // interests and removes persisted subscriptions that no longer validate.
 func (s *Server) startNative() error {
@@ -1010,6 +1075,7 @@ func (s *Server) Storage() *stores.Storage                { return s.storage }
 func (s *Server) Bus() *pubsub.Bus                        { return s.bus }
 func (s *Server) Subscriptions() *topic.SubscriptionIndex { return s.subs }
 func (s *Server) Archives() *archive.Manager              { return s.archives }
+func (s *Server) Bridges() *mqttclient.Manager            { return s.bridges }
 func (s *Server) AuthCache() *mauth.Cache                 { return s.authCache }
 func (s *Server) MQTT() *mqtt.Server                      { return s.mqtt }
 

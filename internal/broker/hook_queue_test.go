@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"monstermq.io/edge/internal/config"
 	mqtt "monstermq.io/edge/internal/mqtt"
 	"monstermq.io/edge/internal/mqtt/hooks/auth"
 	"monstermq.io/edge/internal/mqtt/packets"
@@ -131,7 +132,7 @@ func TestQueueHookReplicas(t *testing.T) {
 		fwd    packets.Forward
 		queued int64
 	}{
-		{"default skips replicas", false, packets.Forward{}, 0},
+		{"Receive.Queue false skips replicas", false, packets.Forward{}, 0},
 		{"Receive.Queue queues replicas", true, packets.Forward{}, 1},
 		{"wills never queued", true, packets.Forward{Will: true}, 0},
 		{"snapshot values never queued", true, packets.Forward{Snapshot: true}, 0},
@@ -147,6 +148,19 @@ func TestQueueHookReplicas(t *testing.T) {
 				t.Errorf("queued %d, want %d", got, tc.queued)
 			}
 		})
+	}
+}
+
+// An unset Receive section queues forwarded QoS 1 publishes for offline persistent sessions
+// (plan-peerlink-interest-routing IR-M0): interest routing makes such a session the reason the
+// peer receives the topic at all.
+func TestQueueHookQueuesReplicasByDefault(t *testing.T) {
+	e := newQueueEnv(t)
+	e.hook(t, WithPeerLink(NewPeerPolicy(config.PeerLinkReceive{}), "node-a"))
+	f := packets.Forward{SourceNode: "node-b", ClientID: "pub1", Epoch: 1, Offset: 1}
+	e.injectReplica(t, &f, "a/1")
+	if got := e.count(t, "own"); got != 1 {
+		t.Fatalf("queued %d, want 1", got)
 	}
 }
 

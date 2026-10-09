@@ -79,7 +79,7 @@ func frameSeeds() [][]byte {
 		RecordsBytes: uint32(len(recs[0]) + len(recs[1]))}
 	var prefix [BatchPrefixLen]byte
 	EncodeBatchPrefix(&prefix, &h)
-	SetBatchCRC(&prefix, recs)
+	SetBatchCRC(&prefix, nil, recs)
 	batch := bytes.Join(append([][]byte{prefix[:]}, recs...), nil)
 	seeds = append(seeds, batch, all, []byte{6, 0, 0, 0, 0x7e, 1, 2, 3, 4, 5})
 	return seeds
@@ -98,7 +98,7 @@ func FuzzFrame(f *testing.F) {
 			}
 			fm, err := DecodeFrame(typ, body)
 			if err != nil {
-				if !errors.Is(err, ErrUnknownFrame) && !errors.Is(err, ErrShortFrame) && !errors.Is(err, ErrBatchRecords) && !errors.Is(err, ErrBatchCountRange) {
+				if !errors.Is(err, ErrUnknownFrame) && !errors.Is(err, ErrShortFrame) && !errors.Is(err, ErrBatchRecords) && !errors.Is(err, ErrBatchCountRange) && !errors.Is(err, ErrInterestCount) && !errors.Is(err, ErrBatchSparse) {
 					t.Fatalf("unexpected error %v", err)
 				}
 				if errors.Is(err, ErrUnknownFrame) == typ.Known() {

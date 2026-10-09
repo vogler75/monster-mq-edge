@@ -690,3 +690,18 @@ func validStringBytes(b []byte) bool {
 	}
 	return utf8.Valid(b)
 }
+
+// PeekTopic returns the flags and the topic bytes of a record frame without validating the rest of
+// the record; ok is false when the frame is too short to hold them.
+func PeekTopic(frame []byte) (flags uint16, topic []byte, ok bool) {
+	if len(frame) < RecordHeaderLen {
+		return 0, nil, false
+	}
+	le := binary.LittleEndian
+	hdr := int(frame[offHdrLen])
+	tl := int(le.Uint16(frame[offTopicLen:]))
+	if hdr < RecordHeaderLen || hdr+tl > len(frame) {
+		return 0, nil, false
+	}
+	return le.Uint16(frame[offFlags:]), frame[hdr : hdr+tl], true
+}

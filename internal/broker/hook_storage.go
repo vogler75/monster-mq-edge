@@ -61,11 +61,11 @@ type PeerPolicy struct {
 }
 
 // DefaultPeerPolicy is the policy of an unset PeerLink.Receive section.
-func DefaultPeerPolicy() PeerPolicy { return PeerPolicy{Bus: true, Archive: true} }
+func DefaultPeerPolicy() PeerPolicy { return PeerPolicy{Bus: true, Archive: true, Queue: true} }
 
 // NewPeerPolicy reads the policy from the PeerLink receive settings.
 func NewPeerPolicy(r config.PeerLinkReceive) PeerPolicy {
-	return PeerPolicy{Bus: r.GetBus(), Archive: r.GetArchive(), Queue: r.Queue}
+	return PeerPolicy{Bus: r.GetBus(), Archive: r.GetArchive(), Queue: r.GetQueue()}
 }
 
 // retainedCache is implemented by the WinCC OA retained store.

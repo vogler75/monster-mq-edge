@@ -74,6 +74,13 @@ PeerLink:
     MaxRecordAgeMs: 60000
     MaxFrameBytes: 8454144
     InjectWorkers: 4
+  Interest:
+    Enabled: true
+    Unknown: NONE
+    FlushMs: 10
+    MaxScanPerFetch: 32768
+    MaxFiltersPerPeer: 5000
+    MaxFilterBytes: 512
   Peers:
     # This node; ignored (NodeIds compare in lower case).
     - NodeId: OA-Host-A
@@ -108,6 +115,7 @@ PeerLink:
       Receive:
         Include: []
         Exclude: []
+      Interest: "OFF"
     # Serve only: it pulls from this node, mTLS against the peer CA.
     - NodeId: oa-host-d
       Tls:

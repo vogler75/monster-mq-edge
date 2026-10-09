@@ -62,6 +62,9 @@ const (
 	FrameCommit      FrameType = 0x12
 	FramePing        FrameType = 0x13
 	FramePong        FrameType = 0x14
+	// FrameInterestSnapshot and FrameInterestDelta (C→S) need the agreed CapInterest.
+	FrameInterestSnapshot FrameType = 0x20
+	FrameInterestDelta    FrameType = 0x21
 )
 
 func (t FrameType) String() string {
@@ -84,6 +87,10 @@ func (t FrameType) String() string {
 		return "PING"
 	case FramePong:
 		return "PONG"
+	case FrameInterestSnapshot:
+		return "INTEREST_SNAPSHOT"
+	case FrameInterestDelta:
+		return "INTEREST_DELTA"
 	}
 	return "UNKNOWN"
 }
@@ -92,7 +99,7 @@ func (t FrameType) String() string {
 func (t FrameType) Known() bool {
 	switch t {
 	case FrameServerHello, FrameHello, FrameHelloOK, FrameGoAway, FrameFetch, FrameBatch, FrameCommit,
-		FramePing, FramePong:
+		FramePing, FramePong, FrameInterestSnapshot, FrameInterestDelta:
 		return true
 	}
 	return false
@@ -104,6 +111,12 @@ const (
 	CapSnapshotFill uint64 = 1 << 1
 	CapResyncNewer  uint64 = 1 << 2
 	CapTombstone    uint64 = 1 << 3
+	// CapRole is reserved for the redundancy role extension (plan-peerlink-redundancy).
+	CapRole uint64 = 1 << 4
+	// CapInterest enables INTEREST_SNAPSHOT/INTEREST_DELTA and sparse batches
+	// (plan-peerlink-interest-routing 5.1). It is offered only with PeerLink.Interest.Enabled and is
+	// not part of CapsV1.
+	CapInterest uint64 = 1 << 5
 
 	CapsV1 = CapBatchCRC | CapSnapshotFill | CapResyncNewer | CapTombstone
 )
@@ -135,6 +148,31 @@ const (
 	BatchFlagSnapshot    uint16 = 1 << 3
 	BatchFlagSnapshotEnd uint16 = 1 << 4
 	BatchFlagTruncated   uint16 = 1 << 5
+	// BatchFlagSparse: a u32 span and u32 deltas[Count] follow the header (needs CapInterest).
+	BatchFlagSparse uint16 = 1 << 6
+)
+
+// Interest classes of INTEREST_SNAPSHOT/INTEREST_DELTA entries.
+const (
+	InterestNone uint8 = 0 // delta only: the filter is withdrawn
+	InterestVol  uint8 = 1
+	InterestPer  uint8 = 2
+)
+
+// InterestExpiryNever is the expirySec of a PER entry that never expires.
+const InterestExpiryNever uint32 = 0xFFFFFFFF
+
+// INTEREST_SNAPSHOT flags.
+const (
+	InterestFlagFirst uint8 = 1 << 0
+	InterestFlagLast  uint8 = 1 << 1
+)
+
+// Interest frame sizes: the fixed body before the entries and the fixed part of one entry.
+const (
+	InterestSnapshotHeaderLen = 9
+	InterestDeltaHeaderLen    = 8
+	InterestEntryOverhead     = 7
 )
 
 // RetainedClass is the retained store class announced in HELLO and HELLO_OK.
@@ -232,6 +270,10 @@ var (
 	// ErrBatchCountRange: the batch count exceeds the number of record frames (at least 4 bytes
 	// each) its records region can hold. No source sends this; it is a protocol fault.
 	ErrBatchCountRange = errors.New("peerlink/wire: batch count exceeds what the records region can hold")
+	// ErrBatchSparse: a sparse batch violates its span/deltas rules (protocol error).
+	ErrBatchSparse = errors.New("peerlink/wire: invalid sparse batch span or deltas")
+	// ErrInterestCount: an interest frame's count does not match its body (protocol error).
+	ErrInterestCount = errors.New("peerlink/wire: interest entry count does not match the frame body")
 )
 
 // MinRecordFrame is the smallest record frame a records region can delimit: the u32 recLen alone.
@@ -310,6 +352,10 @@ func DecodeFrame(t FrameType, body []byte) (Frame, error) {
 		f = new(Ping)
 	case FramePong:
 		f = new(Pong)
+	case FrameInterestSnapshot:
+		f = new(InterestSnapshot)
+	case FrameInterestDelta:
+		f = new(InterestDelta)
 	default:
 		return nil, ErrUnknownFrame
 	}
@@ -788,20 +834,42 @@ func (h *BatchHeader) parse(b []byte) {
 	h.CRC32C = le.Uint32(b[64:])
 }
 
-// EncodeBatchPrefix writes everything before the records of a BATCH: frameLen (from h.RecordsBytes),
-// the type and the header with h.CRC32C as given. The serve path writes it followed by the record
-// frames, e.g. as one net.Buffers. It does not allocate.
+// SparseTableLen is the length of the sparse table of a batch with count records.
+func SparseTableLen(count uint32) int { return 4 + 4*int(count) }
+
+// sparseLen is the sparse table length h announces: 0 without BatchFlagSparse.
+func (h *BatchHeader) sparseLen() uint32 {
+	if h.Flags&BatchFlagSparse == 0 {
+		return 0
+	}
+	return uint32(SparseTableLen(h.Count))
+}
+
+// EncodeBatchPrefix writes everything before the sparse table and the records of a BATCH: frameLen
+// (from h.RecordsBytes, plus the sparse table when BatchFlagSparse is set), the type and the header
+// with h.CRC32C as given. The serve path writes it followed by the sparse table, if any, and the
+// record frames, e.g. as one net.Buffers. It does not allocate.
 func EncodeBatchPrefix(dst *[BatchPrefixLen]byte, h *BatchHeader) {
-	binary.LittleEndian.PutUint32(dst[0:], uint32(1+BatchHeaderLen)+h.RecordsBytes)
+	binary.LittleEndian.PutUint32(dst[0:], uint32(1+BatchHeaderLen)+h.sparseLen()+h.RecordsBytes)
 	dst[4] = byte(FrameBatch)
 	h.put(dst[FrameHeaderLen:])
 }
 
+// AppendSparseTable appends the sparse table: u32 span and one u32 delta per record.
+func AppendSparseTable(dst []byte, span uint32, deltas []uint32) []byte {
+	dst = binary.LittleEndian.AppendUint32(dst, span)
+	for _, d := range deltas {
+		dst = binary.LittleEndian.AppendUint32(dst, d)
+	}
+	return dst
+}
+
 // SetBatchCRC computes the batch CRC32C (Castagnoli) over the header fields before crc32c in an
-// encoded prefix, followed by every record in order, stores it in the prefix and returns it. The
-// prefix flags must already include BatchFlagCRC. It does not allocate.
-func SetBatchCRC(prefix *[BatchPrefixLen]byte, records [][]byte) uint32 {
+// encoded prefix, the sparse table (nil for a dense batch) and every record in order, stores it in
+// the prefix and returns it. The prefix flags must already include BatchFlagCRC. It does not allocate.
+func SetBatchCRC(prefix *[BatchPrefixLen]byte, sparse []byte, records [][]byte) uint32 {
 	crc := crc32.Update(0, castagnoli, prefix[FrameHeaderLen:FrameHeaderLen+batchCRCCovered])
+	crc = crc32.Update(crc, castagnoli, sparse)
 	for _, r := range records {
 		crc = crc32.Update(crc, castagnoli, r)
 	}
@@ -809,51 +877,109 @@ func SetBatchCRC(prefix *[BatchPrefixLen]byte, records [][]byte) uint32 {
 	return crc
 }
 
-// Batch is BATCH (0x11, S→C): the header and a view of the records region.
+// Batch is BATCH (0x11, S→C): the header, the sparse table if any, and a view of the records region.
 type Batch struct {
 	Header  BatchHeader
 	Records []byte // RecordsBytes bytes of back-to-back records; a view into the decoded body
-	raw     []byte // the decoded header bytes, so CRC checks need no re-encoding
+	// Sparse is the raw sparse table (u32 span, u32 deltas[Count]) of a BatchFlagSparse batch, nil
+	// otherwise; a view into the decoded body. Use Span and Delta to read it.
+	Sparse []byte
+	raw    []byte // the decoded header bytes, so CRC checks need no re-encoding
 }
 
 func (*Batch) Type() FrameType { return FrameBatch }
 
 // AppendFrame appends the header as given (RecordsBytes and CRC32C are not recomputed, so test peers
-// can craft faulty frames) followed by Records.
+// can craft faulty frames) followed by Sparse and Records.
 func (m *Batch) AppendFrame(dst []byte) []byte {
-	dst, s := beginFrame(dst, FrameBatch, BatchHeaderLen+len(m.Records))
+	dst, s := beginFrame(dst, FrameBatch, BatchHeaderLen+len(m.Sparse)+len(m.Records))
 	o := len(dst)
 	dst = grow(dst, BatchHeaderLen)
 	m.Header.put(dst[o:])
+	dst = append(dst, m.Sparse...)
 	dst = append(dst, m.Records...)
 	return endFrame(dst, s)
 }
 
-// Decode parses the header and sets Records to a view of the records region. Bytes after the region
-// are ignored. A region larger than the body is ErrBatchRecords and a count the region cannot hold is
-// ErrBatchCountRange; both are transport-level faults. Callers may size per-record state by Count
-// only after Decode succeeded.
+// Decode parses the header, the sparse table and sets Records to a view of the records region. Bytes
+// after the region are ignored. A region larger than the body is ErrBatchRecords, a count the region
+// cannot hold is ErrBatchCountRange and an invalid sparse table is ErrBatchSparse; all are
+// transport-level faults. Callers may size per-record state by Count only after Decode succeeded.
 func (m *Batch) Decode(body []byte) error {
-	m.raw = nil
+	m.raw, m.Sparse = nil, nil
 	if len(body) < BatchHeaderLen {
 		return ErrShortFrame
 	}
 	m.Header.parse(body)
-	end := uint64(BatchHeaderLen) + uint64(m.Header.RecordsBytes)
+	start := uint64(BatchHeaderLen)
+	if m.Header.Flags&BatchFlagSparse != 0 {
+		end := start + uint64(SparseTableLen(m.Header.Count))
+		if end > uint64(len(body)) {
+			m.Records = nil
+			return ErrBatchSparse
+		}
+		m.Sparse = body[start:end:end]
+		start = end
+	}
+	end := start + uint64(m.Header.RecordsBytes)
 	if end > uint64(len(body)) {
-		m.Records = nil
+		m.Records, m.Sparse = nil, nil
 		return ErrBatchRecords
 	}
 	m.raw = body[:BatchHeaderLen:BatchHeaderLen]
-	m.Records = body[BatchHeaderLen:end:end]
+	m.Records = body[start:end:end]
 	if uint64(m.Header.Count)*MinRecordFrame > uint64(m.Header.RecordsBytes) {
 		return ErrBatchCountRange
+	}
+	if m.Sparse != nil {
+		return m.checkSparse()
 	}
 	return nil
 }
 
-// ComputeCRC returns the CRC32C over the header fields before crc32c and Records. For a decoded batch
-// it reads the received header bytes and does not allocate.
+func (m *Batch) checkSparse() error {
+	span := m.Span()
+	if span == 0 || span < m.Header.Count {
+		return ErrBatchSparse
+	}
+	prev := int64(-1)
+	for i := range m.Header.Count {
+		d := int64(m.Delta(int(i)))
+		if d <= prev || d >= int64(span) {
+			return ErrBatchSparse
+		}
+		prev = d
+	}
+	return nil
+}
+
+// IsSparse reports whether the batch carries a sparse table.
+func (m *Batch) IsSparse() bool { return m.Sparse != nil }
+
+// Span returns the number of offsets the batch covers: the sparse span, or Count for a dense batch.
+func (m *Batch) Span() uint32 {
+	if m.Sparse == nil {
+		return m.Header.Count
+	}
+	return binary.LittleEndian.Uint32(m.Sparse)
+}
+
+// Delta returns the offset of record i relative to BaseOffset.
+func (m *Batch) Delta(i int) uint32 {
+	if m.Sparse == nil {
+		return uint32(i)
+	}
+	return binary.LittleEndian.Uint32(m.Sparse[4+4*i:])
+}
+
+// SetSparse sets the sparse table and BatchFlagSparse (test peers and tests).
+func (m *Batch) SetSparse(span uint32, deltas []uint32) {
+	m.Sparse = AppendSparseTable(nil, span, deltas)
+	m.Header.Flags |= BatchFlagSparse
+}
+
+// ComputeCRC returns the CRC32C over the header fields before crc32c, the sparse table and Records.
+// For a decoded batch it reads the received header bytes and does not allocate.
 func (m *Batch) ComputeCRC() uint32 {
 	hb := m.raw
 	if hb == nil {
@@ -861,6 +987,7 @@ func (m *Batch) ComputeCRC() uint32 {
 		m.Header.put(hb)
 	}
 	crc := crc32.Update(0, castagnoli, hb[:batchCRCCovered])
+	crc = crc32.Update(crc, castagnoli, m.Sparse)
 	return crc32.Update(crc, castagnoli, m.Records)
 }
 
@@ -925,4 +1052,115 @@ func (m *Pong) Decode(body []byte) error {
 	d := dec{b: body}
 	m.Token = d.u64()
 	return d.err()
+}
+
+// InterestEntry is one entry of INTEREST_SNAPSHOT/INTEREST_DELTA: the absolute class of a filter.
+// The decoder does not validate Class or Filter; the receiver ignores invalid entries (5.6).
+type InterestEntry struct {
+	Class     uint8  // InterestNone (delta only), InterestVol or InterestPer
+	ExpirySec uint32 // PER only; 0 for VOL/NONE; InterestExpiryNever for no expiry
+	Filter    string
+}
+
+// Len is the encoded size of the entry.
+func (e *InterestEntry) Len() int { return InterestEntryOverhead + len(e.Filter) }
+
+func appendInterestEntries(dst []byte, es []InterestEntry) []byte {
+	dst = binary.LittleEndian.AppendUint32(dst, uint32(len(es)))
+	for i := range es {
+		e := &es[i]
+		dst = append(dst, e.Class)
+		dst = binary.LittleEndian.AppendUint32(dst, e.ExpirySec)
+		dst = appendStr16(dst, e.Filter)
+	}
+	return dst
+}
+
+// decodeInterestEntries reads u32 count and the entries. A body shorter than count entries or
+// with bytes left after them is ErrInterestCount.
+func decodeInterestEntries(d *dec, dst []InterestEntry) ([]InterestEntry, error) {
+	n := d.u32()
+	if d.short {
+		return dst, ErrShortFrame
+	}
+	if uint64(n)*InterestEntryOverhead > uint64(len(d.b)) {
+		return dst, ErrInterestCount
+	}
+	dst = dst[:0]
+	for i := uint32(0); i < n; i++ {
+		var e InterestEntry
+		e.Class = d.u8()
+		e.ExpirySec = d.u32()
+		e.Filter = d.str16()
+		if d.short {
+			return dst, ErrInterestCount
+		}
+		dst = append(dst, e)
+	}
+	if len(d.b) != 0 {
+		return dst, ErrInterestCount
+	}
+	return dst, nil
+}
+
+func interestBodyLen(es []InterestEntry) int {
+	n := 0
+	for i := range es {
+		n += es[i].Len()
+	}
+	return n
+}
+
+// InterestSnapshot is INTEREST_SNAPSHOT (0x20, C→S): the consumer's full interest set at Generation,
+// possibly split over several frames from FIRST to LAST that carry the same generation.
+type InterestSnapshot struct {
+	Generation uint32
+	Flags      uint8 // InterestFlagFirst, InterestFlagLast
+	Entries    []InterestEntry
+}
+
+func (*InterestSnapshot) Type() FrameType { return FrameInterestSnapshot }
+
+func (m *InterestSnapshot) AppendFrame(dst []byte) []byte {
+	dst, s := beginFrame(dst, FrameInterestSnapshot, InterestSnapshotHeaderLen+interestBodyLen(m.Entries))
+	dst = binary.LittleEndian.AppendUint32(dst, m.Generation)
+	dst = append(dst, m.Flags)
+	dst = appendInterestEntries(dst, m.Entries)
+	return endFrame(dst, s)
+}
+
+// Decode parses the frame. Unlike other frames, bytes after the entries are an error
+// (ErrInterestCount), as is a body shorter than the count says.
+func (m *InterestSnapshot) Decode(body []byte) error {
+	d := dec{b: body}
+	m.Generation = d.u32()
+	m.Flags = d.u8()
+	var err error
+	m.Entries, err = decodeInterestEntries(&d, m.Entries)
+	return err
+}
+
+// InterestDelta is INTEREST_DELTA (0x21, C→S): absolute classes of changed filters. Generations are
+// strictly increasing per frame.
+type InterestDelta struct {
+	Generation uint32
+	Entries    []InterestEntry
+}
+
+func (*InterestDelta) Type() FrameType { return FrameInterestDelta }
+
+func (m *InterestDelta) AppendFrame(dst []byte) []byte {
+	dst, s := beginFrame(dst, FrameInterestDelta, InterestDeltaHeaderLen+interestBodyLen(m.Entries))
+	dst = binary.LittleEndian.AppendUint32(dst, m.Generation)
+	dst = appendInterestEntries(dst, m.Entries)
+	return endFrame(dst, s)
+}
+
+// Decode parses the frame; see InterestSnapshot.Decode for the count rules.
+func (m *InterestDelta) Decode(body []byte) error {
+	d := dec{b: body}
+	m.Generation = d.u32()
+	var err error
+	m.Entries, err = decodeInterestEntries(&d, m.Entries)
+	return err
 }

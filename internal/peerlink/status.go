@@ -137,6 +137,29 @@ type Status struct {
 	Admission AdmissionStatus  `json:"admission"`
 	Consumers []ConsumerStatus `json:"consumers"`
 	Sources   []SourceStatus   `json:"sources"`
+	Interest  *InterestCounts  `json:"interest,omitempty"`
+}
+
+// InterestCounts are the node-wide interest routing counters (plan-peerlink-interest-routing 13).
+// The source counters are present when a consumer uses interest routing, Local when a source does.
+type InterestCounts struct {
+	InterestSkipped          uint64         `json:"interestSkipped"`
+	InterestMatched          uint64         `json:"interestMatched"`
+	SparseBatches            uint64         `json:"sparseBatches"`
+	VolatileDropped          uint64         `json:"volatileDropped"`
+	PersistentExpired        uint64         `json:"persistentExpired"`
+	InterestBacklogDiscarded uint64         `json:"interestBacklogDiscarded"`
+	InterestRejected         uint64         `json:"interestRejected"`
+	InterestOverLimit        uint64         `json:"interestOverLimit"`
+	DeltasReceived           uint64         `json:"deltasReceived"`
+	Local                    *TrackerStatus `json:"local,omitempty"`
+}
+
+// SourceInterest is the consumer side of interest routing on one link.
+type SourceInterest struct {
+	Active        bool   `json:"active"`
+	DeltasSent    uint64 `json:"deltasSent"`
+	SnapshotsSent uint64 `json:"snapshotsSent"`
 }
 
 // KindCounts splits appended records by kind.
@@ -209,6 +232,7 @@ type ConsumerStatus struct {
 	OARetained            bool              `json:"oaRetained"`
 	TopicRootMismatch     bool              `json:"topicRootMismatch"`
 	RetainedClassMismatch bool              `json:"retainedClassMismatch"`
+	Interest              *InterestStatus   `json:"interest,omitempty"`
 }
 
 // SourceStatus is one source (a peer this node pulls from) as seen by the consumer.
@@ -251,6 +275,7 @@ type SourceStatus struct {
 	RetainedClassMismatch  bool              `json:"retainedClassMismatch"`
 	OARetained             bool              `json:"oaRetained"`
 	ApplyDelayMs           ApplyDelay        `json:"applyDelayMs"`
+	Interest               *SourceInterest   `json:"interest,omitempty"`
 }
 
 // ApplyDelay holds bucketed apply-delay quantiles in ms (-1 without samples).

@@ -35,8 +35,9 @@ type Manager struct {
 
 	mu          sync.RWMutex
 	groups      map[string]*Group
-	groupCount  atomic.Int32 // mirrors len(groups) for the lock-free HasGroups probe
+	groupCount  atomic.Int32      // mirrors len(groups) for the lock-free HasGroups probe
 	deployError map[string]string // last deploy error per group name (for the dashboard)
+	onChange    func()            // PeerLink interest routing: the group filters may have changed
 }
 
 // HasGroups reports whether any archive group is running. Lock-free so the
@@ -126,7 +127,40 @@ func (m *Manager) Load(ctx context.Context) error {
 			m.logger.Error("archive group start failed", "name", c.Name, "err", err)
 		}
 	}
+	m.notifyChange()
 	return nil
+}
+
+// SetOnChange installs f, called after Load and Reload changed the running groups.
+func (m *Manager) SetOnChange(f func()) {
+	m.mu.Lock()
+	m.onChange = f
+	m.mu.Unlock()
+}
+
+func (m *Manager) notifyChange() {
+	m.mu.RLock()
+	f := m.onChange
+	m.mu.RUnlock()
+	if f != nil {
+		f()
+	}
+}
+
+// InterestFilters returns the topic filters of the running groups that archive live messages.
+// Retained-only groups are left out: retained records reach every peer anyway.
+func (m *Manager) InterestFilters() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var out []string
+	for _, g := range m.groups {
+		c := g.Config()
+		if c.RetainedOnly {
+			continue
+		}
+		out = append(out, c.TopicFilters...)
+	}
+	return out
 }
 
 func (m *Manager) recordDeployError(name string, err error) {
@@ -531,6 +565,7 @@ func (m *Manager) Reload(ctx context.Context) error {
 			m.logger.Error("archive group reload failed", "name", name, "err", err)
 		}
 	}
+	m.notifyChange()
 	return nil
 }
 

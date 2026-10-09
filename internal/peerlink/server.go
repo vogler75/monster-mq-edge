@@ -215,6 +215,8 @@ type session struct {
 	frames [][]byte
 	bufs   net.Buffers
 	prefix [wire.BatchPrefixLen]byte
+	deltas []uint32 // sparse read offsets
+	sparse []byte   // encoded sparse table
 	snap   *snapshotState
 }
 
@@ -559,7 +561,8 @@ func (m *Manager) servePeer(conn net.Conn, tcp *net.TCPConn, br *bufio.Reader, c
 		return
 	}
 	tlsLink := cs != nil
-	ownCaps := m.ownCaps(tlsLink)
+	// CapInterest is offered before the peer is known and dropped below for a peer with Interest OFF.
+	ownCaps := m.ownCaps(tlsLink, m.interest != nil)
 	sh := wire.ServerHello{VersionMajor: wire.VersionMajor, VersionMinor: wire.VersionMinor, Capabilities: ownCaps, NonceS: wire.NewNonce()}
 	if tlsLink && m.tls.clientAuth != tlsutil.ClientAuthNone {
 		sh.AuthModes |= wire.AuthClientCertRequested
@@ -603,6 +606,9 @@ func (m *Manager) servePeer(conn net.Conn, tcp *net.TCPConn, br *bufio.Reader, c
 		return
 	}
 	slot := hr.slot
+	if !m.cfg.InterestOn(slot.peer) {
+		ownCaps &^= wire.CapInterest
+	}
 
 	sess := &session{
 		m: m, slot: slot, conn: conn, tcp: tcp, br: br, remote: remote, instance: hello.InstanceID,
@@ -692,6 +698,9 @@ func (m *Manager) servePeer(conn net.Conn, tcp *net.TCPConn, br *bufio.Reader, c
 	if !slot.connected(m.log, sess) {
 		return // superseded meanwhile
 	}
+	if m.interest != nil {
+		m.interest.connect(slot.idx, hello.InstanceID, sess.caps&wire.CapInterest != 0)
+	}
 	slot.sessions.Add(1)
 	m.logger.Info("peerlink: consumer connected", "peer", slot.nodeID, "remote", remote, "tls", tlsLink,
 		"resumeAt", resume.ResumeAt, "lostOnResume", resume.LostOnResume, "sourceReset", resume.SourceReset,
@@ -704,6 +713,9 @@ func (m *Manager) servePeer(conn net.Conn, tcp *net.TCPConn, br *bufio.Reader, c
 	sess.run()
 
 	if slot.release(m.log, sess) {
+		if m.interest != nil {
+			m.interest.disconnect(slot.idx, time.Now())
+		}
 		m.logger.Info("peerlink: consumer disconnected", "peer", slot.nodeID, "remote", remote)
 		m.stateChanged()
 	}
@@ -880,6 +892,27 @@ func (s *session) readLoop() {
 			_ = g.Decode(body)
 			s.m.logger.Info("peerlink: consumer sent GOAWAY", "peer", s.slot.nodeID, "code", g.Code.String(), "reason", g.Reason)
 			return
+		case wire.FrameInterestSnapshot:
+			if !s.interestFrame(func(it *interestTable) error {
+				var m wire.InterestSnapshot
+				if err := m.Decode(body); err != nil {
+					return err
+				}
+				return it.applySnapshot(s.slot.idx, &m, time.Now())
+			}) {
+				return
+			}
+		case wire.FrameInterestDelta:
+			if !s.interestFrame(func(it *interestTable) error {
+				var m wire.InterestDelta
+				if err := m.Decode(body); err != nil {
+					return err
+				}
+				it.applyDelta(s.slot.idx, &m)
+				return nil
+			}) {
+				return
+			}
 		case wire.FrameServerHello, wire.FrameHello, wire.FrameHelloOK, wire.FrameBatch, wire.FramePong:
 			s.goAway(wire.GoAwayProtocol, "unexpected "+t.String())
 			return
@@ -887,6 +920,20 @@ func (s *session) readLoop() {
 			// Unknown frame types of the same major version are ignored (9.3).
 		}
 	}
+}
+
+// interestFrame applies an interest frame; any fault, or the frame without the agreed CapInterest,
+// is a protocol error (plan-peerlink-interest-routing 5.3, 5.4).
+func (s *session) interestFrame(apply func(*interestTable) error) bool {
+	if s.caps&wire.CapInterest == 0 || s.m.interest == nil {
+		s.goAway(wire.GoAwayProtocol, "interest frame without CapInterest")
+		return false
+	}
+	if err := apply(s.m.interest); err != nil {
+		s.goAway(wire.GoAwayProtocol, err.Error())
+		return false
+	}
+	return true
 }
 
 func (s *session) commit(off uint64) bool {
@@ -952,16 +999,31 @@ func (s *session) serveFetch(f *wire.Fetch) error {
 		return errors.New("offset out of range")
 	}
 	maxRecords, maxBytes, minRecords, maxWait := fetchLimits(f)
+	deadline := time.Now().Add(maxWait)
 	if f.Offset >= lso && f.Offset+uint64(minRecords) > leo && maxWait > 0 {
 		lg.WaitFor(s.ctx, s.waiter, f.Offset+uint64(minRecords), maxWait)
 		if s.ctx.Err() != nil {
 			return s.ctx.Err()
 		}
 	}
-	res, err := lg.ReadFor(s.slot.idx, f.Offset, maxRecords, maxBytes, &s.frames)
+	res, err := s.read(f.Offset, maxRecords, maxBytes)
 	if err != nil {
 		s.goAway(wire.GoAwayOffsetOutOfRange, "fetch offset beyond log end")
 		return err
+	}
+	if res.Count == 0 && res.Span > 0 && minRecords > 0 {
+		// Every record up to leo was skipped for this consumer: keep the long poll open.
+		for res.Count == 0 && res.Base+res.Span >= res.LEO && time.Until(deadline) > 0 {
+			clear(s.frames)
+			lg.WaitFor(s.ctx, s.waiter, res.Base+res.Span+1, time.Until(deadline))
+			if s.ctx.Err() != nil {
+				return s.ctx.Err()
+			}
+			if res, err = s.read(f.Offset, maxRecords, maxBytes); err != nil {
+				s.goAway(wire.GoAwayOffsetOutOfRange, "fetch offset beyond log end")
+				return err
+			}
+		}
 	}
 	if f.LingerMs > 0 && res.Count > 0 && res.Count < maxRecords && res.Lost == 0 && res.Bytes < maxBytes {
 		clear(s.frames)
@@ -969,7 +1031,7 @@ func (s *session) serveFetch(f *wire.Fetch) error {
 		if s.ctx.Err() != nil {
 			return s.ctx.Err()
 		}
-		if res, err = lg.ReadFor(s.slot.idx, f.Offset, maxRecords, maxBytes, &s.frames); err != nil {
+		if res, err = s.read(f.Offset, maxRecords, maxBytes); err != nil {
 			s.goAway(wire.GoAwayOffsetOutOfRange, "fetch offset beyond log end")
 			return err
 		}
@@ -988,14 +1050,23 @@ func (s *session) serveFetch(f *wire.Fetch) error {
 	if res.Truncated {
 		h.Flags |= wire.BatchFlagTruncated
 	}
-	if res.Count == 0 {
+	var sparse []byte
+	switch {
+	case res.Sparse:
+		h.Flags |= wire.BatchFlagSparse
+		s.sparse = wire.AppendSparseTable(s.sparse[:0], uint32(res.Span), s.deltas)
+		sparse = s.sparse
+	case res.Count == 0:
 		h.Flags |= wire.BatchFlagEmpty
 	}
 	skipped := s.substituteTombstones(s.frames)
-	err = s.writeBatch(&h, s.frames)
+	err = s.writeBatch(&h, sparse, s.frames)
 	clear(s.frames)
 	if err != nil {
 		return err
+	}
+	if res.Sparse {
+		s.m.interest.sparseBatches.Add(1)
 	}
 	s.slot.servedRecords.Add(uint64(res.Count))
 	s.slot.servedBytes.Add(uint64(h.RecordsBytes))
@@ -1004,6 +1075,15 @@ func (s *session) serveFetch(f *wire.Fetch) error {
 		s.m.deps.Metrics.IncBusOut(res.Count)
 	}
 	return nil
+}
+
+// read reads for this consumer: sparse when CapInterest was agreed, so records the consumer has no
+// interest in are skipped (plan-peerlink-interest-routing 6.4).
+func (s *session) read(from uint64, maxRecords, maxBytes int) (LogReadResult, error) {
+	if s.caps&wire.CapInterest != 0 {
+		return s.m.log.ReadSparse(s.slot.idx, from, maxRecords, maxBytes, &s.frames, &s.deltas)
+	}
+	return s.m.log.ReadFor(s.slot.idx, from, maxRecords, maxBytes, &s.frames)
 }
 
 // substituteTombstones replaces records larger than the consumer's maxRecordBytes with tombstones
@@ -1024,7 +1104,7 @@ func (s *session) substituteTombstones(frames [][]byte) int {
 
 // writeBatch writes the BATCH prefix and the record frames: one writev on a plaintext TCP
 // connection, a buffered write under TLS. The write deadline grows with the batch size (9.9).
-func (s *session) writeBatch(h *wire.BatchHeader, frames [][]byte) error {
+func (s *session) writeBatch(h *wire.BatchHeader, sparse []byte, frames [][]byte) error {
 	total := 0
 	for _, f := range frames {
 		total += len(f)
@@ -1041,11 +1121,14 @@ func (s *session) writeBatch(h *wire.BatchHeader, frames [][]byte) error {
 	defer s.writeMu.Unlock()
 	wire.EncodeBatchPrefix(&s.prefix, h)
 	if h.Flags&wire.BatchFlagCRC != 0 {
-		wire.SetBatchCRC(&s.prefix, frames)
+		wire.SetBatchCRC(&s.prefix, sparse, frames)
 	}
 	_ = s.conn.SetWriteDeadline(now.Add(s.keep * time.Duration(1+total/ioBufferSize)))
 	if s.tcp != nil {
 		s.bufs = append(s.bufs[:0], s.prefix[:])
+		if len(sparse) > 0 {
+			s.bufs = append(s.bufs, sparse)
+		}
 		s.bufs = append(s.bufs, frames...)
 		b := s.bufs
 		_, err := b.WriteTo(s.tcp)
@@ -1053,6 +1136,9 @@ func (s *session) writeBatch(h *wire.BatchHeader, frames [][]byte) error {
 		return err
 	}
 	if _, err := s.bw.Write(s.prefix[:]); err != nil {
+		return err
+	}
+	if _, err := s.bw.Write(sparse); err != nil {
 		return err
 	}
 	for _, f := range frames {

@@ -356,6 +356,7 @@ func (s *Subscribers) MergeSharedSelected() {
 type TopicsIndex struct {
 	Retained *packets.Packets
 	root     *particle // a leaf containing a message and more leaves.
+	observer InterestObserver
 }
 
 // NewTopicsIndex returns a pointer to a new instance of Index.
@@ -369,17 +370,48 @@ func NewTopicsIndex() *TopicsIndex {
 	}
 }
 
+// InterestObserver is notified after a subscription is added to or removed from the index.
+// Calls happen after the index lock is released. For shared subscriptions filter is the
+// filter without the $share/group prefix.
+type InterestObserver interface {
+	SubscriptionAdded(client string, filter string, shareGroup string, inline bool, inlineID int)
+	SubscriptionRemoved(client string, filter string, shareGroup string, inline bool, inlineID int)
+}
+
+// SetObserver installs the interest observer. Call it before the server starts.
+func (x *TopicsIndex) SetObserver(o InterestObserver) {
+	x.observer = o
+}
+
+// splitShared returns the group and the plain filter of a $share/group/filter subscription.
+// SplitSharedFilter returns the group and plain filter of a $share filter.
+func SplitSharedFilter(filter string) (group, plain string) { return splitShared(filter) }
+
+func splitShared(filter string) (group, plain string) {
+	i := strings.IndexByte(filter, '/')
+	if i < 0 {
+		return "", ""
+	}
+	rest := filter[i+1:]
+	j := strings.IndexByte(rest, '/')
+	if j < 0 {
+		return rest, ""
+	}
+	return rest[:j], rest[j+1:]
+}
+
 // InlineSubscribe adds a new internal subscription for a topic filter, returning
 // true if the subscription was new.
 func (x *TopicsIndex) InlineSubscribe(subscription InlineSubscription) bool {
 	x.root.Lock()
-	defer x.root.Unlock()
-
-	var existed bool
 	n := x.set(subscription.Filter, 0)
-	_, existed = n.inlineSubscriptions.Get(subscription.Identifier)
+	_, existed := n.inlineSubscriptions.Get(subscription.Identifier)
 	n.inlineSubscriptions.Add(subscription)
+	x.root.Unlock()
 
+	if !existed && x.observer != nil {
+		x.observer.SubscriptionAdded("", subscription.Filter, "", true, subscription.Identifier)
+	}
 	return !existed
 }
 
@@ -387,17 +419,22 @@ func (x *TopicsIndex) InlineSubscribe(subscription InlineSubscription) bool {
 // returning true if the subscription existed.
 func (x *TopicsIndex) InlineUnsubscribe(id int, filter string) bool {
 	x.root.Lock()
-	defer x.root.Unlock()
-
 	particle := x.seek(filter, 0)
 	if particle == nil {
+		x.root.Unlock()
 		return false
 	}
 
+	_, existed := particle.inlineSubscriptions.Get(id)
 	particle.inlineSubscriptions.Delete(id)
 
 	if particle.inlineSubscriptions.Len() == 0 {
 		x.trim(particle)
+	}
+	x.root.Unlock()
+
+	if existed && x.observer != nil {
+		x.observer.SubscriptionRemoved("", filter, "", true, id)
 	}
 	return true
 }
@@ -405,12 +442,11 @@ func (x *TopicsIndex) InlineUnsubscribe(id int, filter string) bool {
 // Subscribe adds a new subscription for a client to a topic filter, returning
 // true if the subscription was new.
 func (x *TopicsIndex) Subscribe(client string, subscription packets.Subscription) bool {
-	x.root.Lock()
-	defer x.root.Unlock()
-
 	var existed bool
+	x.root.Lock()
 	prefix, _ := isolateParticle(subscription.Filter, 0)
-	if strings.EqualFold(prefix, SharePrefix) {
+	shared := strings.EqualFold(prefix, SharePrefix)
+	if shared {
 		group, _ := isolateParticle(subscription.Filter, 1)
 		n := x.set(subscription.Filter, 2)
 		_, existed = n.shared.Get(group, client)
@@ -420,7 +456,16 @@ func (x *TopicsIndex) Subscribe(client string, subscription packets.Subscription
 		_, existed = n.subscriptions.Get(client)
 		n.subscriptions.Add(client, subscription)
 	}
+	x.root.Unlock()
 
+	if !existed && x.observer != nil {
+		if shared {
+			group, plain := splitShared(subscription.Filter)
+			x.observer.SubscriptionAdded(client, plain, group, false, 0)
+		} else {
+			x.observer.SubscriptionAdded(client, subscription.Filter, "", false, 0)
+		}
+	}
 	return !existed
 }
 
@@ -428,7 +473,6 @@ func (x *TopicsIndex) Subscribe(client string, subscription packets.Subscription
 // subscription existed.
 func (x *TopicsIndex) Unsubscribe(filter, client string) bool {
 	x.root.Lock()
-	defer x.root.Unlock()
 
 	var d int
 	prefix, _ := isolateParticle(filter, 0)
@@ -439,17 +483,31 @@ func (x *TopicsIndex) Unsubscribe(filter, client string) bool {
 
 	particle := x.seek(filter, d)
 	if particle == nil {
+		x.root.Unlock()
 		return false
 	}
 
+	var existed bool
 	if shareSub {
 		group, _ := isolateParticle(filter, 1)
+		_, existed = particle.shared.Get(group, client)
 		particle.shared.Delete(group, client)
 	} else {
+		_, existed = particle.subscriptions.Get(client)
 		particle.subscriptions.Delete(client)
 	}
 
 	x.trim(particle)
+	x.root.Unlock()
+
+	if existed && x.observer != nil {
+		if shareSub {
+			group, plain := splitShared(filter)
+			x.observer.SubscriptionRemoved(client, plain, group, false, 0)
+		} else {
+			x.observer.SubscriptionRemoved(client, filter, "", false, 0)
+		}
+	}
 	return true
 }
 

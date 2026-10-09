@@ -43,7 +43,16 @@ func sampleFrames() []Frame {
 		&Commit{Commit: 123456789},
 		&Ping{Token: 1},
 		&Pong{Token: 0xffffffffffffffff},
+		&InterestSnapshot{Generation: 3, Flags: InterestFlagFirst | InterestFlagLast, Entries: []InterestEntry{
+			{Class: InterestVol, Filter: "a/#"}, {Class: InterestPer, ExpirySec: InterestExpiryNever, Filter: "b/+"}}},
+		&InterestDelta{Generation: 4, Entries: []InterestEntry{{Class: InterestNone, Filter: "a/#"}, {Class: InterestPer, ExpirySec: 60, Filter: "c"}}},
 	}
+}
+
+// isInterest reports frames whose body ends with a counted entry list: bytes after the entries
+// or a truncated entry are ErrInterestCount rather than ignored or ErrShortFrame.
+func isInterest(f Frame) bool {
+	return f.Type() == FrameInterestSnapshot || f.Type() == FrameInterestDelta
 }
 
 // withoutRaw drops the unexported received-header view of a decoded batch.
@@ -84,7 +93,11 @@ func TestFrameRoundTrip(t *testing.T) {
 			ext := append(append([]byte(nil), enc...), 0xaa, 0xbb, 0xcc)
 			binary.LittleEndian.PutUint32(ext, uint32(len(ext)-4))
 			got, err = DecodeFrame(typ, ext[FrameHeaderLen:])
-			if err != nil || !reflect.DeepEqual(withoutRaw(got), f) {
+			if isInterest(f) {
+				if !errors.Is(err, ErrInterestCount) {
+					t.Fatalf("trailing bytes after interest entries: %v", err)
+				}
+			} else if err != nil || !reflect.DeepEqual(withoutRaw(got), f) {
 				t.Fatalf("trailing bytes: %v\n got %+v\nwant %+v", err, got, f)
 			}
 
@@ -109,10 +122,57 @@ func TestFrameShortBodies(t *testing.T) {
 				}
 				continue
 			}
+			if isInterest(f) && n >= len(body)-interestBodyLen(interestEntries(f)) {
+				if _, err := DecodeFrame(f.Type(), body[:n]); !errors.Is(err, ErrInterestCount) {
+					t.Fatalf("%s truncated to %d: %v", f.Type(), n, err)
+				}
+				continue
+			}
 			if _, err := DecodeFrame(f.Type(), body[:n]); !errors.Is(err, ErrShortFrame) {
 				t.Fatalf("%s truncated to %d of %d: err %v", f.Type(), n, len(body), err)
 			}
 		}
+	}
+}
+
+func interestEntries(f Frame) []InterestEntry {
+	switch m := f.(type) {
+	case *InterestSnapshot:
+		return m.Entries
+	case *InterestDelta:
+		return m.Entries
+	}
+	return nil
+}
+
+func TestInterestGolden(t *testing.T) {
+	snap := (&InterestSnapshot{Generation: 0x01020304, Flags: InterestFlagLast, Entries: []InterestEntry{
+		{Class: InterestPer, ExpirySec: 0x0a0b0c0d, Filter: "x/#"}}}).AppendFrame(nil)
+	want := []byte{
+		20, 0, 0, 0, byte(FrameInterestSnapshot),
+		4, 3, 2, 1, InterestFlagLast, 1, 0, 0, 0,
+		InterestPer, 0x0d, 0x0c, 0x0b, 0x0a, 3, 0, 'x', '/', '#',
+	}
+	if !bytes.Equal(snap, want) {
+		t.Fatalf("snapshot\n got % x\nwant % x", snap, want)
+	}
+	if len(snap)-FrameHeaderLen != InterestSnapshotHeaderLen+InterestEntryOverhead+3 {
+		t.Fatalf("snapshot body %d", len(snap)-FrameHeaderLen)
+	}
+	delta := (&InterestDelta{Generation: 7, Entries: []InterestEntry{{Class: InterestNone, Filter: "y"}}}).AppendFrame(nil)
+	if got := len(delta) - FrameHeaderLen; got != InterestDeltaHeaderLen+InterestEntryOverhead+1 {
+		t.Fatalf("delta body %d", got)
+	}
+	empty := (&InterestSnapshot{Flags: InterestFlagFirst | InterestFlagLast}).AppendFrame(nil)
+	f, err := DecodeFrame(FrameInterestSnapshot, empty[FrameHeaderLen:])
+	if err != nil || len(f.(*InterestSnapshot).Entries) != 0 {
+		t.Fatalf("empty snapshot: %v %+v", err, f)
+	}
+	// A count no body could hold is rejected before entries are allocated.
+	huge := append([]byte(nil), empty...)
+	binary.LittleEndian.PutUint32(huge[FrameHeaderLen+5:], 0xffffffff)
+	if _, err := DecodeFrame(FrameInterestSnapshot, huge[FrameHeaderLen:]); !errors.Is(err, ErrInterestCount) {
+		t.Fatalf("huge count: %v", err)
 	}
 }
 
@@ -290,7 +350,7 @@ func buildBatch(t testing.TB, h BatchHeader, recs ...[]byte) []byte {
 	var prefix [BatchPrefixLen]byte
 	EncodeBatchPrefix(&prefix, &h)
 	if h.Flags&BatchFlagCRC != 0 {
-		SetBatchCRC(&prefix, recs)
+		SetBatchCRC(&prefix, nil, recs)
 	}
 	return bytes.Join(append([][]byte{prefix[:]}, recs...), nil)
 }
@@ -336,7 +396,7 @@ func TestBatchPrefixAndCRC(t *testing.T) {
 		bad[off] ^= 0x40
 		var bb Batch
 		if err := bb.Decode(bad[FrameHeaderLen:]); err != nil {
-			t.Fatal(err)
+			continue // e.g. the flip set BatchFlagSparse: rejected before the CRC check
 		}
 		if bb.CRCValid() {
 			t.Fatalf("flipped byte %d not detected", off)
@@ -392,7 +452,7 @@ func TestEncodeBatchPrefixNoAlloc(t *testing.T) {
 	h := BatchHeader{Flags: BatchFlagCRC, Count: 2, RecordsBytes: uint32(len(recs[0]) + len(recs[1]))}
 	allocs := testing.AllocsPerRun(100, func() {
 		EncodeBatchPrefix(&prefix, &h)
-		SetBatchCRC(&prefix, recs)
+		SetBatchCRC(&prefix, nil, recs)
 	})
 	if allocs != 0 {
 		t.Fatalf("EncodeBatchPrefix + SetBatchCRC allocate %.1f per run", allocs)

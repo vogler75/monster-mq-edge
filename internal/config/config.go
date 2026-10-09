@@ -832,6 +832,10 @@ const (
 	peerLinkDefaultCatchUpFactor  = 3.0
 	peerLinkDefaultMaxFrameBytes  = 16<<20 + 64<<10
 	peerLinkDefaultInjectWorkers  = 1
+	peerLinkDefaultInterestFlush  = 5
+	peerLinkDefaultInterestScan   = 65536
+	peerLinkDefaultInterestMaxF   = 100000
+	peerLinkDefaultInterestFBytes = 1024
 	peerLinkDefaultCertPath       = "certs/peer-{NodeId}.pem"
 	peerLinkDefaultKeyPath        = "certs/peer-{NodeId}.key"
 )
@@ -849,6 +853,15 @@ const (
 
 	PeerLinkSharedSkip    = "SKIP"
 	PeerLinkSharedDeliver = "DELIVER"
+
+	PeerLinkInterestAll     = "ALL"
+	PeerLinkInterestNone    = "NONE"
+	PeerLinkInterestInherit = "INHERIT"
+	PeerLinkInterestOff     = "OFF"
+
+	// PeerLinkInterestMaxConsumers is the most consumers a source serves with interest routing:
+	// one mask bit each.
+	PeerLinkInterestMaxConsumers = 64
 )
 
 // PeerLinkConfig is the PeerLink section: pull-based in-memory forwarding of
@@ -866,7 +879,19 @@ type PeerLinkConfig struct {
 	Snapshot                  PeerLinkSnapshot `yaml:"Snapshot"`
 	Fetch                     PeerLinkFetch    `yaml:"Fetch"`
 	Receive                   PeerLinkReceive  `yaml:"Receive"`
+	Interest                  PeerLinkInterest `yaml:"Interest"`
 	Peers                     []PeerConfig     `yaml:"Peers"`
+}
+
+// PeerLinkInterest is interest routing (plan-peerlink-interest-routing 11): a source forwards to a
+// peer only what the peer's subscriptions, bus and archive groups want.
+type PeerLinkInterest struct {
+	Enabled           bool   `yaml:"Enabled"`
+	Unknown           string `yaml:"Unknown"` // ALL | NONE: mask of a peer until its first snapshot
+	FlushMs           *int   `yaml:"FlushMs"`
+	MaxScanPerFetch   *int   `yaml:"MaxScanPerFetch"`
+	MaxFiltersPerPeer *int   `yaml:"MaxFiltersPerPeer"`
+	MaxFilterBytes    *int   `yaml:"MaxFilterBytes"`
 }
 
 // PeerLinkListener is the peer port, bound when any peer has Serve.
@@ -932,7 +957,7 @@ type PeerLinkReceive struct {
 	Bus                 *bool    `yaml:"Bus"`
 	BridgeOutbound      bool     `yaml:"BridgeOutbound"`
 	Archive             *bool    `yaml:"Archive"`
-	Queue               bool     `yaml:"Queue"`
+	Queue               *bool    `yaml:"Queue"`               // nil = true
 	SharedSubscriptions string   `yaml:"SharedSubscriptions"` // SKIP | DELIVER
 	MarkReplicas        bool     `yaml:"MarkReplicas"`
 	CatchUpRateFactor   *float64 `yaml:"CatchUpRateFactor"` // 0 = no pacing
@@ -955,6 +980,8 @@ type PeerConfig struct {
 	// With RetainedStoreType WINCCOA on both sides, WinCC OA already replicates the retained
 	// datapoints, so replicas from this peer only update the in-memory view (oaRetained).
 	RedundancyPartner bool `yaml:"RedundancyPartner"`
+	// Interest: INHERIT (default) | OFF. OFF keeps this link dense and unfiltered in both directions.
+	Interest string `yaml:"Interest"`
 }
 
 // PeerTLS holds the per-peer TLS overrides.
@@ -1129,6 +1156,10 @@ func (f PeerLinkFetch) GetReconnectMaxMs() int {
 func (r PeerLinkReceive) GetBus() bool     { return boolOr(r.Bus, true) }
 func (r PeerLinkReceive) GetArchive() bool { return boolOr(r.Archive, true) }
 
+// GetQueue reports whether replicas are queued for offline persistent sessions (default true:
+// with interest routing a peer only receives what such a session subscribed to).
+func (r PeerLinkReceive) GetQueue() bool { return boolOr(r.Queue, true) }
+
 func (r PeerLinkReceive) GetSharedSubscriptions() string {
 	return stringOr(r.SharedSubscriptions, PeerLinkSharedSkip)
 }
@@ -1147,6 +1178,26 @@ func (r PeerLinkReceive) GetMaxFrameBytes() int {
 func (r PeerLinkReceive) GetInjectWorkers() int {
 	return intOr(r.InjectWorkers, peerLinkDefaultInjectWorkers)
 }
+
+func (i PeerLinkInterest) GetUnknown() string { return stringOr(i.Unknown, PeerLinkInterestAll) }
+func (i PeerLinkInterest) GetFlushMs() int    { return intOr(i.FlushMs, peerLinkDefaultInterestFlush) }
+func (i PeerLinkInterest) GetMaxScanPerFetch() int {
+	return intOr(i.MaxScanPerFetch, peerLinkDefaultInterestScan)
+}
+func (i PeerLinkInterest) GetMaxFiltersPerPeer() int {
+	return intOr(i.MaxFiltersPerPeer, peerLinkDefaultInterestMaxF)
+}
+func (i PeerLinkInterest) GetMaxFilterBytes() int {
+	return intOr(i.MaxFilterBytes, peerLinkDefaultInterestFBytes)
+}
+
+// InterestOn reports whether interest routing may be agreed on the link with peer.
+func (p *PeerLinkConfig) InterestOn(peer PeerConfig) bool {
+	return p.Interest.Enabled && peer.GetInterest() != PeerLinkInterestOff
+}
+
+// GetInterest returns the per-peer interest setting: INHERIT (default) or OFF.
+func (p PeerConfig) GetInterest() string { return stringOr(p.Interest, PeerLinkInterestInherit) }
 
 // GetServe reports whether the peer may pull from this node (default true).
 func (p PeerConfig) GetServe() bool { return boolOr(p.Serve, true) }
@@ -1364,6 +1415,11 @@ func (p *PeerLinkConfig) validate(env peerLinkEnv) (*PeerLinkSetup, error) {
 				fail("%s.Receive.Exclude[%d] %q is not a valid topic filter", where, k, f)
 			}
 		}
+		switch peer.GetInterest() {
+		case PeerLinkInterestInherit, PeerLinkInterestOff:
+		default:
+			fail("%s.Interest %q must be INHERIT or OFF", where, peer.Interest)
+		}
 
 		secrets := p.SecretsFor(peer)
 		if len(peer.SharedSecrets) == 0 && len(p.SharedSecrets) > 0 {
@@ -1451,6 +1507,37 @@ func (p *PeerLinkConfig) validate(env peerLinkEnv) (*PeerLinkSetup, error) {
 	}
 	if p.Capture.EchoSuppressMs < 0 {
 		fail("Capture.EchoSuppressMs must be non-negative")
+	}
+
+	in := &p.Interest
+	switch in.GetUnknown() {
+	case PeerLinkInterestAll, PeerLinkInterestNone:
+	default:
+		fail("Interest.Unknown %q must be ALL or NONE", in.Unknown)
+	}
+	if in.GetFlushMs() <= 0 {
+		fail("Interest.FlushMs must be at least 1")
+	}
+	if in.GetMaxScanPerFetch() < 1024 {
+		fail("Interest.MaxScanPerFetch must be at least 1024")
+	}
+	if n := in.GetMaxFilterBytes(); n < 1 || n > 32768 {
+		fail("Interest.MaxFilterBytes %d must be 1..32768", n)
+	}
+	if in.GetMaxFiltersPerPeer() < 1 {
+		fail("Interest.MaxFiltersPerPeer must be at least 1")
+	}
+	if in.Enabled {
+		consumers := 0
+		for _, peer := range s.Peers {
+			if peer.GetServe() {
+				consumers++
+			}
+		}
+		if consumers > PeerLinkInterestMaxConsumers {
+			fail("Interest.Enabled supports at most %d consumers (peers with Serve), %d are configured",
+				PeerLinkInterestMaxConsumers, consumers)
+		}
 	}
 
 	switch p.Snapshot.GetMode() {

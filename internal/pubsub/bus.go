@@ -12,14 +12,23 @@ import (
 // MQTT-style topic events. Subscribers can express MQTT-style topic filters
 // (with + and # wildcards).
 type Bus struct {
-	mu    sync.RWMutex
-	next  int
-	subs  map[int]*sub
-	count atomic.Int32
+	mu       sync.RWMutex
+	next     int
+	subs     map[int]*sub
+	count    atomic.Int32
+	observer Observer
+}
+
+// Observer is told which filters bus subscribers hold (PeerLink interest routing). Calls happen
+// outside the bus lock, except the replay in SetObserver.
+type Observer interface {
+	FiltersAdded(filters []string)
+	FiltersRemoved(filters []string)
 }
 
 type sub struct {
 	filters  []string
+	local    bool
 	ch       chan stores.BrokerMessage
 	overflow chan struct{}
 	once     sync.Once
@@ -34,6 +43,17 @@ func (b *Bus) Subscribe(filters []string, buffer int) (id int, ch <-chan stores.
 
 // SubscribeWithOverflow reports a dropped event so streaming clients can close.
 func (b *Bus) SubscribeWithOverflow(filters []string, buffer int) (id int, ch <-chan stores.BrokerMessage, overflow <-chan struct{}) {
+	return b.subscribe(filters, buffer, false)
+}
+
+// SubscribeLocal is Subscribe for a subscriber that drops messages from other brokers, so its
+// filters are not reported to the observer.
+func (b *Bus) SubscribeLocal(filters []string, buffer int) (id int, ch <-chan stores.BrokerMessage) {
+	id, ch, _ = b.subscribe(filters, buffer, true)
+	return id, ch
+}
+
+func (b *Bus) subscribe(filters []string, buffer int, local bool) (id int, ch <-chan stores.BrokerMessage, overflow <-chan struct{}) {
 	if buffer <= 0 {
 		buffer = 16
 	}
@@ -41,11 +61,30 @@ func (b *Bus) SubscribeWithOverflow(filters []string, buffer int) (id int, ch <-
 	b.mu.Lock()
 	b.next++
 	id = b.next
-	s := &sub{filters: filters, ch: c, overflow: make(chan struct{})}
+	s := &sub{filters: filters, local: local, ch: c, overflow: make(chan struct{})}
 	b.subs[id] = s
 	b.count.Store(int32(len(b.subs)))
+	o := b.observer
 	b.mu.Unlock()
+	if o != nil && !local && len(filters) > 0 {
+		o.FiltersAdded(filters)
+	}
 	return id, c, s.overflow
+}
+
+// SetObserver installs o and reports the filters of the current subscribers to it.
+func (b *Bus) SetObserver(o Observer) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.observer = o
+	if o == nil {
+		return
+	}
+	for _, s := range b.subs {
+		if !s.local && len(s.filters) > 0 {
+			o.FiltersAdded(s.filters)
+		}
+	}
 }
 
 // HasSubscribers reports whether any subscription is active. Lock-free so the
@@ -56,11 +95,16 @@ func (b *Bus) HasSubscribers() bool {
 
 func (b *Bus) Unsubscribe(id int) {
 	b.mu.Lock()
-	defer b.mu.Unlock()
-	if s, ok := b.subs[id]; ok {
+	s, ok := b.subs[id]
+	if ok {
 		close(s.ch)
 		delete(b.subs, id)
 		b.count.Store(int32(len(b.subs)))
+	}
+	o := b.observer
+	b.mu.Unlock()
+	if ok && o != nil && !s.local && len(s.filters) > 0 {
+		o.FiltersRemoved(s.filters)
 	}
 }
 

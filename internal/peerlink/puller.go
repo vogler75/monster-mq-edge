@@ -98,6 +98,8 @@ type puller struct {
 	lastErr                                                 string
 	rate                                                    rateLimiter
 	warnedFrame                                             atomic.Bool
+	deltasSent, interestSnaps                               atomic.Uint64
+	interestActive                                          atomic.Bool
 }
 
 func newPuller(m *Manager, peer config.PeerConfig, tp tlsutil.Peer, secrets [][]byte) (*puller, error) {
@@ -341,6 +343,21 @@ func (p *puller) session() (res sessionResult) {
 		return
 	}
 	p.sessions.Add(1)
+	if hs.caps&wire.CapInterest != 0 && p.m.tracker != nil {
+		cur, snap := p.m.tracker.attach()
+		defer cur.detach()
+		hs.interest = cur
+		p.interestActive.Store(true)
+		defer p.interestActive.Store(false)
+		_ = conn.SetWriteDeadline(time.Now().Add(p.keepAlive()))
+		for _, f := range snap {
+			if err := wire.WriteFrame(conn, f); err != nil {
+				res.err = err
+				return
+			}
+		}
+		p.countInterest(snap)
+	}
 
 	ac := &applyCtx{ctx: ctx, srcRoot: hs.srcRoot, ownRoot: p.m.namespaceRoot(), epoch: hs.epoch,
 		rttHalf: hs.rttHalfMs}
@@ -431,6 +448,7 @@ type handshakeState struct {
 	epoch     uint64
 	srcRoot   string
 	rttHalfMs int64
+	interest  *interestCursor // nil unless CAP_INTEREST was agreed
 }
 
 func readFrameExpect(fr *wire.FrameReader, want wire.FrameType, dst wire.Frame) error {
@@ -475,7 +493,7 @@ func (p *puller) handshake(conn net.Conn, cs *tls.ConnectionState) (*handshakeSt
 		exporter, _ = cs.ExportKeyingMaterial(wire.ExporterLabel, nil, wire.ExporterLen)
 	}
 	h := wire.Hello{
-		Capabilities:         m.ownCaps(cs != nil),
+		Capabilities:         m.ownCaps(cs != nil, m.tracker != nil && m.cfg.InterestOn(p.peer)),
 		InstanceID:           m.instanceID,
 		MaxRecordBytes:       p.maxRecordAccept(),
 		RetainedClass:        m.deps.RetainedClass,
@@ -743,12 +761,21 @@ func (p *puller) snapshotPhase(ctx context.Context, conn net.Conn, hs *handshake
 		defer pingWG.Done()
 		t := time.NewTicker(max(keep/2, 100*time.Millisecond))
 		defer t.Stop()
+		notify := hs.interest.notifyChan()
 		for {
 			select {
 			case <-stopPing:
 				return
 			case <-ctx.Done():
 				return
+			case <-notify:
+				fs := hs.interest.take()
+				for _, f := range fs {
+					if write(f) != nil {
+						return
+					}
+				}
+				p.countInterest(fs)
 			case <-t.C:
 				if write(&wire.Ping{Token: uint64(time.Now().UnixMicro())}) != nil {
 					return
@@ -927,10 +954,19 @@ func (p *puller) stream(ctx context.Context, cancel context.CancelFunc, conn net
 			}
 			return true
 		}
+		notify := hs.interest.notifyChan()
 		for {
 			select {
 			case <-ctx.Done():
 				return
+			case <-notify:
+				fs := hs.interest.take()
+				for _, f := range fs {
+					if !write(f) {
+						return
+					}
+				}
+				p.countInterest(fs)
 			case <-ping.C:
 				if outstanding.Load() == 0 {
 					if !write(&wire.Ping{Token: uint64(time.Now().UnixMicro())}) {
@@ -991,7 +1027,8 @@ func (p *puller) stream(ctx context.Context, cancel context.CancelFunc, conn net
 				if h.Flags&wire.BatchFlagSnapshot == 0 && h.BaseOffset != 0 {
 					headerNext = h.BaseOffset + uint64(h.Count)
 				}
-				if pipeline > 1 && h.Flags&wire.BatchFlagSnapshot == 0 {
+				// A sparse batch's next offset is in its span table, read after the header.
+				if pipeline > 1 && h.Flags&(wire.BatchFlagSnapshot|wire.BatchFlagSparse) == 0 {
 					early = send(writeCmd{kind: cmdFetch, offset: headerNext})
 				}
 			})
@@ -1010,6 +1047,16 @@ func (p *puller) stream(ctx context.Context, cancel context.CancelFunc, conn net
 				p.sendGoAway(conn, wire.GoAwayProtocol)
 				setErr(&goAwayError{code: wire.GoAwayProtocol, reason: "unexpected SNAPSHOT batch", local: true})
 				return
+			}
+			if in.b.IsSparse() {
+				if hs.caps&wire.CapInterest == 0 {
+					p.sendGoAway(conn, wire.GoAwayProtocol)
+					setErr(&goAwayError{code: wire.GoAwayProtocol, reason: "sparse BATCH without CapInterest", local: true})
+					return
+				}
+				if h.BaseOffset != 0 {
+					headerNext = h.BaseOffset + uint64(in.b.Span())
+				}
 			}
 			if err := p.checkCRC(in); err != nil {
 				p.sendGoAway(conn, wire.GoAwayProtocol)
@@ -1165,5 +1212,21 @@ func (p *puller) status() SourceStatus {
 	p.lastErrMu.Lock()
 	st.LastError = p.lastErr
 	p.lastErrMu.Unlock()
+	if p.m.tracker != nil && p.m.cfg.InterestOn(p.peer) {
+		st.Interest = &SourceInterest{Active: p.interestActive.Load(), DeltasSent: p.deltasSent.Load(),
+			SnapshotsSent: p.interestSnaps.Load()}
+	}
 	return st
+}
+
+// countInterest counts the interest frames sent on the link.
+func (p *puller) countInterest(fs []wire.Frame) {
+	for _, f := range fs {
+		switch f.(type) {
+		case *wire.InterestDelta:
+			p.deltasSent.Add(1)
+		case *wire.InterestSnapshot:
+			p.interestSnaps.Add(1)
+		}
+	}
 }

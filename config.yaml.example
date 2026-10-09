@@ -194,7 +194,7 @@ PeerLink:
     Bus: true                       # scripts, REST SSE, GraphQL subscriptions, Redfish
     BridgeOutbound: false           # MQTT bridges forward replicas (loop risk)
     Archive: true                   # false if both nodes archive into one shared database
-    Queue: false                    # offline persistent sessions get replicas
+    Queue: true                     # offline persistent sessions get replicas (default true)
     SharedSubscriptions: SKIP       # SKIP | DELIVER
     MarkReplicas: false             # add user property mmq-peer-src=<NodeId>
     CatchUpRateFactor: 3            # 0 = no pacing while catching up
@@ -202,6 +202,13 @@ PeerLink:
     MaxRecordAgeMs: 0               # 0 = off
     MaxFrameBytes: 16842752         # 16 MiB + 64 KiB
     InjectWorkers: 1                # reserved; values above 1 only log a WARN
+  Interest:                         # forward to a peer only what it subscribes to (both ends)
+    Enabled: false                  # at most 64 peers with Serve
+    Unknown: ALL                    # ALL | NONE before a peer's first interest snapshot
+    FlushMs: 5                      # coalescing window of interest deltas
+    MaxScanPerFetch: 65536          # log offsets scanned per FETCH for a filtered peer
+    MaxFiltersPerPeer: 100000       # above: the peer gets everything
+    MaxFilterBytes: 1024
   Peers:                            # the entry whose NodeId equals this node's is ignored
     - NodeId: edge-rpi-02
       Address: "edge-rpi-02.local:1890"  # present: this node pulls from it
@@ -217,4 +224,5 @@ PeerLink:
       Receive:
         Include: ["#"]
         Exclude: []
+      Interest: INHERIT                  # INHERIT | OFF (no interest routing on this link)
       RedundancyPartner: false           # other host of this node's redundant WinCC OA system (oaRetained)

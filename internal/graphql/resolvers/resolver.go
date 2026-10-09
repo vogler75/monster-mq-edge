@@ -2774,6 +2774,10 @@ func mqttClientConfigInputToMergedMap(in *generated.MqttClientConnectionConfigIn
 			cfg["password"] = prev
 		}
 	}
+	// The GraphQL input has no redundancy mode (contract C6); keep the one set in the stored config.
+	if prev, ok := prevCfg["redundancy"]; ok {
+		cfg["redundancy"] = prev
+	}
 	return cfg
 }
 

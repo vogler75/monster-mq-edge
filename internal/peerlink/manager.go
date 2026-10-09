@@ -102,6 +102,8 @@ type Manager struct {
 	instanceID uint64
 
 	consumers    []*consumerSlot
+	interest     *interestTable   // nil unless a consumer uses interest routing
+	tracker      *interestTracker // nil unless a puller may agree interest routing
 	consumerByID map[string]*consumerSlot
 	peerByID     map[string]config.PeerConfig
 	pullers      []*puller
@@ -234,6 +236,18 @@ func New(deps Deps) (*Manager, error) {
 		}
 	}
 
+	for _, p := range m.pullers {
+		if cfg.InterestOn(p.peer) {
+			srv := deps.Server
+			m.tracker = newInterestTracker(cfg.Interest.GetMaxFilterBytes(),
+				cfg.Receive.GetSharedSubscriptions() == config.PeerLinkSharedDeliver,
+				time.Duration(cfg.Interest.GetFlushMs())*time.Millisecond,
+				func(id string) holdClass { return clientHoldClass(srv, id) }, m.logger)
+			srv.Topics.SetObserver(m.tracker)
+			break
+		}
+	}
+
 	listenerTLS := cfg.Tls.Enabled && len(m.consumers) > 0
 	tm, err := loadTLS(&cfg, m.nodeID, m.consumers, listenerTLS, needDialerTLS, m.logger)
 	if err != nil {
@@ -263,16 +277,29 @@ func New(deps Deps) (*Manager, error) {
 
 	m.maxRecordCap = cfg.Log.GetMaxRecordBytes(deps.MaxMessageSize)
 	if len(m.consumers) > 0 {
+		var ipeers []interestPeerConfig
+		masked := false
+		for _, slot := range m.consumers {
+			on := cfg.InterestOn(slot.peer)
+			masked = masked || on
+			ipeers = append(ipeers, interestPeerConfig{nodeID: slot.nodeID, enabled: on})
+		}
 		lg, err := NewLog(LogConfig{
 			MaxMessages:    uint64(cfg.Log.GetMaxMessages()),
 			MaxBytes:       uint64(cfg.Log.GetMaxBytes()),
 			MaxRecordBytes: m.maxRecordCap,
 			Consumers:      serveIDs,
+			Masked:         masked,
+			MaxScan:        cfg.Interest.GetMaxScanPerFetch(),
 		})
 		if err != nil {
 			return nil, err
 		}
 		m.log = lg
+		if masked {
+			m.interest = newInterestTable(ipeers, cfg.Interest.GetUnknown() == config.PeerLinkInterestAll,
+				cfg.Interest.GetMaxFiltersPerPeer(), cfg.Interest.GetMaxFilterBytes(), m.logger)
+		}
 	}
 
 	h, err := newHook(m)
@@ -288,7 +315,7 @@ func New(deps Deps) (*Manager, error) {
 	if m.log != nil && deps.RetainedClass != wire.RetainedWinCCOA {
 		deps.Server.Options.SerializeRetained = true
 	}
-	deps.Server.Options.QueueOfflineReplicas = cfg.Receive.Queue
+	deps.Server.Options.QueueOfflineReplicas = cfg.Receive.GetQueue()
 	if w := cfg.Receive.GetInjectWorkers(); w > 1 {
 		m.logger.Warn("peerlink: Receive.InjectWorkers is reserved; one injector per source applies records in order",
 			"injectWorkers", w)
@@ -342,6 +369,7 @@ func newHook(m *Manager) (*Hook, error) {
 		maxExpirySec:  maxExpiry(m.srv),
 		filter:        f,
 		sharedSkip:    cfg.Receive.GetSharedSubscriptions() != config.PeerLinkSharedDeliver,
+		interest:      m.interest,
 	}
 	if cfg.Capture.EchoSuppressMs > 0 {
 		h.echo = newEchoTable(cfg.Capture.EchoSuppressMs)
@@ -410,7 +438,35 @@ func (m *Manager) Start() error {
 		defer m.bgWG.Done()
 		m.background()
 	}()
+	if m.interest != nil {
+		m.bgWG.Add(1)
+		go func() {
+			defer m.bgWG.Done()
+			m.interestLoop()
+		}()
+	}
 	return nil
+}
+
+// interestLoop advances consumers past records not meant for them, expires persistent interest of
+// disconnected peers and sweeps their backlog (plan-peerlink-interest-routing 6.4, 6.5, 7.3).
+func (m *Manager) interestLoop() {
+	tick := time.NewTicker(100 * time.Millisecond)
+	defer tick.Stop()
+	var lastExpire time.Time
+	for {
+		select {
+		case <-m.ctx.Done():
+			return
+		case now := <-tick.C:
+			m.log.AdvanceSkipped()
+			if now.Sub(lastExpire) >= time.Second {
+				lastExpire = now
+				m.interest.expire(now)
+			}
+			m.interest.sweep(m.log)
+		}
+	}
 }
 
 // resolvePeerIPs collects the IPs of peers with an Address, which bypass the global pre-auth cap.
@@ -571,8 +627,59 @@ func (m *Manager) Close() error {
 		m.connWG.Wait()
 		m.bgWG.Wait()
 		m.closeLog()
+		if m.tracker != nil {
+			m.tracker.close()
+		}
 	})
 	return nil
+}
+
+// clientHoldClass is the interest class of a client's subscriptions; an unknown client is volatile.
+func clientHoldClass(srv *mqtt.Server, id string) holdClass {
+	cl, ok := srv.Clients.Get(id)
+	if !ok {
+		return holdClass{}
+	}
+	return sessionHoldClass(cl.Properties.ProtocolVersion, cl.Properties.Clean,
+		cl.Properties.Props.SessionExpiryInterval, srv.Options.Capabilities.MaximumSessionExpiryInterval)
+}
+
+// RestoreInterest counts the subscriptions of an offline persistent session from storage, which the
+// broker only restores when the client reconnects (plan-peerlink-interest-routing 4.3). updated is
+// the last session update; the session expires offline from there. Call it before Start.
+func (m *Manager) RestoreInterest(client string, filters []string, protocol byte, clean bool,
+	sessionExpiry uint32, updated time.Time) {
+	if m == nil || m.tracker == nil || m.srv == nil {
+		return
+	}
+	hc := sessionHoldClass(protocol, clean, sessionExpiry, m.srv.Options.Capabilities.MaximumSessionExpiryInterval)
+	if !hc.per {
+		return
+	}
+	var expireIn time.Duration
+	if hc.exp != wire.InterestExpiryNever {
+		expireIn = time.Until(updated.Add(time.Duration(hc.exp) * time.Second))
+		if expireIn <= 0 {
+			return
+		}
+	}
+	m.tracker.restore(client, filters, hc, expireIn)
+}
+
+// InterestSink receives the subscriptions of local components that are not MQTT sessions: the
+// internal bus, archive groups and the redundancy provider (plan-peerlink-interest-routing 4.1).
+type InterestSink interface {
+	FiltersAdded(filters []string)
+	FiltersRemoved(filters []string)
+	SetProvided(source string, vol, per []string)
+}
+
+// InterestSink returns the consumer interest tracker, or nil when no link may use interest routing.
+func (m *Manager) InterestSink() InterestSink {
+	if m == nil || m.tracker == nil {
+		return nil
+	}
+	return m.tracker
 }
 
 func (m *Manager) closeListener() {
@@ -646,11 +753,35 @@ func (m *Manager) Status() Status {
 	if m.log != nil {
 		stats := m.log.ConsumerStats()
 		for i, c := range m.consumers {
-			st.Consumers = append(st.Consumers, c.status(stats[i]))
+			cs := c.status(stats[i])
+			if m.interest != nil {
+				cs.Interest = m.interest.status(i)
+			}
+			st.Consumers = append(st.Consumers, cs)
 		}
 	}
 	for _, p := range m.pullers {
 		st.Sources = append(st.Sources, p.status())
+	}
+	if t := m.interest; t != nil {
+		st.Interest = &InterestCounts{
+			InterestSkipped:          t.skipped.Load(),
+			InterestMatched:          t.matched.Load(),
+			SparseBatches:            t.sparseBatches.Load(),
+			VolatileDropped:          t.volatileDropped.Load(),
+			PersistentExpired:        t.persistentExpiry.Load(),
+			InterestBacklogDiscarded: t.backlogDiscarded.Load(),
+			InterestRejected:         t.rejected.Load(),
+			InterestOverLimit:        t.overLimit.Load(),
+			DeltasReceived:           t.deltasReceived.Load(),
+		}
+	}
+	if m.tracker != nil {
+		if st.Interest == nil {
+			st.Interest = &InterestCounts{}
+		}
+		ts := m.tracker.status()
+		st.Interest.Local = &ts
 	}
 	return st
 }
@@ -700,8 +831,11 @@ func (m *Manager) stateChanged() {
 }
 
 // ownCaps is the capability set this node offers on a link.
-func (m *Manager) ownCaps(tlsLink bool) uint64 {
+func (m *Manager) ownCaps(tlsLink, interest bool) uint64 {
 	caps := wire.CapsV1
+	if interest {
+		caps |= wire.CapInterest
+	}
 	if tlsLink && !m.cfg.Fetch.CrcOnTls {
 		caps &^= wire.CapBatchCRC
 	}

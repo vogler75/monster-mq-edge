@@ -1,6 +1,27 @@
 # Plan: PeerLink interest routing (forward only what a peer subscribes to)
 
-**Status: reviewed and clarified (2026-10-09); implementation planned.**
+**Status: implemented in edge and main (2026-10-09), IR-M0–IR-M6.**
+
+Edge implementation notes:
+- Built: the `Receive.Queue: true` default (IR-P1), the `CapInterest` wire (0x20/0x21, sparse batches), the
+  source interest table and capture mask, the consumer tracker with E8, bus, archive and inline interest, offline
+  persistent sessions restored from the session store at startup, expiry sweeps, status, config and docs.
+- HOT/COLD provider (C6): MQTT bridge devices carry `redundancy: ALWAYS|HOT_STANDBY|COLD_STANDBY` in their
+  config JSON. The outbound filters of standby bridges feed `SetProvided("redundancy", ...)` and are announced
+  also for a COLD bridge that is not running; a device change updates the announcement. The bridges have no
+  role behaviour yet (they run as before); that comes with the redundancy plan.
+- Generation rollover: before the delta generation would wrap, the tracker resets it to 0 and sends every
+  cursor a FIRST/LAST snapshot, which the source accepts at any generation.
+- G-IR1 (Apple M-series, not target hardware): capture is about 100 ns/1 alloc with routing off, 38 ns/0 allocs
+  for a skipped publish, 53 ns at 10 % and 185 ns at 100 % interest. End to end (`PEERLINK_BENCH=1 go test
+  ./internal/peerlink -run LinkInterestThroughput -v`), 10 % interest drains the link 4.6–5.5 times faster with
+  10 times fewer bytes; 100 % interest has the same throughput and bytes (0.95–1.05). Passed; re-check on
+  amd64/armv7 target hardware.
+- Integration scenarios 1–17 run, including 6 (TCP gate proxy), 13 (standby bridges) and 17 (edge with the main
+  broker, `MONSTERMQ_MAIN_BROKER=<main>/broker go test ./test/integration -run MainPair`), and per-direction
+  `Interest: OFF` (source-only, consumer-only, both).
+- Main finding from scenario 17: main's status printed `epoch` signed and reported source interest flat; main
+  now writes unsigned epochs and edge's nested `interest` objects.
 
 Proposed file: `dev/plans/plan-peerlink-interest-routing.md`. This plan extends PeerLink as described in
 [spec-peerlink-redundancy.md](../../winccoa/doc/spec-peerlink-redundancy.md) and plan-peerlink.md (removed; last version at `2fe2282:dev/plans/plan-peerlink.md`). It borrows the

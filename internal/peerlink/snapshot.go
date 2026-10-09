@@ -133,7 +133,7 @@ func (s *session) serveSnapshot(f *wire.Fetch) error {
 		h.Lost = s.snap.truncated
 	}
 	skipped := s.substituteTombstones(frames)
-	err := s.writeBatch(&h, frames)
+	err := s.writeBatch(&h, nil, frames)
 	clear(frames)
 	s.frames = frames[:0]
 	if done {

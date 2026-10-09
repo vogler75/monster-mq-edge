@@ -410,7 +410,8 @@ peer. Replicas always reach local subscribers and the retained store. The other
 subsystems are set under `PeerLink.Receive`: the pubsub bus (GraphQL
 `topicUpdates`, scripts, REST SSE) and archive groups get replicas (`Bus`,
 `Archive`: true); MQTT bridges do not forward them (`BridgeOutbound: false`,
-loop guard); offline queues of persistent sessions skip them (`Queue: false`);
+loop guard); offline persistent sessions get them queued like local publishes
+(`Queue: true`; the publisher's own offline session is excluded);
 shared subscription groups get each message once, on the broker it was
 published on (`SharedSubscriptions: SKIP`, or `DELIVER`). Network clients may
 not use the client ids `inline` or `peerlink:*`.
@@ -482,6 +483,48 @@ about 1.2 million records, about 60 s at 20,000 msg/s; the status reports the
 remaining `capacitySeconds`. While the log is full the process can use about
 twice `MaxBytes`; `Runtime.MemoryLimitMB` sets a soft Go memory limit.
 
+### Interest routing
+
+By default a source forwards every publish to every peer. With interest
+routing, enabled on both brokers, each peer announces the topic filters it
+needs and the source forwards only matching publishes. A publish no peer wants
+is not even written to the log.
+
+```yaml
+PeerLink:
+  Interest:
+    Enabled: false            # true on both brokers to agree on it
+    Unknown: ALL              # ALL | NONE: what a peer gets until its first announcement
+    FlushMs: 5                # subscription changes are coalesced this long
+    MaxScanPerFetch: 65536    # log offsets scanned per fetch for one peer (>= 1024)
+    MaxFiltersPerPeer: 100000 # a peer with more filters gets everything
+    MaxFilterBytes: 1024      # longer filters are ignored
+  Peers:
+    - { NodeId: edge-b, Address: "edge-b.local:1890", Interest: INHERIT }   # OFF: this link forwards everything
+```
+
+A peer announces its MQTT client subscriptions (those of persistent sessions
+with the session expiry, also while the client is offline and right after a
+restart), inline subscriptions of scripts and services, the pubsub bus filters
+(`Receive.Bus: true`), archive group filters (`Receive.Archive: true`) and
+shared subscriptions (only with `SharedSubscriptions: DELIVER`). Retained
+publishes and clears always go to every peer. When a link drops, the source
+keeps capturing for the peer's filters (persistent ones until their session
+expiry) so nothing is lost on reconnect. More than 64 peers with `Serve` and
+`Interest.Enabled` fail startup.
+
+It pays off when peers need a small part of the traffic: at 10 % interest a
+measured link was 1.1–1.2 times faster and moved about 8 times fewer bytes, at
+100 % it costs nothing measurable. A `#` filter on the peer (the `Default`
+archive group, Redfish, an HMI on `#`) makes it want everything; set
+`Interest: OFF` for that peer, narrow the archive groups, or set
+`Receive.Archive: false`. A publish right after a client subscribes on the
+peer can be missed until the subscription reached the source (`FlushMs` plus
+half the round trip); retained values are not affected. The status shows per
+peer `interest{state, mode, filters, filtersPersistent, ...}` and top-level
+counters such as `interestSkipped` and `sparseBatches`. Details:
+[doc/peerlink.md](doc/peerlink.md#interest-routing).
+
 ### Delivery guarantees (RPO)
 
 PeerLink is not synchronous replication: a PUBACK means that the local broker
@@ -545,7 +588,8 @@ It shows this broker's log (`lso`, `leo`, `records`, `bytes`,
 (`consumers`: `state`, `committed`, `lag`, `lostTotal`, `shutdownUnserved`) and
 every peer it pulls from (`sources`: `state`, `lagRecords`, `injected`,
 `dropped` per reason, `gapLostTotal`, `sourceResets`, `retainedDiverged`,
-`lastError`, `applyDelayMs`). `POST /peerlink/v1/resync?source=<NodeId>`
+`lastError`, `applyDelayMs`), and with interest routing an `interest`
+object per peer plus node-wide `interest` counters. `POST /peerlink/v1/resync?source=<NodeId>`
 (loopback only) fetches the retained messages of that source again and
 overwrites local values that are more than 1 s older. The peer port is bound
 on `Listener.Address` when a peer has `Serve: true`; a broker that only pulls

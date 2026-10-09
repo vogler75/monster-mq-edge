@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -81,6 +82,10 @@ func TestPeerLinkDefaults(t *testing.T) {
 		"Receive.MaxRecordAgeMs":    {p.Receive.MaxRecordAgeMs, 0},
 		"Receive.MaxFrameBytes":     {p.Receive.GetMaxFrameBytes(), 16<<20 + 64<<10},
 		"Receive.InjectWorkers":     {p.Receive.GetInjectWorkers(), 1},
+		"Interest.FlushMs":          {p.Interest.GetFlushMs(), 5},
+		"Interest.MaxScanPerFetch":  {p.Interest.GetMaxScanPerFetch(), 65536},
+		"Interest.MaxFiltersPer":    {p.Interest.GetMaxFiltersPerPeer(), 100000},
+		"Interest.MaxFilterBytes":   {p.Interest.GetMaxFilterBytes(), 1024},
 	}
 	for name, v := range ints {
 		if v[0] != v[1] {
@@ -96,7 +101,7 @@ func TestPeerLinkDefaults(t *testing.T) {
 		"Receive.Bus":             {p.Receive.GetBus(), true},
 		"Receive.BridgeOutbound":  {p.Receive.BridgeOutbound, false},
 		"Receive.Archive":         {p.Receive.GetArchive(), true},
-		"Receive.Queue":           {p.Receive.Queue, false},
+		"Receive.Queue":           {p.Receive.GetQueue(), true},
 		"Receive.MarkReplicas":    {p.Receive.MarkReplicas, false},
 	}
 	for name, v := range bools {
@@ -404,6 +409,22 @@ func TestPeerLinkValidation(t *testing.T) {
 		{"InjectWorkers 0", func(c *Config) { c.PeerLink.Receive.InjectWorkers = ptr(0) }, "InjectWorkers"},
 		{"InjectWorkers 17", func(c *Config) { c.PeerLink.Receive.InjectWorkers = ptr(17) }, "InjectWorkers"},
 		{"InjectWorkers 16", func(c *Config) { c.PeerLink.Receive.InjectWorkers = ptr(16) }, ""},
+
+		// Interest routing.
+		{"Interest enabled", func(c *Config) { c.PeerLink.Interest.Enabled = true }, ""},
+		{"Interest.Unknown", func(c *Config) { c.PeerLink.Interest.Unknown = "SOME" }, "Interest.Unknown"},
+		{"Interest.Unknown NONE", func(c *Config) { c.PeerLink.Interest.Unknown = "NONE" }, ""},
+		{"Interest.FlushMs 0", func(c *Config) { c.PeerLink.Interest.FlushMs = ptr(0) }, "Interest.FlushMs"},
+		{"Interest.MaxScanPerFetch 1023", func(c *Config) { c.PeerLink.Interest.MaxScanPerFetch = ptr(1023) }, "MaxScanPerFetch"},
+		{"Interest.MaxScanPerFetch 1024", func(c *Config) { c.PeerLink.Interest.MaxScanPerFetch = ptr(1024) }, ""},
+		{"Interest.MaxFilterBytes 0", func(c *Config) { c.PeerLink.Interest.MaxFilterBytes = ptr(0) }, "MaxFilterBytes"},
+		{"Interest.MaxFilterBytes 32769", func(c *Config) { c.PeerLink.Interest.MaxFilterBytes = ptr(32769) }, "MaxFilterBytes"},
+		{"Interest.MaxFiltersPerPeer 0", func(c *Config) { c.PeerLink.Interest.MaxFiltersPerPeer = ptr(0) }, "MaxFiltersPerPeer"},
+		{"peer Interest invalid", func(c *Config) { c.PeerLink.Peers[0].Interest = "ON" }, "Peers[0] (node-b).Interest"},
+		{"peer Interest OFF", func(c *Config) { c.PeerLink.Peers[0].Interest = "OFF" }, ""},
+		{"Interest with 65 consumers", func(c *Config) { interestPeers(c, 65, true) }, "at most 64 consumers"},
+		{"Interest with 64 consumers", func(c *Config) { interestPeers(c, 64, true) }, ""},
+		{"65 consumers without Interest", func(c *Config) { interestPeers(c, 65, false) }, ""},
 		{"MaxFrameBytes below a fetch", func(c *Config) { c.PeerLink.Receive.MaxFrameBytes = ptr(1 << 20) }, "MaxFrameBytes"},
 		{"Fetch.MaxRecords 0", func(c *Config) { c.PeerLink.Fetch.MaxRecords = ptr(0) }, "Fetch.MaxRecords"},
 		{"Snapshot.Mode invalid", func(c *Config) { c.PeerLink.Snapshot.Mode = "ALL" }, "Snapshot.Mode"},
@@ -437,6 +458,14 @@ func TestPeerLinkValidation(t *testing.T) {
 				t.Fatalf("error %q does not contain %q", err, tc.want)
 			}
 		})
+	}
+}
+
+func interestPeers(c *Config, n int, enabled bool) {
+	c.PeerLink.Interest.Enabled = enabled
+	c.PeerLink.Peers = nil
+	for i := range n {
+		c.PeerLink.Peers = append(c.PeerLink.Peers, PeerConfig{NodeID: fmt.Sprintf("node-%d", i+100)})
 	}
 }
 
@@ -705,7 +734,7 @@ func TestPeerLinkFixture(t *testing.T) {
 	}
 	p := &cfg.PeerLink
 	if !p.Enabled || !p.Tls.Enabled || p.Tls.GetClientAuth() != ClientAuthRequired || p.Fetch.GetPipeline() != 2 ||
-		p.Receive.GetArchive() || !p.Receive.Queue || p.Receive.GetCatchUpRateFactor() != 2.5 || p.Listener.GetMaxPreAuthPerIp() != 4 {
+		p.Receive.GetArchive() || !p.Receive.GetQueue() || p.Receive.GetCatchUpRateFactor() != 2.5 || p.Listener.GetMaxPreAuthPerIp() != 4 {
 		t.Fatalf("fixture not decoded: %+v", p)
 	}
 	s, err := cfg.ResolvePeerLink()
@@ -725,7 +754,15 @@ func TestPeerLinkFixture(t *testing.T) {
 	if !s.AnyServe() {
 		t.Error("AnyServe")
 	}
+	in := p.Interest
+	if !in.Enabled || in.GetUnknown() != PeerLinkInterestNone || in.GetFlushMs() != 10 || in.GetMaxScanPerFetch() != 32768 ||
+		in.GetMaxFiltersPerPeer() != 5000 || in.GetMaxFilterBytes() != 512 {
+		t.Errorf("Interest: %+v", in)
+	}
 	b, c, d := s.Peers[0], s.Peers[1], s.Peers[2]
+	if !p.InterestOn(b) || p.InterestOn(c) || c.GetInterest() != PeerLinkInterestOff {
+		t.Errorf("per-peer Interest: b %q c %q", b.Interest, c.Interest)
+	}
 	if !b.Pulls() || !b.GetServe() || !p.DialerTLS(b) || len(p.SecretsFor(b)) != 1 {
 		t.Errorf("oa-host-b: %+v", b)
 	}

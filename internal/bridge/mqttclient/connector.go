@@ -46,6 +46,28 @@ type Config struct {
 	BufferSize           int       `json:"bufferSize,omitempty"`
 	PersistBuffer        bool      `json:"persistBuffer,omitempty"`
 	DeleteOldestMessages bool      `json:"deleteOldestMessages,omitempty"`
+	// Redundancy is the component mode of contract C6: ALWAYS (default), HOT_STANDBY or COLD_STANDBY.
+	Redundancy string `json:"redundancy,omitempty"`
+}
+
+// Standby reports whether the bridge has a HOT_STANDBY or COLD_STANDBY mode.
+func (c Config) Standby() bool {
+	switch strings.ToUpper(c.Redundancy) {
+	case "HOT_STANDBY", "COLD_STANDBY":
+		return true
+	}
+	return false
+}
+
+// OutboundFilters returns the local filters of the PUBLISH addresses.
+func (c Config) OutboundFilters() []string {
+	var out []string
+	for _, a := range c.Addresses {
+		if strings.EqualFold(a.Mode, "PUBLISH") {
+			out = append(out, outboundFilter(a.LocalTopic))
+		}
+	}
+	return out
 }
 
 // LocalPublisher is implemented by the MQTT broker *Server (Publish).
@@ -378,14 +400,12 @@ func mapInboundTopic(a Address, remoteTopic string) string {
 }
 
 func (c *Connector) startOutbound(ctx context.Context) {
-	filters := []string{}
+	filters := c.cfg.OutboundFilters()
 	addrByFilter := map[string]Address{}
 	for _, a := range c.cfg.Addresses {
-		if !strings.EqualFold(a.Mode, "PUBLISH") {
-			continue
+		if strings.EqualFold(a.Mode, "PUBLISH") {
+			addrByFilter[a.LocalTopic] = a
 		}
-		filters = append(filters, outboundFilter(a.LocalTopic))
-		addrByFilter[a.LocalTopic] = a
 	}
 	if len(filters) == 0 {
 		return

@@ -215,7 +215,7 @@ func (ac *applyCtx) created(p *puller, topic string) (int64, bool) {
 func (p *puller) applyBatch(ac *applyCtx, in *batchIn) uint64 {
 	h := &in.b.Header
 	snapshot := h.Flags&wire.BatchFlagSnapshot != 0
-	next := h.BaseOffset + uint64(h.Count)
+	next := h.BaseOffset + uint64(in.b.Span())
 	if snapshot {
 		next = 0
 	}
@@ -244,7 +244,7 @@ func (p *puller) applyBatch(ac *applyCtx, in *batchIn) uint64 {
 			}
 			break
 		}
-		off := h.BaseOffset + uint64(i)
+		off := h.BaseOffset + uint64(in.b.Delta(int(i)))
 		if err != nil {
 			p.dropped[dropMalformed].Add(1)
 			if ok, n := p.rate.allow("malformed", 10*time.Second); ok {

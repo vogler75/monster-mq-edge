@@ -38,6 +38,12 @@ const (
 	logDefaultMaxMessages    = 2_000_000
 	logDefaultMaxBytes       = 256 << 20
 	logDefaultMaxRecordBytes = 1<<20 + 64<<10
+
+	// logMasksBytes is the accounted footprint of a chunk's consumer mask array (interest routing only).
+	logMasksBytes = uint64(unsafe.Sizeof(logMasks{}))
+
+	logDefaultMaxScan = 65536
+	logMinMaxScan     = 1024
 )
 
 var (
@@ -48,6 +54,8 @@ var (
 	ErrLogCommitBeyondEnd = errors.New("peerlink: commit beyond log end")
 	// ErrLogUnknownConsumer is returned for a consumer index outside the static consumer set.
 	ErrLogUnknownConsumer = errors.New("peerlink: unknown log consumer")
+	// ErrLogTooManyConsumers is returned by NewLog for a masked log with more than 64 consumers.
+	ErrLogTooManyConsumers = errors.New("peerlink: interest routing supports at most 64 consumers")
 )
 
 // LogKind classifies an appended record for the appended{client,inline,will} counters.
@@ -103,7 +111,16 @@ type LogConfig struct {
 	// Consumers is the static consumer set: the canonical NodeIds of the Serve peers. The index of a
 	// NodeId in this slice is the consumer index used by every per-consumer method.
 	Consumers []string
+	// Masked enables per-record consumer masks (interest routing, plan-peerlink-interest-routing 6.3).
+	// It requires at most 64 consumers.
+	Masked bool
+	// MaxScan bounds the offsets one sparse read or one lagging advance scans (MaxScanPerFetch).
+	MaxScan int
 }
+
+// logMasks holds a chunk's per-record consumer bitmasks. Entries are written before the slot pointer is
+// published and changed later only by expiry sweeps, always with atomic operations.
+type logMasks [logChunkSlots]uint64
 
 type logChunk struct {
 	slots [logChunkSlots]unsafe.Pointer
@@ -150,6 +167,7 @@ type Log struct {
 	startMono time.Time
 
 	chunks    []*logChunk // ascending; chunks[0] covers [firstBase, firstBase+1024) and contains lso
+	masks     []*logMasks // parallel to chunks when masked
 	firstBase uint64
 	spares    [logSpareChunks]atomic.Pointer[logChunk] // filled by refillLoop, taken under mu
 	lso, leo  uint64
@@ -165,6 +183,10 @@ type Log struct {
 	maxMessages    uint64
 	maxBytes       uint64
 	maxRecordBytes int
+	masked         bool
+	allMask        uint64
+	maxScan        int
+	chunkBytes     uint64
 
 	// Counters guarded by mu.
 	appended       [logKindCount]uint64
@@ -220,6 +242,23 @@ func NewLog(cfg LogConfig) (*Log, error) {
 	}
 	if q := l.maxBytes / 4; uint64(l.maxRecordBytes) > q {
 		l.maxRecordBytes = int(min(q, math.MaxInt32))
+	}
+	if cfg.Masked && len(cfg.Consumers) > 64 {
+		return nil, ErrLogTooManyConsumers
+	}
+	l.masked = cfg.Masked
+	l.maxScan = cfg.MaxScan
+	if l.maxScan <= 0 {
+		l.maxScan = logDefaultMaxScan
+	}
+	l.chunkBytes = logChunkBytes
+	if l.masked {
+		l.chunkBytes += logMasksBytes
+	}
+	if n := len(cfg.Consumers); n >= 64 {
+		l.allMask = math.MaxUint64
+	} else {
+		l.allMask = 1<<n - 1
 	}
 	l.consumers = make([]logConsumer, len(cfg.Consumers))
 	for i, id := range cfg.Consumers {
@@ -332,11 +371,23 @@ func (l *Log) Seal() uint64 {
 	return leo
 }
 
-// Append stores frame at the next offset and returns that offset. frame must be a complete record
-// frame (4+recLen == len(frame)) in its own allocation; the log keeps it, unmodified, until the record
-// is trimmed or evicted. It returns false when the frame is malformed (captureDropped{invalid}), too
-// large (captureDropped{size}) or the log is sealed (uncapturedAtShutdown).
+// Append is AppendMask for every consumer.
 func (l *Log) Append(frame []byte, kind LogKind) (uint64, bool) {
+	return l.AppendMask(frame, kind, l.allMask)
+}
+
+// AllConsumers is the mask with a bit for every consumer.
+func (l *Log) AllConsumers() uint64 { return l.allMask }
+
+// Masked reports whether the log keeps per-record consumer masks.
+func (l *Log) Masked() bool { return l.masked }
+
+// AppendMask stores frame at the next offset and returns that offset. frame must be a complete record
+// frame (4+recLen == len(frame)) in its own allocation; the log keeps it, unmodified, until the record
+// is trimmed or evicted. mask holds a bit per consumer index that needs the record; it is ignored when
+// the log is not masked. It returns false when the frame is malformed (captureDropped{invalid}), too
+// large (captureDropped{size}) or the log is sealed (uncapturedAtShutdown).
+func (l *Log) AppendMask(frame []byte, kind LogKind, mask uint64) (uint64, bool) {
 	n := len(frame)
 	if n < 4 || uint64(binary.LittleEndian.Uint32(frame))+4 != uint64(n) {
 		l.droppedInv.Add(1)
@@ -383,10 +434,18 @@ func (l *Log) Append(frame []byte, kind LogKind) (uint64, bool) {
 	ck := l.chunks[ci]
 	slot := rel & logChunkMask
 	ck.cum[slot] = l.total
+	if l.masked {
+		atomic.StoreUint64(&l.masks[ci][slot], mask)
+	}
 	atomic.StorePointer(&ck.slots[slot], p)
 	l.total += acc
 	l.bytes += acc
 	l.leo = off + 1
+	var tck *logChunk
+	var ta, tb uint64
+	if l.masked && mask&l.allMask != l.allMask {
+		tck, ta, tb = l.skipCaughtUpLocked(off, mask)
+	}
 	if l.leo-l.lso > l.maxMessages || l.bytes > l.maxBytes {
 		l.evictLocked(off)
 	}
@@ -394,6 +453,7 @@ func (l *Log) Append(frame []byte, kind LogKind) (uint64, bool) {
 		l.wakeDueLocked()
 	}
 	l.mu.Unlock()
+	clearLogSlots(tck, ta, tb)
 	if refill {
 		select {
 		case l.refill <- struct{}{}:
@@ -417,7 +477,115 @@ func (l *Log) attachChunkLocked() {
 		l.spareMisses++
 	}
 	l.chunks = append(l.chunks, ck)
-	l.bytes += logChunkBytes
+	if l.masked {
+		l.masks = append(l.masks, new(logMasks))
+	}
+	l.bytes += l.chunkBytes
+}
+
+// skipCaughtUpLocked advances C[c] over the record at off for every caught-up consumer whose bit is not
+// in mask (6.5 rule 1), so records a consumer never needs do not pin the log.
+func (l *Log) skipCaughtUpLocked(off, mask uint64) (*logChunk, uint64, uint64) {
+	moved := false
+	for i := range l.consumers {
+		con := &l.consumers[i]
+		if con.committed == off && mask&(1<<uint(i)) == 0 {
+			con.committed = off + 1
+			moved = true
+		}
+	}
+	if !moved {
+		return nil, 0, 0
+	}
+	return l.updateLWMLocked()
+}
+
+// maskAtLocked returns the consumer mask of the record at x, lso <= x < leo, of a masked log.
+func (l *Log) maskAtLocked(x uint64) uint64 {
+	rel := x - l.firstBase
+	return atomic.LoadUint64(&l.masks[rel>>logChunkShift][rel&logChunkMask])
+}
+
+// skipLaggingLocked advances C[c] over the leading run of records without bit c, scanning at most
+// maxScan offsets (6.5 rule 2).
+func (l *Log) skipLaggingLocked(c int) bool {
+	con := &l.consumers[c]
+	x := max(con.committed, l.lso)
+	if x >= l.leo {
+		return false
+	}
+	bit := uint64(1) << uint(c)
+	end := min(l.leo, x+uint64(l.maxScan))
+	start := x
+	for x < end && l.maskAtLocked(x)&bit == 0 {
+		x++
+	}
+	if x == start || x <= con.committed {
+		return false
+	}
+	con.committed = x
+	return true
+}
+
+// AdvanceSkipped applies the lagging advance (6.5 rule 2) to every consumer. The manager calls it every
+// 100 ms; it is a no-op on an unmasked log.
+func (l *Log) AdvanceSkipped() {
+	if !l.masked {
+		return
+	}
+	l.mu.Lock()
+	moved := false
+	for c := range l.consumers {
+		if l.skipLaggingLocked(c) {
+			moved = true
+		}
+	}
+	var ck *logChunk
+	var a, b uint64
+	if moved {
+		ck, a, b = l.updateLWMLocked()
+	}
+	l.mu.Unlock()
+	clearLogSlots(ck, a, b)
+}
+
+// ClearConsumerBits is the persistent-expiry sweep (6.5): starting at from (raised to max(C[c], lso)), it
+// scans at most maxScan offsets and clears bit c of every record for which drop returns true. drop gets
+// the record frame and is called under the log lock; it must be cheap and must not call into the log.
+// It returns the offset after the last scanned one (leo when done) and the number of bits cleared.
+func (l *Log) ClearConsumerBits(c int, from uint64, drop func(frame []byte) bool) (next uint64, cleared uint64) {
+	if !l.masked || c < 0 || c >= len(l.consumers) {
+		return 0, 0
+	}
+	bit := uint64(1) << uint(c)
+	l.mu.Lock()
+	x := max(from, l.consumers[c].committed, l.lso)
+	end := min(l.leo, x+uint64(l.maxScan))
+	for ; x < end; x++ {
+		rel := x - l.firstBase
+		mp := &l.masks[rel>>logChunkShift][rel&logChunkMask]
+		m := atomic.LoadUint64(mp)
+		if m&bit == 0 {
+			continue
+		}
+		p := atomic.LoadPointer(&l.chunks[rel>>logChunkShift].slots[rel&logChunkMask])
+		if p == nil {
+			continue
+		}
+		size := 4 + int(binary.LittleEndian.Uint32(unsafe.Slice((*byte)(p), 4)))
+		if drop(unsafe.Slice((*byte)(p), size)) {
+			atomic.StoreUint64(mp, m&^bit)
+			cleared++
+		}
+	}
+	var ck *logChunk
+	var a, b uint64
+	if cleared > 0 && l.skipLaggingLocked(c) {
+		ck, a, b = l.updateLWMLocked()
+	}
+	l.mu.Unlock()
+	clearLogSlots(ck, a, b)
+	return x, cleared
 }
 
 // detachLocked drops the leading chunks that lie entirely below lso.
@@ -430,7 +598,11 @@ func (l *Log) detachLocked() {
 	if k > 0 {
 		clear(l.chunks[:k])
 		l.chunks = l.chunks[k:]
-		l.bytes -= uint64(k) * logChunkBytes
+		if l.masked {
+			clear(l.masks[:k])
+			l.masks = l.masks[k:]
+		}
+		l.bytes -= uint64(k) * l.chunkBytes
 	}
 }
 
@@ -464,10 +636,29 @@ func (l *Log) evictLocked(keep uint64) {
 		if off >= l.lwm {
 			l.evictedUnread++
 		}
+		if l.masked {
+			l.accountEvictLocked(off, l.maskAtLocked(off))
+		}
 		l.lso = off + 1
 		if l.lso-l.firstBase >= logChunkSlots {
 			l.detachLocked()
 		}
+	}
+}
+
+// accountEvictLocked charges the evicted record at off as lost only to the consumers that needed it.
+// On a masked log loss is accounted at eviction, where the record's mask is still known; observeLocked
+// then finds nothing left to charge. A consumer with a read in progress is left to observeLocked.
+func (l *Log) accountEvictLocked(off, mask uint64) {
+	for i := range l.consumers {
+		con := &l.consumers[i]
+		if con.reading > 0 || off < max(con.acctNext, con.committed, con.served) {
+			continue
+		}
+		if mask&(1<<uint(i)) != 0 {
+			con.lostTotal++
+		}
+		con.acctNext = off + 1
 	}
 }
 
@@ -556,7 +747,9 @@ func (l *Log) WaitFor(ctx context.Context, w *LogWaiter, wakeAt uint64, maxWait 
 // LogReadResult describes the frames Read put into out.
 type LogReadResult struct {
 	Base      uint64 // offset of out[0]; equals from unless the range below lso was gone (GAP)
-	Count     int    // frames in out, at offsets Base..Base+Count-1
+	Count     int    // frames in out, at offsets Base..Base+Count-1 (dense) or Base+deltas[i] (sparse)
+	Span      uint64 // offsets covered: Base..Base+Span-1; equals Count unless records were skipped
+	Sparse    bool   // records without the consumer's bit were skipped; deltas holds the offsets
 	Bytes     int    // sum of the frame lengths (recordsBytes)
 	Lost      uint64 // Base - from: offsets requested but no longer held (GAP when > 0)
 	Truncated bool   // stopped at a record evicted after the snapshot (TRUNCATED)
@@ -569,7 +762,7 @@ type LogReadResult struct {
 // the caller must clear its slice after writing them so it does not pin evicted frames. from must be
 // in 1..leo; from < lso yields the records from lso with Lost = lso - from.
 func (l *Log) Read(from uint64, maxRecords, maxBytes int, out *[][]byte) (LogReadResult, error) {
-	return l.readRetry(-1, from, maxRecords, maxBytes, out)
+	return l.readRetry(-1, from, maxRecords, maxBytes, out, nil)
 }
 
 // ReadFor is Read on behalf of consumer c, the serve path of a session. It observes c (8.5) at the
@@ -581,21 +774,38 @@ func (l *Log) ReadFor(c int, from uint64, maxRecords, maxBytes int, out *[][]byt
 		*out = (*out)[:0]
 		return LogReadResult{Base: from}, ErrLogUnknownConsumer
 	}
-	return l.readRetry(c, from, maxRecords, maxBytes, out)
+	return l.readRetry(c, from, maxRecords, maxBytes, out, nil)
 }
 
-func (l *Log) readRetry(c int, from uint64, maxRecords, maxBytes int, out *[][]byte) (LogReadResult, error) {
+// ReadSparse is ReadFor that skips the records without consumer c's bit (6.4). The offsets of the
+// returned frames relative to Base go to *deltas (reused) when the result is Sparse. It scans at most
+// MaxScan offsets. On an unmasked log it is ReadFor.
+func (l *Log) ReadSparse(c int, from uint64, maxRecords, maxBytes int, out *[][]byte, deltas *[]uint32) (LogReadResult, error) {
+	if c < 0 || c >= len(l.consumers) {
+		*out = (*out)[:0]
+		return LogReadResult{Base: from}, ErrLogUnknownConsumer
+	}
+	if !l.masked {
+		deltas = nil
+	}
+	return l.readRetry(c, from, maxRecords, maxBytes, out, deltas)
+}
+
+func (l *Log) readRetry(c int, from uint64, maxRecords, maxBytes int, out *[][]byte, deltas *[]uint32) (LogReadResult, error) {
 	for attempt := 0; ; attempt++ {
-		res, err := l.read(c, from, maxRecords, maxBytes, out)
+		res, err := l.read(c, from, maxRecords, maxBytes, out, deltas)
 		// An eviction between the snapshot and the first slot load leaves nothing to serve; a fresh
 		// snapshot reports it as a GAP instead of an empty truncated batch.
-		if err != nil || res.Count > 0 || !res.Truncated || attempt == 2 {
+		if err != nil || res.Span > 0 || !res.Truncated || attempt == 2 {
 			return res, err
 		}
 	}
 }
 
-func (l *Log) read(c int, from uint64, maxRecords, maxBytes int, out *[][]byte) (LogReadResult, error) {
+func (l *Log) read(c int, from uint64, maxRecords, maxBytes int, out *[][]byte, deltas *[]uint32) (LogReadResult, error) {
+	if deltas != nil {
+		return l.readSparse(c, from, maxRecords, maxBytes, out, deltas)
+	}
 	var cks [logReadMaxChunks]*logChunk
 	dst := (*out)[:0]
 
@@ -649,6 +859,7 @@ func (l *Log) read(c int, from uint64, maxRecords, maxBytes int, out *[][]byte) 
 	}
 	*out = dst
 	res.Count = len(dst)
+	res.Span = uint64(res.Count)
 	res.Bytes = total
 	if c >= 0 {
 		l.mu.Lock()
@@ -658,6 +869,104 @@ func (l *Log) read(c int, from uint64, maxRecords, maxBytes int, out *[][]byte) 
 		l.mu.Unlock()
 	}
 	return res, nil
+}
+
+func (l *Log) readSparse(c int, from uint64, maxRecords, maxBytes int, out *[][]byte, deltas *[]uint32) (LogReadResult, error) {
+	var cks [logReadMaxChunks]*logChunk
+	var mks [logReadMaxChunks]*logMasks
+	dst := (*out)[:0]
+	ds := (*deltas)[:0]
+
+	l.mu.Lock()
+	lso, leo := l.lso, l.leo
+	if from == 0 || from > leo {
+		l.mu.Unlock()
+		*out, *deltas = dst, ds
+		return LogReadResult{Base: from, LSO: lso, LEO: leo}, ErrLogOffsetOutOfRange
+	}
+	con := &l.consumers[c]
+	l.observeLocked(con)
+	con.reading++
+	base := max(from, lso)
+	n := min(leo-base, uint64(l.maxScan))
+	if maxRecords <= 0 {
+		n = 0
+	}
+	fb := l.firstBase
+	var c0 uint64
+	if n > 0 {
+		c0 = (base - fb) >> logChunkShift
+		cLast := (base + n - 1 - fb) >> logChunkShift
+		if cLast-c0 >= logReadMaxChunks {
+			cLast = c0 + logReadMaxChunks - 1
+			n = fb + (cLast+1)<<logChunkShift - base
+		}
+		copy(cks[:], l.chunks[c0:cLast+1])
+		copy(mks[:], l.masks[c0:cLast+1])
+	}
+	l.mu.Unlock()
+
+	res := LogReadResult{Base: base, Lost: base - from, LSO: lso, LEO: leo}
+	bit := uint64(1) << uint(c)
+	total := 0
+	skipped := false
+	i := uint64(0)
+	for ; i < n; i++ {
+		rel := base + i - fb
+		k := (rel >> logChunkShift) - c0
+		s := rel & logChunkMask
+		p := atomic.LoadPointer(&cks[k].slots[s])
+		if p == nil {
+			res.Truncated = true
+			break
+		}
+		if atomic.LoadUint64(&mks[k][s])&bit == 0 {
+			// The span table (4 bytes per record plus span) counts against maxBytes once the batch is sparse.
+			if !skipped && maxBytes > 0 && len(dst) > 0 && total+4+4*len(dst) > maxBytes {
+				break
+			}
+			skipped = true
+			continue
+		}
+		size := 4 + int(binary.LittleEndian.Uint32(unsafe.Slice((*byte)(p), 4)))
+		cost := size
+		if skipped {
+			cost += 4
+		}
+		if maxBytes > 0 && len(dst) > 0 && total+cost+sparseOverhead(skipped, len(dst)) > maxBytes {
+			break
+		}
+		dst = append(dst, unsafe.Slice((*byte)(p), size))
+		ds = append(ds, uint32(i))
+		total += size
+		if len(dst) >= maxRecords {
+			i++
+			break
+		}
+	}
+	res.Span = i
+	res.Count = len(dst)
+	res.Bytes = total
+	res.Sparse = res.Count < int(res.Span)
+	if !res.Sparse {
+		ds = ds[:0]
+	}
+	*out, *deltas = dst, ds
+
+	l.mu.Lock()
+	con = &l.consumers[c]
+	con.served = max(con.served, base+res.Span)
+	con.reading--
+	l.mu.Unlock()
+	return res, nil
+}
+
+// sparseOverhead is the span-table size already owed for n records of a sparse batch.
+func sparseOverhead(sparse bool, n int) int {
+	if !sparse {
+		return 0
+	}
+	return 4 + 4*n
 }
 
 // Commit sets C[c] = max(C[c], off) (8.4). Records below the new low-water mark are trimmed: the
@@ -678,6 +987,9 @@ func (l *Log) Commit(c int, off uint64) error {
 		return nil
 	}
 	con.committed = off
+	if l.masked {
+		l.skipLaggingLocked(c)
+	}
 	ck, a, b := l.updateLWMLocked()
 	l.mu.Unlock()
 	select {

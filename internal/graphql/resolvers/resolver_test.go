@@ -25,6 +25,14 @@ func TestMqttClientConfigUpdatePreservesAddressesWhenOmitted(t *testing.T) {
 	}
 }
 
+func TestMqttClientConfigUpdatePreservesRedundancy(t *testing.T) {
+	cfg := mqttClientConfigInputToMergedMap(&generated.MqttClientConnectionConfigInput{BrokerURL: "tcp://new"},
+		`{"brokerUrl":"tcp://old","redundancy":"HOT_STANDBY"}`)
+	if cfg["redundancy"] != "HOT_STANDBY" {
+		t.Fatalf("redundancy = %#v, want preserved HOT_STANDBY", cfg["redundancy"])
+	}
+}
+
 func TestMqttClientConfigUpdateCanClearAddresses(t *testing.T) {
 	existing := `{"addresses":[{"mode":"PUBLISH","remoteTopic":"remote/#","localTopic":"local/#","removePath":true}]}`
 	cfg := mqttClientConfigInputToMergedMap(&generated.MqttClientConnectionConfigInput{

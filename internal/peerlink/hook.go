@@ -41,6 +41,8 @@ type Hook struct {
 	sharedSkip    bool
 	echo          *echoTable
 	sessions      *sessionTimes
+	// interest is the remote interest table; nil when no consumer uses interest routing.
+	interest *interestTable
 
 	filtered       stripedCounter
 	echoSuppressed stripedCounter
@@ -83,6 +85,9 @@ func (h *Hook) OnConnect(cl *mqtt.Client, pk packets.Packet) error {
 func (h *Hook) OnSessionEstablished(cl *mqtt.Client, pk packets.Packet) {
 	if h.sessions != nil {
 		h.sessions.record(cl.ID, h.m.monoNs())
+	}
+	if h.m.tracker != nil {
+		h.m.tracker.reclassify(cl.ID)
 	}
 }
 
@@ -207,6 +212,17 @@ func (h *Hook) captureAs(clientID string, username []byte, inline bool, pk *pack
 		h.echoSuppressed.Inc()
 		return
 	}
+	mask := uint64(0)
+	if h.interest != nil {
+		if pk.FixedHeader.Retain {
+			mask = h.log.AllConsumers()
+		} else if mask = h.interest.match(pk.TopicName); mask == 0 {
+			h.interest.skipped.Inc()
+			return
+		} else {
+			h.interest.matched.Inc()
+		}
+	}
 	size := wire.RecordSize(&rec)
 	if size == 0 {
 		h.log.CountCaptureInvalid()
@@ -220,6 +236,10 @@ func (h *Hook) captureAs(clientID string, username []byte, inline bool, pk *pack
 	rec.CaptureMonoMs = h.log.MonoMs(t)
 	buf := make([]byte, size)
 	wire.EncodeRecord(buf, &rec)
+	if h.interest != nil {
+		h.log.AppendMask(buf, kind, mask)
+		return
+	}
 	h.log.Append(buf, kind)
 }
 
