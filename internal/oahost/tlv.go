@@ -1,5 +1,5 @@
 // Package oahost is the Go side of the WinCC OA embedding contract
-// (dev/plans/spec-winccoa-native.md). It is pure Go: the cgo exports in
+// (winccoa/plans/spec-winccoa-native.md). It is pure Go: the cgo exports in
 // embed/cabi adapt a C host to the Host interface defined here.
 package oahost
 

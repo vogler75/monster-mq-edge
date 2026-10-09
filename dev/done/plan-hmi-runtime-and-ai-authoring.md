@@ -2,7 +2,11 @@
 
 ## Status
 
-Proposed design. No implementation has started.
+Superseded (2026-10-09). HMI hosting was built with a different design, see
+[plan-hmi-dashboard-hosting.md](plan-hmi-dashboard-hosting.md) and
+[plan-hmi-mqtt-sync.md](plan-hmi-mqtt-sync.md). Not built from this plan: the
+browser SDK and component kit, versioned releases with rollback, `hmictl`, the AI
+authoring kit and HMI MCP tools.
 
 This plan intentionally changes an earlier product decision: the edge broker would
 be allowed to host user-facing HMI applications. If implementation is approved,

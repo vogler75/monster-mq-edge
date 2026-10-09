@@ -1,7 +1,7 @@
 /*
  * monstermq.h - C ABI of the embeddable MonsterMQ Edge broker.
  *
- * Contract: dev/plans/spec-winccoa-native.md section 3. ABI version 2.
+ * Contract: winccoa/plans/spec-winccoa-native.md section 3. ABI version 2.
  *
  * Threading: every mmq_* function may be called from any thread. The host
  * callbacks (submit, wake, log) are called from arbitrary Go runtime
