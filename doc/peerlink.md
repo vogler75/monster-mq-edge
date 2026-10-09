@@ -15,7 +15,7 @@ Typical uses:
 - **Edge to central**: an edge broker forwards to a central broker, in one or
   both directions, optionally filtered.
 
-The protocol details are in `winccoa/plans/spec-peerlink-redundancy.md`; this
+The protocol details are in `winccoa/doc/spec-peerlink-redundancy.md`; this
 document covers concepts, configuration and operation.
 
 ---

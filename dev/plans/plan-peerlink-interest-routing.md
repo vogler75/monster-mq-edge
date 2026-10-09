@@ -3,7 +3,7 @@
 **Status: draft (2026-10-08). Not reviewed, not committed by the owner.**
 
 Proposed file: `dev/plans/plan-peerlink-interest-routing.md`. This plan extends PeerLink as described in
-[spec-peerlink-redundancy.md](../../winccoa/plans/spec-peerlink-redundancy.md) and [plan-peerlink.md](../../winccoa/plans/done/plan-peerlink.md). It borrows the
+[spec-peerlink-redundancy.md](../../winccoa/doc/spec-peerlink-redundancy.md) and plan-peerlink.md (removed; last version at `2fe2282:dev/plans/plan-peerlink.md`). It borrows the
 interest-propagation model of NATS routes (nats-server `server/route.go`: `updateRouteSubscriptionMap`,
 `sendSubsToRoute`, `processRemoteSub`, `removeRemoteSubs`). It deliberately does not copy NATS's at-most-once
 delivery: the PeerLink log, its offsets and its resume stay as they are.
@@ -36,7 +36,7 @@ Interest routing is **optional**. It is off by default, and with it off PeerLink
   and archive filter providers.
 - Protocol extension `mmq-peer/1`, capability `CAP_INTEREST`:
   - `INTEREST_SNAPSHOT` and `INTEREST_DELTA` frames from consumer to source
-  - a consumer `InstanceId` in `HELLO`
+  - restart detection via the existing `HELLO.InstanceID` (no `HELLO` layout change)
   - a sparse `BATCH` from source to consumer
 - A source-side remote interest table, a capture-time consumer mask, per-record masks in the log, a sparse serve
   path, and an LWM that is not pinned by records a consumer never needs.
@@ -166,15 +166,18 @@ to E8.
 
 ### 5.1 Negotiation
 
-- `CAP_INTEREST` is a new bit in the capability bitmaps of `SERVER_HELLO` and `HELLO`.
+- `CAP_INTEREST` is a new bit in the capability bitmaps of `SERVER_HELLO` and `HELLO`: `1<<5` (`1<<4` is
+  reserved for `CapRole` from the redundancy plan). The value is pinned identically in main
+  (`main/dev/plans/plan-peerlink-interest-routing.md`, section 4).
 - Interest routing is active on a link only if **both** sides set the bit and the consumer has
   `Interest.Enabled: true`.
 - Otherwise the source treats that consumer as interested in everything: its mask bit is always set and batches
   are dense. This is the rolling-upgrade path.
 
-### 5.2 HELLO extension
+### 5.2 Restart detection (existing `HELLO.InstanceID`)
 
-`HELLO` gets an optional TLV `INSTANCE_ID` (u64, from `crypto/rand`, drawn once per consumer process start). The
+`HELLO` already carries `InstanceID` (u64, drawn once per process start; `internal/peerlink/wire/frame.go:556`,
+set in `puller.go:479`, read in `server.go:608`; main has the same field). No new TLV is needed. The
 source compares it with the value last seen for that NodeId:
 
 | Comparison | Meaning | Source action |
@@ -214,7 +217,7 @@ delivery over the route.
 
 ### 5.5 Sparse BATCH (source → consumer)
 
-There is a new batch flag, `BatchFlagSparse`. When it is set, these fields follow the 68-byte header:
+There is a new batch flag, `BatchFlagSparse` = `1<<6` (after `Truncated` = `1<<5`; same value in main). When it is set, these fields follow the 68-byte header:
 
 ```
 u32 span               offsets covered: BaseOffset .. BaseOffset+span-1
@@ -533,7 +536,7 @@ logged at WARN.
 |---|---|---|
 | IR-M0 | IR-P1: `Receive.Queue` default `true`; update config test, spec section 10 and plan-peerlink 12.4; test that a forwarded QoS 1 message is queued for an offline persistent session and delivered on reconnect | `internal/config/config.go`, `internal/config/peerlink_test.go`, `internal/broker/hook_queue_test.go`, spec, plan-peerlink |
 | IR-M1 | E8 observer; consumer interest tracker with refcount, classes, session expiry handling and provider hooks (bus, archive); unit tests | `internal/mqtt/topics.go`, `internal/peerlink/interest_tracker.go` (new), `internal/pubsub/bus.go` (filter change notification), `internal/archive/manager.go` (group filter listing) |
-| IR-M2 | Wire: `CAP_INTEREST`, `INSTANCE_ID`, `INTEREST_SNAPSHOT`/`DELTA`, `BatchFlagSparse`; fuzz and vector tests | `internal/peerlink/wire/frame.go`, `record.go`, `testdata/` |
+| IR-M2 | Wire: `CAP_INTEREST`, `INTEREST_SNAPSHOT`/`DELTA`, `BatchFlagSparse`; fuzz and vector tests shared with main | `internal/peerlink/wire/frame.go`, `record.go`, `testdata/` |
 | IR-M3 | Source: interest table, union trie with masks, capture mask, log masks, sparse read, LWM auto-advance | `internal/peerlink/interest_table.go` (new), `filter.go`, `hook.go`, `log.go`, `server.go` |
 | IR-M4 | Lifecycle: InstanceId, `DISCONNECTED` state, persistent expiry, mark and sweep, `Unknown` policy | `server.go`, `manager.go`, `puller.go` (consumer sends the snapshot before the first `FETCH`; deltas via the writer goroutine) |
 | IR-M5 | Config, validation, status, metrics, README and spec section | `internal/config/config.go`, `status.go`, `README.md`, `spec-peerlink-redundancy.md` |
