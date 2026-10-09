@@ -707,6 +707,7 @@ func (h *StorageHook) OnSelectRetainedMessages(filter string) ([]packets.Packet,
 		return nil, nil
 	}
 	ctx := context.Background()
+	now := time.Now().Unix()
 	var pks []packets.Packet
 	err := h.store.Retained.FindMatchingMessages(ctx, filter, func(msg stores.BrokerMessage) bool {
 		pk := packets.Packet{
@@ -720,8 +721,11 @@ func (h *StorageHook) OnSelectRetainedMessages(filter string) ([]packets.Packet,
 		}
 		pk.Created = msg.Time.Unix()
 		if msg.MessageExpiryInterval != nil && *msg.MessageExpiryInterval > 0 {
-			pk.Properties.MessageExpiryInterval = *msg.MessageExpiryInterval
 			pk.Expiry = pk.Created + int64(*msg.MessageExpiryInterval)
+			if pk.Expiry <= now {
+				return true // expired but not yet purged by StartRetention
+			}
+			pk.Properties.MessageExpiryInterval = uint32(pk.Expiry - now) // remaining lifetime [MQTT-3.3.2-6]
 		}
 		pks = append(pks, pk)
 		return true

@@ -9,8 +9,9 @@ with edge-specific modifications.
 ## Status
 
 Last verified against the source on 2026-10-09. Regression tests for the fixes
-are in `internal/mqtt/review_fixes_test.go` and
-`internal/mqtt/packets/review_fixes_test.go`.
+are in `internal/mqtt/review_fixes_test.go`,
+`internal/mqtt/packets/review_fixes_test.go`, `internal/mqtt/listeners/tcp_test.go`
+and `TestStorageHookSelectRetainedSkipsExpired` in `internal/broker/hook_storage_test.go`.
 
 | Finding | Status |
 |---|---|
@@ -19,23 +20,23 @@ are in `internal/mqtt/review_fixes_test.go` and
 | P1 QoS 2 ack handlers skip state validation | Open |
 | P1 Quota mixed atomic/mutex access | **Partially done**: data race removed through locked getters (`ReceiveQuota`, `SendQuota`, `MaximumSendQuota`); check-then-decrement is still not atomic |
 | P1 MEMORY retained store retains nothing | **Done** (fixed earlier) |
-| P1 CONNECT has no deadline/client-limit slot | Open |
+| P1 CONNECT has no deadline/client-limit slot | **Partially done**: `Options.ConnectTimeout` (default 10s) closes connections that never send CONNECT; the client-limit slot is still taken only after CONNECT |
 | P1 MaxMessageSize not applied | **Done** (fixed earlier, `broker/server.go`) |
-| P1 Topic alias resolved after ACL | Open |
+| P1 Topic alias resolved after ACL | **Done** (alias resolved first in `processPublish`; unknown alias disconnects with 0x94 Topic Alias Invalid) |
 | P1 StorageHook persists rejected subscriptions | **Done** (fixed earlier, `hook_storage.go`) |
 | P1 Expired sessions leave state in memory | **Done** (fixed earlier, `clearExpiredClients`) |
 | P2 `NextImmediate` recursive `RLock` | **Done** |
 | P2 Inline `#` misses nested topics | **Done** |
 | P2 Receive Maximum blocks QoS 0 | **Done** |
 | P2 Reason-only DISCONNECT decoded as success | **Done** |
-| P2 DB retained messages discard expiry | **Done** (fixed earlier); small gap: already-expired rows are not skipped at selection time |
+| P2 DB retained messages discard expiry | **Done** (`OnSelectRetainedMessages` skips expired rows and sends the remaining expiry interval) |
 | P2 Malformed wildcard filters accepted | **Done** |
 | Improvement: `ReadPacket` double copy | **Done** |
 | Improvement: packet-size check omits length bytes | **Done** (fixed earlier) |
 | Improvement: `DecodeLength` > 4 bytes | **Done** |
 | Improvement: empty AUTH rejected | **Done** |
 | Improvement: double `OnQosDropped` | **Done** |
-| Improvement: listener accept-during-shutdown race | Open |
+| Improvement: listener accept-during-shutdown race | **Done** (connection closed when accepted after shutdown began; wait-group race already fixed by `Listeners.AddClient`) |
 
 ## Findings
 
@@ -186,7 +187,7 @@ Recommendation: decode the options byte with `decodeByte` and return a
 malformed-packet error when it is absent. Add decoder fuzzing and a specific
 truncated-SUBSCRIBE regression test.
 
-### P1: Connections waiting for CONNECT have no deadline or client-limit slot
+### P1: Connections waiting for CONNECT have no deadline or client-limit slot — **Partially done**
 
 `attachClient` starts a write loop and blocks reading the initial CONNECT
 packet before setting a socket deadline. It reserves a `MaximumClients` slot
@@ -225,7 +226,7 @@ Recommendation: validate `MaxMessageSize`, set
 oversized packet before allocating its body. Retain a safe non-zero deployment
 default.
 
-### P1: Topic aliases are resolved after topic validation and ACL checks
+### P1: Topic aliases are resolved after topic validation and ACL checks — **Done**
 
 For an alias-only MQTT v5 PUBLISH, `processPublish` validates and authorizes an
 empty `TopicName`. It resolves the alias only after the ACL check. This can
@@ -375,7 +376,7 @@ must be non-empty.
   hook again for every returned packet ID. Hooks receive two notifications per
   expiry, with the second lacking the original packet fields. Locations:
   `internal/mqtt/clients.go:343` and `internal/mqtt/server.go:1827`.
-- TCP, generic net, and Unix listeners can accept a connection immediately
+- **Done:** TCP, generic net, and Unix listeners can accept a connection immediately
   before shutdown, observe the shutdown flag afterward, and neither hand the
   socket to the broker nor close it. Their connection wait-group increment also
   occurs inside the later handler, allowing a narrow `Add`-versus-`Wait` race.

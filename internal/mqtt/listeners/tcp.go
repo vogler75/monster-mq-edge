@@ -94,11 +94,13 @@ func (l *TCP) Serve(establish EstablishFn) {
 
 		if atomic.LoadUint32(&l.end) == 0 {
 			go func() {
-				err = establish(l.id, conn)
+				err := establish(l.id, conn)
 				if err != nil && !errors.Is(err, io.EOF) {
 					l.log.Warn("", "error", err)
 				}
 			}()
+		} else {
+			_ = conn.Close() // accepted after shutdown began; nobody else will close it
 		}
 	}
 }

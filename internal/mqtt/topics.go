@@ -51,8 +51,8 @@ func (a *InboundTopicAliases) Set(id uint16, topic string) string {
 		return topic // ?
 	}
 
-	if existing, ok := a.internal[id]; ok && topic == "" {
-		return existing
+	if topic == "" {
+		return a.internal[id] // empty when the alias is unknown; never store an empty mapping
 	}
 
 	a.internal[id] = topic

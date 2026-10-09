@@ -23,8 +23,9 @@ import (
 )
 
 const (
-	Version                       = "2.7.9" // the current server version.
-	defaultSysTopicInterval int64 = 1       // the interval between $SYS topic publishes
+	Version                       = "2.7.9"          // the current server version.
+	defaultSysTopicInterval int64 = 1                // the interval between $SYS topic publishes
+	defaultConnectTimeout         = 10 * time.Second // time a new connection has to send CONNECT
 	LocalListener                 = "local"
 	InlineClientId                = "inline"
 )
@@ -136,6 +137,10 @@ type Options struct {
 	// offline sessions. When false they are not delivered to offline sessions; a QueueHook, when
 	// present, decides on its own. Set before Serve.
 	QueueOfflineReplicas bool `yaml:"-" json:"-"`
+
+	// ConnectTimeout is how long a new connection may take to send its CONNECT packet before
+	// it is closed. Defaults to 10 seconds.
+	ConnectTimeout time.Duration `yaml:"connect_timeout" json:"connect_timeout"`
 }
 
 // Server is an MQTT broker server. It should be created with server.New()
@@ -230,6 +235,10 @@ func (o *Options) ensureDefaults() {
 
 	if o.SysTopicResendInterval == 0 {
 		o.SysTopicResendInterval = defaultSysTopicInterval
+	}
+
+	if o.ConnectTimeout == 0 {
+		o.ConnectTimeout = defaultConnectTimeout
 	}
 
 	if o.ClientNetWriteBufferSize == 0 {
@@ -429,6 +438,9 @@ func (s *Server) attachClient(cl *Client, listener string) error {
 	go cl.WriteLoop()
 	defer cl.Stop(nil)
 
+	if cl.Net.Conn != nil {
+		_ = cl.Net.Conn.SetDeadline(time.Now().Add(s.Options.ConnectTimeout)) // replaced by the keepalive deadline after CONNECT
+	}
 	pk, err := s.readConnectionPacket(cl)
 	if err != nil {
 		return fmt.Errorf("read connection: %w", err)
@@ -967,6 +979,13 @@ func (s *Server) InjectPacket(cl *Client, pk packets.Packet) error {
 
 // processPublish processes a Publish packet.
 func (s *Server) processPublish(cl *Client, pk packets.Packet) error {
+	if pk.Properties.TopicAliasFlag && pk.Properties.TopicAlias > 0 { // [MQTT-3.3.2-11] resolve before validation and ACL checks
+		pk.TopicName = cl.State.TopicAliases.Inbound.Set(pk.Properties.TopicAlias, pk.TopicName)
+		if pk.TopicName == "" {
+			return s.DisconnectClient(cl, packets.ErrTopicAliasInvalid) // alias used before it was set
+		}
+	}
+
 	if !cl.Net.Inline && !IsValidFilter(pk.TopicName, true) {
 		return nil
 	}
@@ -1005,10 +1024,6 @@ func (s *Server) processPublish(cl *Client, pk packets.Packet) error {
 				atomic.AddInt64(&s.Info.Inflight, -1)
 			}
 		}
-	}
-
-	if pk.Properties.TopicAliasFlag && pk.Properties.TopicAlias > 0 { // [MQTT-3.3.2-11]
-		pk.TopicName = cl.State.TopicAliases.Inbound.Set(pk.Properties.TopicAlias, pk.TopicName)
 	}
 
 	if pk.FixedHeader.Qos > s.Options.Capabilities.MaximumQos {

@@ -549,3 +549,38 @@ func TestStorageHookPersistsSubscriptionIdentifier(t *testing.T) {
 		t.Fatalf("restored identifiers = %v, want a/#:42 b:0", got)
 	}
 }
+
+func TestStorageHookSelectRetainedSkipsExpired(t *testing.T) {
+	e := newPeerEnv(t, false)
+	ctx := context.Background()
+	exp := func(s uint32) *uint32 { return &s }
+	now := time.Now()
+	msgs := []stores.BrokerMessage{
+		{TopicName: "t/expired", Payload: []byte("a"), IsRetain: true, Time: now.Add(-time.Minute), MessageExpiryInterval: exp(10)},
+		{TopicName: "t/live", Payload: []byte("b"), IsRetain: true, Time: now.Add(-20 * time.Second), MessageExpiryInterval: exp(60)},
+		{TopicName: "t/forever", Payload: []byte("c"), IsRetain: true, Time: now.Add(-time.Hour)},
+	}
+	if err := e.retained.MessageStore.AddAll(ctx, msgs); err != nil {
+		t.Fatal(err)
+	}
+
+	pks, err := e.hook.OnSelectRetainedMessages("t/#")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]packets.Packet{}
+	for _, pk := range pks {
+		got[pk.TopicName] = pk
+	}
+	if _, ok := got["t/expired"]; ok {
+		t.Error("expired retained message was returned")
+	}
+	if pk, ok := got["t/live"]; !ok {
+		t.Error("live retained message missing")
+	} else if iv := pk.Properties.MessageExpiryInterval; iv < 39 || iv > 40 {
+		t.Errorf("MessageExpiryInterval = %d, want remaining ~40s", iv)
+	}
+	if pk, ok := got["t/forever"]; !ok || pk.Properties.MessageExpiryInterval != 0 {
+		t.Errorf("message without expiry: present=%v interval=%d", ok, pk.Properties.MessageExpiryInterval)
+	}
+}
