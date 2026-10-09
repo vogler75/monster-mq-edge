@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// Regression tests for dev/plans/plan-mqtt-code-review-findings.md.
+// Regression tests for dev/done/plan-mqtt-code-review-findings.md.
 
 func TestSubscribeDecodeTruncatedV5DoesNotPanic(t *testing.T) {
 	// packet id 1, property length 0, filter "a/b", then no subscription options byte

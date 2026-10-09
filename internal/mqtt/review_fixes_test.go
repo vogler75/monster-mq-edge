@@ -12,7 +12,7 @@ import (
 	"monstermq.io/edge/internal/mqtt/packets"
 )
 
-// Regression tests for dev/plans/plan-mqtt-code-review-findings.md.
+// Regression tests for dev/done/plan-mqtt-code-review-findings.md.
 
 func TestInlineHashSubscriptionMatchesNestedTopic(t *testing.T) {
 	x := NewTopicsIndex()

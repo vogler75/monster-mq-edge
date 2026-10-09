@@ -8,6 +8,9 @@ with edge-specific modifications.
 
 ## Status
 
+The items still marked Open or Partially done are tracked in
+[plan-mqtt-inflight-quota-fixes.md](../plans/plan-mqtt-inflight-quota-fixes.md).
+
 Last verified against the source on 2026-10-09. Regression tests for the fixes
 are in `internal/mqtt/review_fixes_test.go`,
 `internal/mqtt/packets/review_fixes_test.go`, `internal/mqtt/listeners/tcp_test.go`
