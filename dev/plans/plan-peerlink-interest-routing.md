@@ -1,6 +1,6 @@
 # Plan: PeerLink interest routing (forward only what a peer subscribes to)
 
-**Status: draft (2026-10-08). Not reviewed, not committed by the owner.**
+**Status: reviewed and clarified (2026-10-09); implementation planned.**
 
 Proposed file: `dev/plans/plan-peerlink-interest-routing.md`. This plan extends PeerLink as described in
 [spec-peerlink-redundancy.md](../../winccoa/doc/spec-peerlink-redundancy.md) and plan-peerlink.md (removed; last version at `2fe2282:dev/plans/plan-peerlink.md`). It borrows the
@@ -11,6 +11,18 @@ delivery: the PeerLink log, its offsets and its resume stay as they are.
 Estimates are marked **(est.)**. None of them may be claimed until gate G-IR1 has measured them (section 12).
 
 ---
+
+## Implementation readiness and cross-plan order (2026-10-09)
+
+Owner authorized resolving the review recommendations on 2026-10-09. The observer, queue-default change, archive/bus coverage, `Unknown: ALL`, 64-consumer startup limit and status-only interest observability are accepted for both brokers. This authorizes the plan decisions; no code has been implemented by this revision.
+
+1. Implement IR-M0 in both brokers (`Receive.Queue: true` is an intentional default change even with interest routing off).
+2. Implement redundancy roles/wire and component configuration plus lifecycle (main R1/R2, edge P1/P2). Run shared role golden vectors and mixed-pair tests. No GraphQL/dashboard dependency.
+3. Implement IR-M1–IR-M5; IR-M1's configured HOT/COLD provider depends on the component config from step 2. IR-M2 wire codec can be developed independently, reserving `CapRole` bit 4.
+4. Complete IR-M6 benchmarks, expiry sweeps and mixed-pair acceptance tests before declaring routing ready. Main uses Maven/test-scoped benchmarks, not a Gradle build.
+5. Implement witness phases with the revised shared C3/C8 rules and failure tests. GraphQL/main R7/edge PG and their dashboard work remain separately gated by explicit human commitment in both repositories.
+
+For tracker synchronization, take snapshots at a fixed generation and retain subsequent absolute deltas per puller until delivered. Serialize snapshot frames and following deltas, never interleave a delta into an open snapshot. If a slow puller outruns the retained change history, send a new FIRST/LAST snapshot before further deltas. All chunks must use one generation; a mismatching chunk generation is a protocol error. Before u32 generation wrap, reconnect and reset with a snapshot; comparisons must not silently wrap.
 
 ## 1. Goal, scope, non-goals
 
@@ -28,7 +40,7 @@ consumer, whether or not anything on that consumer wants it. With **interest rou
    disconnect. When a consumer restarts, the source drops the consumer's **volatile** interest (sessions that died
    with it). It keeps the consumer's **persistent** interest until the session expiry the consumer's engine applies.
 
-Interest routing is **optional**. It is off by default, and with it off PeerLink behaves exactly as today.
+Interest routing is **optional**. It is off by default, and with it off routing stays dense; the separately approved IR-M0 queue-default change still applies.
 
 ### 1.2 In scope
 
@@ -47,7 +59,7 @@ Interest routing is **optional**. It is off by default, and with it off PeerLink
 
 - **Cluster-wide shared subscriptions** (one delivery per group across all nodes, NATS queue-group style with
   group names in the record). `SharedSubscriptions: SKIP|DELIVER` stays as it is. Section 9.3 describes how v1
-  announces shared subscriptions. Phase 2 is sketched in section 15.
+  announces shared subscriptions. Phase 2 is sketched in section 16.
 - **Multi-hop forwarding and gossip discovery.** The topology stays a one-hop full mesh.
 - **Filtering retained publishes.** Retained publishes and the retained snapshot still go to every consumer
   (section 9.1).
@@ -63,7 +75,7 @@ Interest routing is **optional**. It is off by default, and with it off PeerLink
 |---|---|---|
 | IR-S1 | Engine change E8 (section 10) | Add an optional interest observer to `TopicsIndex` in `internal/mqtt/topics.go`. It changes nothing when unset. **Accepted by the owner (2026-10-08).** |
 | IR-S2 | Protocol extension | Capability-gated additions to `mmq-peer/1`. Mixed versions keep working, and a peer without `CAP_INTEREST` is served as today (section 5.1). |
-| IR-S3 | Semantics change when enabled | A publish made before the consumer's interest reaches the source is not forwarded. That window is about half the RTT after a SUBSCRIBE on the consumer, and the whole reconnect window if `Unknown: NONE` is set. NATS has the same window. When interest routing is off, nothing changes. |
+| IR-S3 | Semantics change when enabled | A publish made before the consumer's interest reaches the source is not forwarded. That window is about `FlushMs` plus half the RTT after a SUBSCRIBE on the consumer, and the whole reconnect window if `Unknown: NONE` is set. NATS has the same window. When interest routing is off, routing stays dense; IR-M0 still changes the queue default. |
 | IR-S4 | Receiver archive and bus coverage | **Decided by the owner (2026-10-08).** With `Receive.Archive: true`, the `TopicFilters` of **all** archive groups are announced, including the built-in `Default` group (`TopicFilters: ["#"]`, `internal/archive/manager.go:110-117`). A consumer with an archive group on `#` therefore gets everything, as today. There is no separate list of announced groups. The GraphQL message bus receives only forwarded topics unless its own filters are announced (`Receive.Bus`). |
 | IR-P1 | Prerequisite: queue forwarded messages like local ones | **Decided by the owner (2026-10-08).** A message received from a peer is queued for offline persistent sessions exactly like a message published by a local client. `Receive.Queue` defaults to `true` (`internal/config/config.go`, spec section 10). The key stays accepted, because PeerLink rejects unknown keys at startup and existing configs may set it. Changes the existing PeerLink semantics in `plan-peerlink.md` 12.4 and the spec, independent of interest routing. The own-publisher exclusion stays (`hook_queue.go:174`). Consequence: a persistent client that moves between nodes may get messages again from its old node's queue when it returns (QoS 1 at-least-once; local publishes already behave this way today). |
 | IR-S5 | GraphQL | None in v1. Interest status goes into the existing PeerLink status endpoint (`/peerlink/v1/status`, JSON, not GraphQL). **Accepted by the owner (2026-10-08): no GraphQL changes.** |
@@ -105,10 +117,26 @@ before a `FETCH` is processed before it.
 | Source | When announced | Class |
 |---|---|---|
 | Network client subscriptions (`TopicsIndex.Subscribe`/`Unsubscribe`, including subscriptions restored by `loadSubscriptions`, `internal/mqtt/server.go:1901`) | Always | Persistent if the session is persistent, otherwise volatile (4.3) |
-| Inline subscriptions (`InlineSubscribe`, used by scripts and services) | Always, except owners that skip replicas (bridge outbound while `Receive.BridgeOutbound: false`) | Volatile |
+| Inline subscriptions (`InlineSubscribe`, used by scripts and services) | Always, except owners that skip replicas (bridge outbound while `Receive.BridgeOutbound: false`). HOT_STANDBY/COLD_STANDBY components (redundancy contract C6) are always announced, whatever the broker role or `BridgeOutbound`, including COLD components that are not running, so a takeover finds the feed already in place. Their filters come from the redundancy component provider (below). | Volatile |
 | Shared subscriptions `$share/g/f` | Only with `Receive.SharedSubscriptions: DELIVER`, announced as plain `f` (9.3) | As the session |
 | Message bus filters (`pubsub.Bus.Subscribe(filters…)`, `internal/pubsub/bus.go:30`; GraphQL subscriptions, MCP) | Only with `Receive.Bus: true` | Volatile |
-| Archive group `TopicFilters` (all groups, including `Default`) | Only with `Receive.Archive: true` | Persistent, with no expiry while configured |
+| Archive group `TopicFilters` (all groups, including `Default`) | Only with `Receive.Archive: true`. HOT/COLD archive groups follow the same rule (C6): announced on every node, active or not | Persistent, with no expiry while configured (`expirySec` `0xFFFFFFFF`) |
+| Redundancy component provider: configured filters of `HOT_STANDBY`/`COLD_STANDBY` components (C6) | Always, from configuration, whether the component runs or not (archive groups: only with `Receive.Archive: true`) | Volatile (archive groups: persistent, as above) |
+
+**Redundancy component provider (C6).** The tracker has a provider that reads the component configuration, not
+the running components. It announces the configured topic filters of every component with `Redundancy:
+HOT_STANDBY` or `COLD_STANDBY`:
+- bridges: their outbound and subscription filters
+- scripts: their subscriptions
+- archive groups: their `TopicFilters`
+
+The class is `VOL`; archive groups are `PER` with no expiry, as in the archive row. The filters are announced
+whatever the broker role and `Receive.BridgeOutbound`, and whether or not the component is running. The
+provider's counts are refcounted separately from runtime subscriptions: the runtime subscriptions of a running
+component are counted through E8 as usual, and a component that stops withdraws only those, never the provider's
+counts. On a configuration change (component added or removed, mode or filters changed) the provider recomputes
+its set, and the tracker emits deltas for the filters whose announced class changes. Components in mode `ALWAYS`
+are not covered by the provider; they follow the rows above.
 
 The consumer's `Receive.Include`/`Exclude` stays in force on apply. Filters are announced verbatim, without
 intersecting them with the receive filters, because intersecting wildcard filters is not worth the complexity.
@@ -130,7 +158,9 @@ only if it moves by more than 10 % or crosses "never". A thousand clients on `se
 announcement, as in NATS `acc.rm`.
 
 Deltas are coalesced per filter in a pending map and flushed by the puller's writer goroutine, like `COMMIT`, at most
-every `Interest.FlushMs` (default 5 ms) or immediately when the map exceeds 1024 entries. Rapid
+every `Interest.FlushMs` (default 5 ms), or immediately when the pending map reaches 1024 entries or the encoded
+delta would exceed `MaxConsumerFrame` (64 KiB), whichever comes first. Each flushed `INTEREST_DELTA` frame takes the
+next tracker generation (5.4), so no delta frame ever exceeds 64 KiB. Rapid
 subscribe/unsubscribe churn on one filter collapses to its final state, which plays the role of NATS `acc.lws`.
 
 The tracker is one per node, shared by all pullers. Each puller holds a cursor (a tracker generation) so that a
@@ -155,10 +185,10 @@ to E8.
 
 - Subscriptions of the PeerLink injector clients themselves (the `peerlink:` prefix).
 - `$`-topics. Filters that start with `$` are never sent, because they are never captured.
-- A filter longer than `MaxFilterBytes` (default 1024) or outside the MQTT filter grammar
-  (`peerlink/filter.go: validFilter`). It is **ignored**: not announced, counted as `interestRejected` and logged
-  at WARN. An invalid filter matches nothing locally either, so nothing is lost (Q-IR4, decided). The source
-  applies the same check to received entries and ignores invalid ones.
+- A filter that is empty, longer than `MaxFilterBytes` (default 1024), not valid UTF-8, or outside the MQTT
+  filter grammar (`peerlink/filter.go: validFilter`). It is **ignored**: not announced, counted as
+  `interestRejected` and logged at WARN. An invalid filter matches nothing locally either, so nothing is lost
+  (Q-IR4, decided). The source applies the same checks to received entries and ignores invalid ones (5.6).
 
 ---
 
@@ -169,10 +199,9 @@ to E8.
 - `CAP_INTEREST` is a new bit in the capability bitmaps of `SERVER_HELLO` and `HELLO`: `1<<5` (`1<<4` is
   reserved for `CapRole` from the redundancy plan). The value is pinned identically in main
   (`main/dev/plans/plan-peerlink-interest-routing.md`, section 4).
-- Interest routing is active on a link only if **both** sides set the bit and the consumer has
-  `Interest.Enabled: true`.
-- Otherwise the source treats that consumer as interested in everything: its mask bit is always set and batches
-  are dense. This is the rolling-upgrade path.
+**Final capability agreement.** `SERVER_HELLO` advertises node-wide `CapInterest` support when `Interest.Enabled` is true; it is sent before the source knows the consumer NodeId. The consumer offers the bit in `HELLO` only when its own interest setting is enabled and that source is not `Interest: OFF`. After authentication identifies the consumer, the source computes the intersection and clears `CapInterest` if its per-peer setting is OFF; `HELLO_OK.capabilities` is the final agreed set. The consumer uses that final set, never just the first two offers. Only then may interest frames and sparse batches be sent. On either node OFF therefore yields dense serving in both directions, including shared-secret/plain connections without a client certificate. Unexpected interest frames or sparse batches without final agreement are protocol errors.
+
+Without final agreement the source always sets that consumer's mask bit, serves dense batches, and the consumer sends no interest frames (rolling-upgrade path).
 
 ### 5.2 Restart detection (existing `HELLO.InstanceID`)
 
@@ -184,20 +213,27 @@ source compares it with the value last seen for that NodeId:
 |---|---|---|
 | Same | Network blip; the consumer kept running | Keep all interest. The snapshot that follows is reconciled (5.3). |
 | Different | The consumer restarted; its clean sessions are gone | Drop **volatile** interest of that peer immediately. Keep persistent interest until the snapshot replaces it. |
-| None seen yet (source restarted) | Unknown | Apply `Interest.Unknown` until the snapshot arrives (7.4) |
+| None seen yet (source restarted) | Unknown | Apply `Interest.Unknown` until the snapshot arrives (7.1, 7.2 case C) |
 
 ### 5.3 INTEREST_SNAPSHOT (consumer → source)
 
 ```
 INTEREST_SNAPSHOT  0x20
   u32 generation        tracker generation the snapshot reflects
-  u8  flags             FIRST=1, LAST=2 (a snapshot may span several frames)
+  u8  flags             FIRST=1, LAST=2 (a snapshot may span several frames); other bits sent as 0, ignored on read
   u32 count
   count × { u8 class (1=VOL, 2=PER); u32 expirySec; u16 len; filter bytes }
 ```
 
 - The consumer sends it right after `HELLO_OK` and before its first `FETCH`. It is split into frames of at most
-  `MaxFrameBytes`.
+  `MaxConsumerFrame` (64 KiB, the existing consumer frame limit). All frames of one snapshot carry the same
+  generation. A one-frame snapshot has `FIRST|LAST`.
+- A snapshot always applies, whatever its generation, and at `LAST` sets the peer's last applied generation to
+  its own.
+- A `FIRST` frame while a snapshot is still open (no `LAST` yet) discards the open one, including its marks, and
+  starts over.
+- Order: after `HELLO_OK`, before the `SNAPSHOT` (resync) phase and before the first `FETCH`. The source accepts
+  `INTEREST_SNAPSHOT`/`INTEREST_DELTA` frames at any time after `HELLO_OK`, including during the `SNAPSHOT` phase.
 - The source applies it as **mark and sweep**. Entries of that peer not present in the snapshot are removed when
   `LAST` arrives. The new set replaces the old one atomically: the union trie is updated once, at `LAST`.
 - Until `LAST`, the peer keeps its previous state, or the `Unknown` policy.
@@ -206,10 +242,16 @@ INTEREST_SNAPSHOT  0x20
 
 ```
 INTEREST_DELTA  0x21
-  u32 generation        strictly increasing; the source ignores deltas <= the snapshot's generation
+  u32 generation        strictly increasing per frame
   u32 count
   count × { u8 class (0=NONE, 1=VOL, 2=PER); u32 expirySec; u16 len; filter bytes }
 ```
+
+- Deltas are split like snapshots: no `INTEREST_DELTA` frame exceeds `MaxConsumerFrame` (64 KiB). The consumer
+  flushes when the pending map reaches 1024 entries or the encoded delta would exceed 64 KiB, whichever comes
+  first (4.2), and each delta frame takes the next generation.
+- The source ignores a delta whose generation is ≤ the peer's last applied generation (of a snapshot or a delta).
+  Otherwise it applies the delta and sets the last applied generation to the delta's.
 
 `class` is the new **absolute** class of the filter, not an increment. A lost or duplicated delta therefore cannot
 corrupt a count: the latest value wins. This is simpler than NATS `RS+`/`RS-`, which relies on exactly-once
@@ -228,8 +270,36 @@ u32 deltas[Count]      offset of record i = BaseOffset + deltas[i]   (strictly i
   Duplicate suppression (`appliedNext`) and resume are unchanged.
 - `Count == 0` with `span > 0` is valid. It is a pure "skip" batch that lets an idle consumer advance its committed
   offset (6.5).
-- The flag is only sent to consumers that negotiated `CAP_INTEREST`.
+- The flag is only sent to consumers that negotiated `CAP_INTEREST`, and only if at least one record in the span
+  was skipped. Otherwise the batch is dense.
+- The deltas table counts against the batch byte limit (`maxBytes` of the `FETCH`), like the records.
+- The consumer treats each of these as a protocol error (5.6): a delta that is not strictly greater than the one
+  before it, a delta ≥ `span`, `span < Count`, or a sparse batch with `span == 0`.
 - Fuzz and vector tests in `internal/peerlink/wire` get the new frames.
+
+### 5.6 Encoding, validation and errors
+
+- **Encoding.** All integers are little-endian, like every `mmq-peer/1` field. Filter bytes are UTF-8, and
+  `len > 0`.
+- **`expirySec`.** `VOL` and `NONE` entries send 0; the value is ignored on read. `PER` entries that never expire
+  (archive groups; on main, MQTT 3.1.1 persistent sessions; on edge, sessions with an unlimited
+  `MaximumSessionExpiryInterval`) send `0xFFFFFFFF`.
+- **Unknown flag bits** in `INTEREST_SNAPSHOT.flags` are sent as 0 and ignored on read.
+- **Frame errors** (protocol error: the receiver sends `GOAWAY(protocol)` and closes the connection):
+  - a truncated frame, or a frame whose `count` does not match its body (too few bytes for `count` entries, or
+    bytes left over after them)
+  - an `INTEREST_SNAPSHOT` frame without `FIRST` while no snapshot is open
+  - a sparse `BATCH` that violates 5.5
+- **Invalid entries** (the entry is ignored, counted in `interestRejected`, and the rest of the frame is applied):
+  - `class` not 1 or 2 in a snapshot, or not 0, 1 or 2 in a delta
+  - `len == 0`, `len > MaxFilterBytes` (the receiver's own setting), filter bytes that are not valid UTF-8, or a
+    filter outside the MQTT filter grammar (`validFilter`)
+
+  A bad `class` is always an invalid entry, never a frame error: the entry layout is fixed, so the decoder can
+  skip it. An ignored snapshot entry is not marked, so mark and sweep removes a previous entry for that filter.
+  An ignored delta entry leaves the previous state of that filter unchanged.
+- **Restarting a snapshot.** A `FIRST` frame while a snapshot is open discards the open snapshot and its marks
+  and starts over (5.3); it is not an error.
 
 ---
 
@@ -250,6 +320,16 @@ on the capture path take an `RLock`. Writes come from interest frames only, whic
 
 Limit: 64 consumers per source, which is plenty for a full mesh. When more are configured, interest routing refuses
 to start (Q-IR5).
+
+**Received entries are validated** as in 5.6: invalid entries are ignored and counted in `interestRejected`.
+
+**`MaxFiltersPerPeer`.** The limit is checked on the peer's filter set after each applied snapshot (at `LAST`) and
+after each applied delta. If the set exceeds `MaxFiltersPerPeer`, the source serves that peer **ALL**: its mask
+bit is always set and its batches are dense and unfiltered, as for a peer without `CAP_INTEREST`. While in ALL,
+the source clears the peer's entries from the union trie and need not keep applying its deltas (only generations
+are tracked). It goes back to filtered serving only when a later snapshot, at `LAST`, is within the limit (the consumer sends
+the next snapshot after its next reconnect). Each transition (into ALL and back) logs one WARN; each transition into ALL increments
+`interestOverLimit` (13).
 
 ### 6.2 Capture mask
 
@@ -288,6 +368,8 @@ A record without bit `c` is never needed by consumer `c`. Two rules stop such re
 2. **Lagging advance.** After a `COMMIT`, and at most every 100 ms for disconnected consumers, the source advances
    `C[c]` over the leading run of records without bit `c` (bounded scan). A disconnected consumer whose interest
    is gone therefore stops holding the log after at most one scan.
+
+**Expiry backlog reclamation (shared rule).** Expiring a PER entry changes future capture and triggers a bounded sweep of that peer's outstanding log records, at most `MaxScanPerFetch` offsets per 100 ms tick. For each previously tagged non-retained record, clear only that peer's bit if the topic matches none of its remaining VOL/PER interests. Preserve retained publishes, clears, snapshot records and their tombstones, and preserve records still covered by remaining interests. Keep minimal immutable topic/kind metadata beside records where encoded tombstones do not contain it; allocate this only for records actually appended. Update masks under the log lock so fetch/chunk snapshots and LWM see a consistent result; never clear another consumer's bit. The normal skip/LWM rules then reclaim the abandoned backlog without `Lost`/`GAP`; expose `interestBacklogDiscarded`. Completion may take several ticks for a large log. Ordinary unsubscribe and restart VOL withdrawal preserve already captured backlog (restart scenario 5); only persistent expiry triggers abandonment. Tests cover partial overlap, retained/tombstones, concurrent fetch and multi-tick completion.
 
 `S[c]` (served) and the loss counters keep their meaning. Records the consumer never needed are never counted as
 lost (`Lost`/`GAP`).
@@ -435,17 +517,25 @@ func (x *TopicsIndex) SetObserver(o InterestObserver)
 ```yaml
 PeerLink:
   Interest:
-    Enabled: false              # off = today's behaviour on this node (as consumer: announce nothing, as source: serve dense)
+    Enabled: false              # off = CAP_INTEREST not offered: today's behaviour on this node (5.1)
     Unknown: ALL                # ALL | NONE  — mask for a peer until its first snapshot
     FlushMs: 5                  # delta coalescing on the consumer
     MaxScanPerFetch: 65536      # offsets scanned per FETCH for one consumer
-    MaxFiltersPerPeer: 100000   # source rejects a peer exceeding this: falls back to ALL for it, WARN
+    MaxFiltersPerPeer: 100000   # a peer over this is served ALL (dense) until a snapshot is within it (6.1)
+    MaxFilterBytes: 1024        # longer filters are ignored, not announced or applied (4.4, 5.6)
   Peers:
     - NodeId: node-b
-      Interest: INHERIT         # INHERIT | OFF  — per-peer opt-out (e.g. a peer that archives everything)
+      Interest: INHERIT         # INHERIT | OFF  — OFF: no final CAP_INTEREST agreement on this link (5.1)
 ```
 
-- Validation: `Enabled: true` with more than 64 configured consumers is a startup error (Q-IR5).
+- `Enabled: true` advertises node-wide support. Per-peer OFF clears the consumer offer or the final `HELLO_OK` agreement (5.1); that link is dense in both directions. Use it for a peer that archives everything.
+- Validation (the same list in main, section 7):
+  - `Enabled: true` with more than 64 configured consumers: startup error (Q-IR5)
+  - `FlushMs` ≤ 0: startup error
+  - `MaxScanPerFetch` < 1024: startup error
+  - `Unknown` not `ALL` or `NONE`: schema error
+  - `MaxFilterBytes` outside 1..32768: startup error
+  - `MaxFiltersPerPeer` < 1: startup error
 - Every new key is documented in the README section on PeerLink and in the spec, as a new section.
 
 ---
@@ -511,7 +601,6 @@ It is compared with interest routing off. **Pass criteria:**
 - `snapshotGeneration`
 - `lastSnapshotAt`
 - `instanceId` (hex)
-- `holdRemainingMs`
 
 Counters:
 
@@ -522,7 +611,9 @@ Counters:
 | `sparseBatches` | Source | Batches sent with `BatchFlagSparse` |
 | `volatileDropped` | Source | Volatile filters dropped because the peer restarted (new InstanceId) |
 | `persistentExpired` | Source | Persistent filters dropped after their announced expiry |
-| `interestRejected` | Source and consumer | Filters refused as invalid or over the limits |
+| `interestBacklogDiscarded` | Source | Consumer record bits cleared by persistent-expiry sweeps (not delivery loss) |
+| `interestRejected` | Source and consumer | Invalid filters or entries ignored (4.4, 5.6) |
+| `interestOverLimit` | Source | Transitions of a peer to ALL because its filter set exceeded `MaxFiltersPerPeer` (6.1) |
 | `deltasSent` / `deltasReceived` | Consumer / source | Interest deltas on the link |
 
 Every state change is logged at INFO with the peer NodeId and its filter count. `DISCONNECTED` is
@@ -535,7 +626,7 @@ logged at WARN.
 | Milestone | Content | Files |
 |---|---|---|
 | IR-M0 | IR-P1: `Receive.Queue` default `true`; update config test, spec section 10 and plan-peerlink 12.4; test that a forwarded QoS 1 message is queued for an offline persistent session and delivered on reconnect | `internal/config/config.go`, `internal/config/peerlink_test.go`, `internal/broker/hook_queue_test.go`, spec, plan-peerlink |
-| IR-M1 | E8 observer; consumer interest tracker with refcount, classes, session expiry handling and provider hooks (bus, archive); unit tests | `internal/mqtt/topics.go`, `internal/peerlink/interest_tracker.go` (new), `internal/pubsub/bus.go` (filter change notification), `internal/archive/manager.go` (group filter listing) |
+| IR-M1 | E8 observer; consumer interest tracker with refcount, classes, session expiry handling and provider hooks (bus, archive); redundancy component provider (4.1, C6): configured filters of all `HOT_STANDBY`/`COLD_STANDBY` bridges, scripts and archive groups, from configuration, running or not, refcounted separately from runtime subscriptions, updated on config change; unit tests | `internal/mqtt/topics.go`, `internal/peerlink/interest_tracker.go` (new), `internal/pubsub/bus.go` (filter change notification), `internal/archive/manager.go` (group filter listing), component configuration (bridges, scripts) for the provider |
 | IR-M2 | Wire: `CAP_INTEREST`, `INTEREST_SNAPSHOT`/`DELTA`, `BatchFlagSparse`; fuzz and vector tests shared with main | `internal/peerlink/wire/frame.go`, `record.go`, `testdata/` |
 | IR-M3 | Source: interest table, union trie with masks, capture mask, log masks, sparse read, LWM auto-advance | `internal/peerlink/interest_table.go` (new), `filter.go`, `hook.go`, `log.go`, `server.go` |
 | IR-M4 | Lifecycle: InstanceId, `DISCONNECTED` state, persistent expiry, mark and sweep, `Unknown` policy | `server.go`, `manager.go`, `puller.go` (consumer sends the snapshot before the first `FETCH`; deltas via the writer goroutine) |
@@ -545,6 +636,12 @@ logged at WARN.
 ---
 
 ## 15. Tests
+
+Additional shared acceptance tests from the review:
+- A source-only per-peer OFF setting on a shared-secret or plain connection clears the final HELLO_OK bit; consumer sends no interest frames and receives dense batches. Repeat with consumer-only OFF and both directions.
+- Expire one of overlapping PER filters while other VOL/PER interests remain: abandon only uncovered non-retained backlog, preserve other peers' bits and retained/clear/tombstone obligations, and do not increment Lost/GAP. A log larger than MaxScanPerFetch is reclaimed over multiple ticks.
+- Snapshot during concurrent subscription churn, slow puller exceeding retained change history, chunk generation mismatch and u32 generation rollover follow the readiness section; none silently loses a state update.
+
 
 ### 15.1 Unit tests
 
@@ -556,6 +653,18 @@ logged at WARN.
 - inline and bus sources
 - `$share` handling for SKIP and DELIVER
 - injector and `$` filters never announced
+- redundancy component provider: a `COLD_STANDBY` component that is not running is announced; stopping a running
+  `HOT_STANDBY` component does not withdraw its filters; a config change emits the matching deltas
+- delta split: a pending map of 1024 entries, and a pending set whose encoding would exceed 64 KiB, each flush
+  into several frames, none over 64 KiB, with strictly increasing generations
+
+**Interest table (source)**
+- a delta with generation ≤ the last applied generation (snapshot or delta) is ignored
+- `FIRST` while a snapshot is open discards it and its marks
+- invalid entries (bad class, `len 0`, over `MaxFilterBytes`, not UTF-8, bad grammar) are ignored and counted in
+  `interestRejected`; the rest of the frame applies
+- `MaxFiltersPerPeer` exceeded after a snapshot or a delta: the peer is served ALL, one WARN, `interestOverLimit`
+  +1; a later snapshot within the limit restores filtering, one WARN
 
 **Union trie**
 - masks per peer, with overlapping and wildcard filters (`a/b`, `a/+`, `a/#`, `#`)
@@ -567,8 +676,16 @@ logged at WARN.
 - caught-up and lagging auto-advance; the LWM is not pinned by an uninterested disconnected consumer
 
 **Wire**
-- round trip, fuzz and golden vectors for the new frames
+- round trip, fuzz and golden vectors for the new frames, shared with main: little-endian integers, UTF-8 filters,
+  `expirySec` 0 for `VOL`/`NONE`, `0xFFFFFFFF` for never-expiring `PER`, a finite `PER` expiry, a multi-frame
+  snapshot (one generation) and split deltas (increasing generations)
 - a sparse batch with `Count == 0`
+- malformed frames → `GOAWAY(protocol)` and close: truncated frame, `count` not matching the body, a non-`FIRST`
+  snapshot frame with no snapshot open
+- sparse `BATCH` violations → protocol error: non-increasing delta, delta ≥ `span`, `span < Count`, sparse with
+  `span == 0`; `BatchFlagSparse` is not set when no record in the span was skipped; the delta table counts
+  against `maxBytes`
+- unknown flag bits are ignored on read
 
 ### 15.2 Integration tests (two or three real brokers, `link_test.go` style)
 
@@ -593,7 +710,7 @@ logged at WARN.
    - With a small `MaxMessages`, the oldest records are evicted and counted as lost, as today.
 7. **Persistent expiry.**
    - B has only a persistent session (MQTT 5, `SessionExpiryInterval` 10 s) and is down for longer than that.
-   - After the expiry, nothing is appended for B, and the log is freed (the LWM is not pinned).
+   - After expiry, new matching non-retained capture stops; the bounded sweep abandons uncovered backlog and frees it over successive ticks (retained records remain protected).
    - The same with MQTT 3.1.1 `CleanSession == false` and `MaximumSessionExpiryInterval` 10 s.
 8. **Invalid filter.** An oversize filter on B is not announced, is counted as `interestRejected`, and does not
    cause `#` interest.
@@ -604,6 +721,18 @@ logged at WARN.
 11. **`Peers[].Interest: OFF`** for one peer gives a dense, full feed to that peer only.
 12. **Archive.** With `Receive.Archive: true` and a group on `g1/#`, those topics are forwarded without any MQTT
     subscriber. With the `Default` group on `#`, everything is forwarded.
+13. **HOT/COLD components.** A bridge outbound connector with `Redundancy: HOT_STANDBY` (or `COLD_STANDBY`, not
+    running) on the STANDBY node, with `Receive.BridgeOutbound: false`: its filters are still announced, and after a
+    takeover it receives the feed without a new snapshot. Same vectors as main M2b.
+14. **Message bus.** A GraphQL subscription on `g/#` with `Receive.Bus: true` is announced. With
+    `Receive.Bus: false` it is not, and `g/1` is not forwarded. (Main M1.)
+15. **Bridge outbound, `ALWAYS`.** The inline subscriptions of a bridge outbound connector in mode `ALWAYS` with
+    `Receive.BridgeOutbound: false` are not announced. (Main M2.)
+16. **Session expiry.** A persistent session on B expires (`OnClientExpired`). A `NONE` delta follows, and A
+    stops appending for it. (Main M3.)
+17. **Mixed pair, edge ↔ main, in both directions.** Both nodes have `CAP_INTEREST` and are filtered; then one
+    node runs without it and the other serves it dense and unfiltered. The shared golden vectors decode
+    identically in both code bases. (Main M4 and M5.)
 
 ---
 
@@ -626,8 +755,9 @@ logged at WARN.
 |---|---|---|
 | Q-IR1 | Should the archive groups of the consumer be announced? | **Decided:** all groups when `Receive.Archive: true`, including `Default`. A group on `#` forwards everything. No separate list (IR-S4). |
 | Q-IR2 | How long to keep a lost peer's interest? | **Decided:** no hold timer. Volatile interest until the peer reconnects (dropped at once on restart); persistent interest until the session expiry the engine applies (7.3). The log limits bound memory, oldest records first. |
-| Q-IR3 | Default for `Unknown`? | `ALL`. It keeps today's "nothing missed after source start" property, and the window is one handshake. |
+| Q-IR3 | Default for `Unknown`? | **Closed (2026-10-09):** `ALL`. It keeps today's "nothing missed after source start" property, and the window is one handshake. |
 | Q-IR4 | An invalid or oversize filter on the consumer? | **Decided:** ignored, not announced, counted (4.4). |
-| Q-IR5 | Over 64 consumers? | Startup error with interest routing on. Full meshes of that size are out of scope. |
+| Q-IR5 | Over 64 consumers? | **Closed (2026-10-09):** startup error with interest routing on. Full meshes of that size are out of scope. |
 | Q-IR6 | Should offline persistent sessions count? | **Closed:** always, because forwarded messages are always queued (IR-P1). |
 | Q-IR7 | Expose interest status in GraphQL? | **Closed:** no GraphQL changes (IR-S5). |
+| Q-IR8 | Restart detection: a new TLV or the existing `HELLO.InstanceID`? | **Closed:** restart detection uses `HELLO.InstanceID` (5.2); no TLV. |
