@@ -256,6 +256,41 @@ injected without ACL checks). A WARN is logged on every start.
 link: add the new value on both sides, move it to the first position on both
 (the first secret signs, all are accepted), then remove the old one.
 
+### 3.8 Interest routing
+
+By default every publish goes to every peer. With interest routing a peer only
+gets what it uses: its MQTT subscriptions, script and bus subscriptions,
+archive groups and standby bridges (see
+[Interest routing](#interest-routing)). Enable it on **both** brokers; a link
+where only one side enables it stays dense.
+
+```yaml
+PeerLink:
+  Enabled: true
+  # Tls, SharedSecrets, Log ... as before
+  Interest: { Enabled: true }       # same on every host; see 4.9 for the tuning keys
+  Peers:
+    - { NodeId: edge-a, Address: "edge-a.local:1890" }
+    - { NodeId: edge-b, Address: "edge-b.local:1890", Interest: OFF }   # this link stays dense
+```
+
+Check before enabling it:
+
+- An archive group on `#` (such as `Default`) makes the peer want
+  everything. Narrow its `TopicFilters`, or set `Receive.Archive: false` when
+  both brokers archive into one shared database.
+- A peer only receives the topics something on it subscribes to. A standby
+  host that must hold the full live stream after a switchover (in-memory
+  last values, clients connecting only after the takeover) needs
+  `Interest: OFF` on that link. Retained values are always replicated.
+- `Receive.Queue` defaults to `true`: offline persistent sessions announce
+  their subscriptions, so the replicas they asked for are queued for them.
+- At most 64 peers with `Serve` per broker.
+
+Verify on `GET /peerlink/v1/status`: `sources[].interest.active` is `true`,
+`consumers[].interest.mode` is `FILTERED` (`ALL` means the peer still gets
+everything), and the top-level `interest.interestSkipped` grows.
+
 ---
 
 ## 4. Configuration reference
