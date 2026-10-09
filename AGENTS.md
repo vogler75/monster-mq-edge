@@ -130,7 +130,7 @@ dev/done/                  # completed or archived plans
   shipping requirement for cross-compile to ARM. The single approved
   exception (2026-09-29) is the opt-in WinCC OA embedding library in
   `embed/cabi/` (build tag `winccoa_embed`, `make embed-lib`); the standalone
-  binary must never import it. See `winccoa/plans/spec-winccoa-native.md`.
+  binary must never import it. See `winccoa/doc/spec-winccoa-native.md`.
 - Storage interfaces in `internal/stores/interfaces.go` are the contract.
   Backends implement them; consumers depend only on the interface.
 - Hooks in `internal/broker/hook_*.go` are the bridge between the MQTT engine

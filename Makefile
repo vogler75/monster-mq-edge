@@ -75,7 +75,7 @@ lint:
 	go vet ./...
 
 # Opt-in WinCC OA embedding library (the only CGO target, see
-# winccoa/plans/spec-winccoa-native.md). Standalone targets stay CGO_ENABLED=0.
+# winccoa/doc/spec-winccoa-native.md). Standalone targets stay CGO_ENABLED=0.
 EMBED_OUT := build/embed
 
 embed-lib: prepare-dashboard
