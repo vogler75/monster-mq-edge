@@ -9,6 +9,10 @@ the edge needs is listed below.
 
 Companion plan: [plan-kafka-server.md](plan-kafka-server.md). NATS goes first.
 
+Phase 2 adds NATS KV (`nats kv ...`) backed by archive-group last-value stores,
+following the main broker's `dev/plans/plan-nats-kv.md` (added 2026-10-10).
+Phase 1 stays a 1:1 port; phase 2 is new behaviour designed for both brokers.
+
 ## Context & current state
 
 The main broker ships a NATS protocol server; the edge broker has none. It is
@@ -92,9 +96,10 @@ One phase, because the main broker's server is small:
 - Delivery between NATS subjects and MQTT topics at QoS 0; no retained messages
   on `SUB`.
 
-Not ported, because the main broker's NATS server has none of it: JetStream-style
-persistence backed by the local storage layer, HPUB/HMSG headers, TLS,
-queue-group load balancing, token/nkey/JWT auth, server-side PING.
+Not ported in phase 1, because the main broker's NATS server has none of it:
+HPUB/HMSG headers, reply-to, JetStream API, TLS, queue-group load balancing,
+token/nkey/JWT auth, server-side PING. Headers, reply-to and a JetStream KV
+facade come in phase 2 (below), in step with the main broker.
 
 ### Protocol behaviour to copy
 
@@ -180,6 +185,70 @@ instead of copying them.
   disappears on disconnect.
 - The standalone binary stays CGO-free.
 
+## Phase 2 — NATS KV on archive-group last-value stores
+
+Mirrors the main broker's `dev/plans/plan-nats-kv.md`; both brokers must give
+the `nats` CLI identical answers. Start only after phase 1 is merged and the
+main broker's KV design decisions are settled.
+
+### Mapping
+
+| KV concept | Edge |
+| --- | --- |
+| bucket `B` (stream `KV_B`, subjects `$KV.B.>`) | archive group `B` from `archive.Manager`; must be running with a last-value store |
+| key `a.b.c` | MQTT topic `a/b/c` (same `.`/`/` rule as phase 1) |
+| key filter `a.*` / `a.>` | `a/+` / `a/#` via `Group.LastValue().FindMatchingMessages` |
+| value | `BrokerMessage.Payload` |
+| revision / sequence | synthesized from the message time (epoch µs), same formula as the main broker |
+| get | `Group.LastValue().Get(ctx, topic)` |
+| put | publish through the connection's inline client like a normal `PUB`; the group stores it via its normal `Matches`/`Submit` path |
+| delete / purge | `Group.LastValue().DelAll(ctx, []string{topic})` |
+| history | 1 (last value). Later option: `nats kv history` from `Group.Archive().GetHistory` |
+| bucket create / delete | rejected; groups are managed via config/GraphQL |
+
+Put on a key outside the group's topic filter answers the JetStream error "no
+stream matches subject". Read-only last-value stores (`LastValReadOnly`) reject
+put and delete.
+
+### Protocol work
+
+- INFO adds `"headers":true` and `"jetstream":true` (breaks the byte-exact
+  phase-1 INFO; change in both brokers together).
+- Parse `HPUB`, emit `HMSG`; no-responders `503` status.
+- Honor reply-to: map NATS reply-to and headers onto the MQTT 5 response topic
+  and user properties, so plain request/reply also works across NATS and MQTT.
+- New `internal/nats/jetstream_kv.go`: intercept `$JS.API.*` and `$KV.*` per
+  connection and answer on that connection's reply inbox:
+  `STREAM.INFO` / `STREAM.NAMES` / `STREAM.LIST` (bucket = group, `allow_direct:false`
+  so `get` uses `STREAM.MSG.GET` JSON), `STREAM.MSG.GET` with `last_by_subj`,
+  PubAck for puts, `KV-Operation: DEL|PURGE`, `$JS.API.INFO`,
+  `CONSUMER.CREATE` / `DELETE` for the ordered consumers behind `watch` and
+  `keys` (snapshot from the last-value store, then live updates from an inline
+  subscription, `$JS.ACK...` reply subjects with pending counts, idle
+  heartbeats). Anything else under `$JS.API.` gets a "not supported" JetStream
+  error.
+- ACL: `canSubscribe` for get/watch/keys, `canPublish` for put/del on the
+  translated MQTT topic, through the same auth-hook check as phase 1.
+
+### Tasks
+
+1. Headers, HPUB/HMSG and reply-to in `internal/nats/conn.go`.
+2. `internal/nats/jetstream_kv.go` with the API subset above, wired to
+   `archive.Manager`.
+3. Integration tests in `test/integration` with `nats.go` KV API: put/get/del,
+   watch with live update, keys, ls, ACL denial, put outside topic filter. Run
+   the same test against the main broker to prove identical answers.
+4. Docs: KV section in the NATS docs page, matching the main broker's
+   `doc/nats.md`.
+
+### Acceptance criteria
+
+- `nats kv ls`, `info`, `get`, `put`, `del`, `keys`, `watch` work against edge
+  with bucket = archive group, with the same results as the main broker.
+- A KV put is visible to MQTT subscribers and in the group's last-value store;
+  an MQTT publish is visible to `nats kv get` and `watch`.
+- No GraphQL change; the binary stays CGO-free; `nats.go` only in tests.
+
 ## Sequencing and decisions
 
 **NATS first, Kafka second.** The NATS server is about 440 lines in the main
@@ -192,9 +261,13 @@ session pattern that the Kafka server reuses. It stays off by default: `NATS: 0`
       today.
 - [ ] For the defects listed above: fix them in both repos (recommended) or copy
       them into edge.
+- [ ] Phase 2 (KV): same open questions as the main broker's
+      `plan-nats-kv.md` (key dots as topic levels, retained puts, whether
+      delete clears retained, edge in scope).
 
-Settled by copying the main broker: no JetStream; hand-rolled codec, no protocol
-library; NATS character replacement for subjects.
+Settled by copying the main broker: hand-rolled codec, no protocol library;
+NATS character replacement for subjects; no JetStream in phase 1 (phase 2 adds
+only the KV subset, backed by archive groups, not real streams).
 
 ---
 
