@@ -5,10 +5,12 @@ import (
 	"time"
 
 	"monstermq.io/edge/internal/config"
+	"monstermq.io/edge/internal/version"
 )
 
-const peerLinkGQL = `{ peerLink { enabled nodeId listen tls peers {
-	nodeId address pull serve interest pullState serveState remote lastError source consumer } status } }`
+const peerLinkGQL = `{ peerLink { enabled nodeId listen tls brokerType brokerVersion protocolVersion peers {
+	nodeId address pull serve interest pullState serveState remote lastError brokerType brokerVersion protocolVersion
+	source consumer } status } }`
 
 // The peerLink query reports the configured peers with link direction and state: A serves B,
 // B pulls from A, and B also pulls from an unreachable C.
@@ -38,7 +40,8 @@ func TestPeerLinkGraphQLQuery(t *testing.T) {
 	}
 
 	plA, peersA := peerLink("27912")
-	if plA["enabled"] != true || plA["nodeId"] != "plgqa" || plA["listen"] == nil || plA["status"] == nil {
+	if plA["enabled"] != true || plA["nodeId"] != "plgqa" || plA["listen"] == nil || plA["status"] == nil ||
+		plA["brokerType"] != "EDGE" || plA["brokerVersion"] != version.Version || plA["protocolVersion"] != "1.0" {
 		t.Fatalf("peerLink on A: %v", plA)
 	}
 	if len(peersA) != 1 {
@@ -47,7 +50,8 @@ func TestPeerLinkGraphQLQuery(t *testing.T) {
 	pa := peersA[0]
 	if pa["nodeId"] != "plgqb" || pa["pull"] != false || pa["serve"] != true || pa["address"] != nil ||
 		pa["pullState"] != nil || pa["serveState"] != "CONNECTED" || pa["remote"] == nil ||
-		pa["consumer"] == nil || pa["source"] != nil || pa["interest"] != "INHERIT" {
+		pa["consumer"] == nil || pa["source"] != nil || pa["interest"] != "INHERIT" ||
+		pa["brokerType"] != "EDGE" || pa["brokerVersion"] != version.Version || pa["protocolVersion"] != "1.0" {
 		t.Fatalf("A's peer B: %v", pa)
 	}
 
@@ -60,11 +64,13 @@ func TestPeerLinkGraphQLQuery(t *testing.T) {
 	}
 	pb := peersB[0]
 	if pb["nodeId"] != "plgqa" || pb["pull"] != true || pb["serve"] != false || pb["address"] != "127.0.0.1:27911" ||
-		pb["pullState"] != "STREAMING" || pb["serveState"] != nil || pb["source"] == nil || pb["consumer"] != nil {
+		pb["pullState"] != "STREAMING" || pb["serveState"] != nil || pb["source"] == nil || pb["consumer"] != nil ||
+		pb["brokerType"] != "EDGE" || pb["brokerVersion"] != version.Version || pb["protocolVersion"] != "1.0" {
 		t.Fatalf("B's peer A: %v", pb)
 	}
 	pc := peersB[1]
-	if pc["nodeId"] != "plgqc" || pc["pull"] != true || pc["pullState"] == "STREAMING" {
+	if pc["nodeId"] != "plgqc" || pc["pull"] != true || pc["pullState"] == "STREAMING" ||
+		pc["brokerType"] != nil || pc["protocolVersion"] != nil {
 		t.Fatalf("B's peer C: %v", pc)
 	}
 }
@@ -74,7 +80,8 @@ func TestPeerLinkGraphQLQueryDisabled(t *testing.T) {
 	startWithGraphQL(t, 27914, 27915, func(c *config.Config) { c.NodeID = "plgqoff" })
 	res := gqlQuery(t, "http://127.0.0.1:27915/graphql", peerLinkGQL, nil)
 	pl := res["peerLink"].(map[string]any)
-	if pl["enabled"] != false || pl["nodeId"] != "plgqoff" || len(pl["peers"].([]any)) != 0 || pl["status"] != nil {
+	if pl["enabled"] != false || pl["nodeId"] != "plgqoff" || len(pl["peers"].([]any)) != 0 || pl["status"] != nil ||
+		pl["brokerType"] != "EDGE" || pl["protocolVersion"] != "1.0" {
 		t.Fatalf("peerLink without PeerLink: %v", pl)
 	}
 }

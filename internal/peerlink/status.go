@@ -128,16 +128,20 @@ func (r *rateLimiter) allow(key string, every time.Duration) (bool, uint64) {
 // Status is the JSON document of GET /peerlink/v1/status and the return value of Manager.Status
 // (plan 20.1). Every counter the integration tests assert is here.
 type Status struct {
-	Enabled   bool             `json:"enabled"`
-	NodeID    string           `json:"nodeId"`
-	Epoch     uint64           `json:"epoch"`
-	Listen    string           `json:"listen"`
-	TLS       bool             `json:"tls"`
-	Log       LogStatus        `json:"log"`
-	Admission AdmissionStatus  `json:"admission"`
-	Consumers []ConsumerStatus `json:"consumers"`
-	Sources   []SourceStatus   `json:"sources"`
-	Interest  *InterestCounts  `json:"interest,omitempty"`
+	Enabled bool   `json:"enabled"`
+	NodeID  string `json:"nodeId"`
+	// BrokerType, BrokerVersion and ProtocolVersion describe this node as announced in the handshake.
+	BrokerType      string           `json:"brokerType"`
+	BrokerVersion   string           `json:"brokerVersion"`
+	ProtocolVersion string           `json:"protocolVersion"`
+	Epoch           uint64           `json:"epoch"`
+	Listen          string           `json:"listen"`
+	TLS             bool             `json:"tls"`
+	Log             LogStatus        `json:"log"`
+	Admission       AdmissionStatus  `json:"admission"`
+	Consumers       []ConsumerStatus `json:"consumers"`
+	Sources         []SourceStatus   `json:"sources"`
+	Interest        *InterestCounts  `json:"interest,omitempty"`
 }
 
 // InterestCounts are the node-wide interest routing counters (plan-peerlink-interest-routing 13).
@@ -233,6 +237,16 @@ type ConsumerStatus struct {
 	TopicRootMismatch     bool              `json:"topicRootMismatch"`
 	RetainedClassMismatch bool              `json:"retainedClassMismatch"`
 	Interest              *InterestStatus   `json:"interest,omitempty"`
+	// The consumer's broker as announced in its last accepted handshake; empty before the first one
+	// or from a peer that predates the fields.
+	PeerBrokerType      string `json:"peerBrokerType,omitempty"`
+	PeerBrokerVersion   string `json:"peerBrokerVersion,omitempty"`
+	PeerProtocolVersion string `json:"peerProtocolVersion,omitempty"`
+}
+
+// peerBroker is what a peer announced about itself in the handshake.
+type peerBroker struct {
+	Type, Version, Protocol string
 }
 
 // SourceStatus is one source (a peer this node pulls from) as seen by the consumer.
@@ -276,6 +290,11 @@ type SourceStatus struct {
 	OARetained             bool              `json:"oaRetained"`
 	ApplyDelayMs           ApplyDelay        `json:"applyDelayMs"`
 	Interest               *SourceInterest   `json:"interest,omitempty"`
+	// The source's broker as announced in the last handshake; empty before the first one or from a
+	// peer that predates the fields.
+	PeerBrokerType      string `json:"peerBrokerType,omitempty"`
+	PeerBrokerVersion   string `json:"peerBrokerVersion,omitempty"`
+	PeerProtocolVersion string `json:"peerProtocolVersion,omitempty"`
 }
 
 // ApplyDelay holds bucketed apply-delay quantiles in ms (-1 without samples).

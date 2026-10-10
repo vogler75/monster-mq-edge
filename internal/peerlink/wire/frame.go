@@ -15,6 +15,7 @@ import (
 	"errors"
 	"hash/crc32"
 	"io"
+	"strconv"
 	"unicode/utf8"
 )
 
@@ -174,6 +175,17 @@ const (
 	InterestDeltaHeaderLen    = 8
 	InterestEntryOverhead     = 7
 )
+
+// Broker types announced in HELLO and HELLO_OK.
+const (
+	BrokerTypeFull = "FULL" // the main broker (Kotlin/JVM)
+	BrokerTypeEdge = "EDGE" // the edge broker (Go)
+)
+
+// ProtocolVersion formats a protocol version as "major.minor".
+func ProtocolVersion(major, minor uint16) string {
+	return strconv.Itoa(int(major)) + "." + strconv.Itoa(int(minor))
+}
 
 // RetainedClass is the retained store class announced in HELLO and HELLO_OK.
 type RetainedClass uint8
@@ -556,6 +568,15 @@ func (d *dec) str16() string {
 	return string(d.take(n))
 }
 
+// brokerInfo reads the brokerType and brokerVersion str8 pair that ends HELLO and HELLO_OK. A body
+// that ends before the pair comes from a peer that predates it and yields empty strings.
+func (d *dec) brokerInfo() (typ, version string) {
+	if d.short || len(d.b) == 0 {
+		return "", ""
+	}
+	return d.str8(), d.str8()
+}
+
 func (d *dec) err() error {
 	if d.short {
 		return ErrShortFrame
@@ -611,13 +632,15 @@ type Hello struct {
 	ExpectedSourceNodeID string       // str8
 	TopicRoot            string       // str16
 	OASystem             string       // str8; empty unless embedded in WinCC OA with native mode on
+	BrokerType           string       // str8; BrokerTypeFull or BrokerTypeEdge, empty from older peers
+	BrokerVersion        string       // str8; the broker build version, empty from older peers
 }
 
 func (*Hello) Type() FrameType { return FrameHello }
 
 func (m *Hello) AppendFrame(dst []byte) []byte {
 	dst, s := beginFrame(dst, FrameHello, 111+4+len(m.ConsumerNodeID)+len(m.ExpectedSourceNodeID)+
-		len(m.TopicRoot)+len(m.OASystem)+1)
+		len(m.TopicRoot)+len(m.OASystem)+1+2+len(m.BrokerType)+len(m.BrokerVersion))
 	le := binary.LittleEndian
 	dst = le.AppendUint16(dst, m.Flags)
 	dst = le.AppendUint64(dst, m.Capabilities)
@@ -633,6 +656,8 @@ func (m *Hello) AppendFrame(dst []byte) []byte {
 	dst = appendStr8(dst, m.ExpectedSourceNodeID)
 	dst = appendStr16(dst, m.TopicRoot)
 	dst = appendStr8(dst, m.OASystem)
+	dst = appendStr8(dst, m.BrokerType)
+	dst = appendStr8(dst, m.BrokerVersion)
 	return endFrame(dst, s)
 }
 
@@ -652,6 +677,7 @@ func (m *Hello) Decode(body []byte) error {
 	m.ExpectedSourceNodeID = d.str8()
 	m.TopicRoot = d.str16()
 	m.OASystem = d.str8()
+	m.BrokerType, m.BrokerVersion = d.brokerInfo()
 	return d.err()
 }
 
@@ -673,12 +699,15 @@ type HelloOK struct {
 	SourceNodeID   string       // str8
 	TopicRoot      string       // str16; empty unless the source runs WinCC OA native mode
 	OASystem       string       // str8; as in HELLO
+	BrokerType     string       // str8; as in HELLO
+	BrokerVersion  string       // str8; as in HELLO
 }
 
 func (*HelloOK) Type() FrameType { return FrameHelloOK }
 
 func (m *HelloOK) AppendFrame(dst []byte) []byte {
-	dst, s := beginFrame(dst, FrameHelloOK, 111+4+len(m.SourceNodeID)+len(m.TopicRoot)+len(m.OASystem))
+	dst, s := beginFrame(dst, FrameHelloOK, 111+4+len(m.SourceNodeID)+len(m.TopicRoot)+len(m.OASystem)+
+		2+len(m.BrokerType)+len(m.BrokerVersion))
 	le := binary.LittleEndian
 	dst = le.AppendUint16(dst, m.Flags)
 	dst = le.AppendUint64(dst, m.Capabilities)
@@ -696,6 +725,8 @@ func (m *HelloOK) AppendFrame(dst []byte) []byte {
 	dst = appendStr8(dst, m.SourceNodeID)
 	dst = appendStr16(dst, m.TopicRoot)
 	dst = appendStr8(dst, m.OASystem)
+	dst = appendStr8(dst, m.BrokerType)
+	dst = appendStr8(dst, m.BrokerVersion)
 	return endFrame(dst, s)
 }
 
@@ -717,6 +748,7 @@ func (m *HelloOK) Decode(body []byte) error {
 	m.SourceNodeID = d.str8()
 	m.TopicRoot = d.str16()
 	m.OASystem = d.str8()
+	m.BrokerType, m.BrokerVersion = d.brokerInfo()
 	return d.err()
 }
 

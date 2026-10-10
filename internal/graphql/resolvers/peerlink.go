@@ -9,13 +9,16 @@ import (
 	"monstermq.io/edge/internal/config"
 	"monstermq.io/edge/internal/graphql/generated"
 	"monstermq.io/edge/internal/peerlink"
+	"monstermq.io/edge/internal/peerlink/wire"
+	"monstermq.io/edge/internal/version"
 )
 
 // Query: peerLink -------------------------------------------------------------
 
 func (r *queryResolver) PeerLink(ctx context.Context) (*generated.PeerLinkInfo, error) {
 	if r.PeerLinkMgr == nil {
-		return &generated.PeerLinkInfo{NodeID: r.NodeID, Peers: []*generated.PeerLinkPeer{}}, nil
+		return &generated.PeerLinkInfo{NodeID: r.NodeID, BrokerType: wire.BrokerTypeEdge, BrokerVersion: version.Version,
+			ProtocolVersion: wire.ProtocolVersion(wire.VersionMajor, wire.VersionMinor), Peers: []*generated.PeerLinkPeer{}}, nil
 	}
 	return peerLinkInfo(r.PeerLinkMgr.Peers(), r.PeerLinkMgr.Status(), r.PeerLinkMgr.Serving())
 }
@@ -35,6 +38,10 @@ func peerLinkInfo(peers []config.PeerConfig, st peerlink.Status, serving bool) (
 		TLS:     st.TLS,
 		Peers:   make([]*generated.PeerLinkPeer, 0, len(peers)),
 		Status:  doc,
+
+		BrokerType:      st.BrokerType,
+		BrokerVersion:   st.BrokerVersion,
+		ProtocolVersion: st.ProtocolVersion,
 	}
 	if serving {
 		info.Listen = ptrIfNotEmpty(st.Listen)
@@ -57,6 +64,15 @@ func peerLinkInfo(peers []config.PeerConfig, st peerlink.Status, serving bool) (
 			peer.Consumer = consumers[id]
 			peer.ServeState = ptr(stringField(peer.Consumer, "state", "NEVER_CONNECTED"))
 			peer.Remote = ptrIfNotEmpty(stringField(peer.Consumer, "remote", ""))
+		}
+		// What the peer announced; the pull link's handshake first, else the serve link's.
+		for _, e := range []map[string]any{peer.Source, peer.Consumer} {
+			if v := stringField(e, "peerProtocolVersion", ""); v != "" {
+				peer.ProtocolVersion = ptr(v)
+				peer.BrokerType = ptrIfNotEmpty(stringField(e, "peerBrokerType", ""))
+				peer.BrokerVersion = ptrIfNotEmpty(stringField(e, "peerBrokerVersion", ""))
+				break
+			}
 		}
 		info.Peers = append(info.Peers, peer)
 	}

@@ -26,12 +26,14 @@ func sampleFrames() []Frame {
 			Flags: HelloFlagMAC, Capabilities: CapsV1, InstanceID: 0xdeadbeefcafe, LastEpoch: 77, ResumeOffset: 1000,
 			LastSeenLeo: 2000, MaxRecordBytes: 1<<20 + 64<<10, RetainedClass: RetainedWinCCOA, NonceC: nonce(2), MAC: nonce(3),
 			ConsumerNodeID: "oa-b", ExpectedSourceNodeID: "oa-a", TopicRoot: "winccoa", OASystem: "System1",
+			BrokerType: BrokerTypeEdge, BrokerVersion: "1.4.2+abc",
 		},
 		&Hello{ConsumerNodeID: "b", ExpectedSourceNodeID: "a"},
 		&HelloOK{
 			Flags: HelloOKSourceReset | HelloOKSnapshotAvailable, Capabilities: CapTombstone | CapSnapshotFill, Epoch: 0x1234567890abcdef,
 			ResumeAt: 5, LogStart: 3, Leo: 9, Committed: 5, LostOnResume: 2, WallNowMs: -1, MonoNowMs: 42,
 			MaxRecordBytes: 1 << 20, RetainedClass: RetainedDB, MACS: nonce(4), SourceNodeID: "oa-a", TopicRoot: "", OASystem: "",
+			BrokerType: BrokerTypeFull, BrokerVersion: "1.8.33",
 		},
 		&GoAway{Code: GoAwayShutdown, Reason: "source stopping"},
 		&GoAway{Code: GoAwayAuthFailed},
@@ -128,10 +130,52 @@ func TestFrameShortBodies(t *testing.T) {
 				}
 				continue
 			}
+			if n == legacyHelloLen(f) {
+				continue // a peer that predates brokerType/brokerVersion (TestHelloWithoutBrokerInfo)
+			}
 			if _, err := DecodeFrame(f.Type(), body[:n]); !errors.Is(err, ErrShortFrame) {
 				t.Fatalf("%s truncated to %d of %d: err %v", f.Type(), n, len(body), err)
 			}
 		}
+	}
+}
+
+// legacyHelloLen is the body length of a HELLO or HELLO_OK without the trailing brokerType and
+// brokerVersion, or -1 for other frames.
+func legacyHelloLen(f Frame) int {
+	switch m := f.(type) {
+	case *Hello:
+		return len(m.AppendFrame(nil)) - FrameHeaderLen - 2 - len(m.BrokerType) - len(m.BrokerVersion)
+	case *HelloOK:
+		return len(m.AppendFrame(nil)) - FrameHeaderLen - 2 - len(m.BrokerType) - len(m.BrokerVersion)
+	}
+	return -1
+}
+
+// A HELLO or HELLO_OK from a peer that predates brokerType/brokerVersion decodes with both empty.
+func TestHelloWithoutBrokerInfo(t *testing.T) {
+	for _, f := range []Frame{
+		&Hello{ConsumerNodeID: "b", ExpectedSourceNodeID: "a", OASystem: "S", BrokerType: BrokerTypeEdge, BrokerVersion: "1.0"},
+		&HelloOK{SourceNodeID: "a", OASystem: "S", BrokerType: BrokerTypeFull, BrokerVersion: "2.0"},
+	} {
+		body := f.AppendFrame(nil)[FrameHeaderLen:]
+		got, err := DecodeFrame(f.Type(), body[:legacyHelloLen(f)])
+		if err != nil {
+			t.Fatalf("%s without broker info: %v", f.Type(), err)
+		}
+		switch m := got.(type) {
+		case *Hello:
+			if m.OASystem != "S" || m.BrokerType != "" || m.BrokerVersion != "" {
+				t.Fatalf("HELLO: %+v", m)
+			}
+		case *HelloOK:
+			if m.OASystem != "S" || m.BrokerType != "" || m.BrokerVersion != "" {
+				t.Fatalf("HELLO_OK: %+v", m)
+			}
+		}
+	}
+	if v := ProtocolVersion(VersionMajor, VersionMinor); v != "1.0" {
+		t.Fatalf("protocol version %q", v)
 	}
 }
 
@@ -193,19 +237,20 @@ func TestFrameGolden(t *testing.T) {
 			t.Errorf("%s body %d bytes, want %d", f.Type(), n, sizes[f.Type()])
 		}
 	}
-	// Fixed parts: HELLO 111 bytes + str8 + str8 + str16 + str8, HELLO_OK 111 + str8 + str16 + str8.
-	if n := len((&Hello{}).AppendFrame(nil)) - FrameHeaderLen; n != 111+1+1+2+1 {
+	// Fixed parts: HELLO 111 bytes + str8 + str8 + str16 + str8 + str8 + str8,
+	// HELLO_OK 111 + str8 + str16 + str8 + str8 + str8.
+	if n := len((&Hello{}).AppendFrame(nil)) - FrameHeaderLen; n != 111+1+1+2+1+1+1 {
 		t.Errorf("empty HELLO body %d", n)
 	}
-	if n := len((&HelloOK{}).AppendFrame(nil)) - FrameHeaderLen; n != 111+1+2+1 {
+	if n := len((&HelloOK{}).AppendFrame(nil)) - FrameHeaderLen; n != 111+1+2+1+1+1 {
 		t.Errorf("empty HELLO_OK body %d", n)
 	}
-	h := (&Hello{OASystem: "Sys"}).AppendFrame(nil)
-	if tail := h[len(h)-4:]; !bytes.Equal(tail, []byte{3, 'S', 'y', 's'}) {
-		t.Errorf("HELLO must end with oaSystem str8, got % x", tail)
+	h := (&Hello{OASystem: "Sys", BrokerType: "EDGE", BrokerVersion: "1.2"}).AppendFrame(nil)
+	if tail := h[len(h)-13:]; !bytes.Equal(tail, []byte{3, 'S', 'y', 's', 4, 'E', 'D', 'G', 'E', 3, '1', '.', '2'}) {
+		t.Errorf("HELLO must end with oaSystem, brokerType, brokerVersion str8, got % x", tail)
 	}
-	ok := (&HelloOK{SourceNodeID: "a", TopicRoot: "wr", OASystem: "S"}).AppendFrame(nil)
-	if tail := ok[len(ok)-8:]; !bytes.Equal(tail, []byte{1, 'a', 2, 0, 'w', 'r', 1, 'S'}) {
+	ok := (&HelloOK{SourceNodeID: "a", TopicRoot: "wr", OASystem: "S", BrokerType: "FULL", BrokerVersion: "9"}).AppendFrame(nil)
+	if tail := ok[len(ok)-15:]; !bytes.Equal(tail, []byte{1, 'a', 2, 0, 'w', 'r', 1, 'S', 4, 'F', 'U', 'L', 'L', 1, '9'}) {
 		t.Errorf("HELLO_OK tail % x", tail)
 	}
 }

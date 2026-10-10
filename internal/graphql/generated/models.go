@@ -474,26 +474,32 @@ type NodeConnectionStatus struct {
 }
 
 type PeerLinkInfo struct {
-	Enabled bool            `json:"enabled"`
-	NodeID  string          `json:"nodeId"`
-	Listen  *string         `json:"listen,omitempty"`
-	TLS     bool            `json:"tls"`
-	Peers   []*PeerLinkPeer `json:"peers"`
-	Status  map[string]any  `json:"status,omitempty"`
+	Enabled         bool            `json:"enabled"`
+	NodeID          string          `json:"nodeId"`
+	Listen          *string         `json:"listen,omitempty"`
+	TLS             bool            `json:"tls"`
+	BrokerType      string          `json:"brokerType"`
+	BrokerVersion   string          `json:"brokerVersion"`
+	ProtocolVersion string          `json:"protocolVersion"`
+	Peers           []*PeerLinkPeer `json:"peers"`
+	Status          map[string]any  `json:"status,omitempty"`
 }
 
 type PeerLinkPeer struct {
-	NodeID     string         `json:"nodeId"`
-	Address    *string        `json:"address,omitempty"`
-	Pull       bool           `json:"pull"`
-	Serve      bool           `json:"serve"`
-	Interest   string         `json:"interest"`
-	PullState  *string        `json:"pullState,omitempty"`
-	ServeState *string        `json:"serveState,omitempty"`
-	Remote     *string        `json:"remote,omitempty"`
-	LastError  *string        `json:"lastError,omitempty"`
-	Source     map[string]any `json:"source,omitempty"`
-	Consumer   map[string]any `json:"consumer,omitempty"`
+	NodeID          string         `json:"nodeId"`
+	Address         *string        `json:"address,omitempty"`
+	Pull            bool           `json:"pull"`
+	Serve           bool           `json:"serve"`
+	Interest        string         `json:"interest"`
+	PullState       *string        `json:"pullState,omitempty"`
+	ServeState      *string        `json:"serveState,omitempty"`
+	Remote          *string        `json:"remote,omitempty"`
+	LastError       *string        `json:"lastError,omitempty"`
+	BrokerType      *string        `json:"brokerType,omitempty"`
+	BrokerVersion   *string        `json:"brokerVersion,omitempty"`
+	ProtocolVersion *string        `json:"protocolVersion,omitempty"`
+	Source          map[string]any `json:"source,omitempty"`
+	Consumer        map[string]any `json:"consumer,omitempty"`
 }
 
 type PublishInput struct {

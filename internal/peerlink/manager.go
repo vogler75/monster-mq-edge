@@ -22,6 +22,7 @@ import (
 	"monstermq.io/edge/internal/mqtt/packets"
 	"monstermq.io/edge/internal/peerlink/wire"
 	"monstermq.io/edge/internal/tlsutil"
+	"monstermq.io/edge/internal/version"
 )
 
 // RetainedAccess gives PeerLink access to the broker's retained store (plan 6.1, 13.4, 16.5).
@@ -725,7 +726,9 @@ func (m *Manager) Resync(source string) error {
 
 // Status returns every counter and gauge (plan 20.1).
 func (m *Manager) Status() Status {
-	st := Status{Enabled: true, NodeID: m.nodeID, Listen: m.listenAddr, TLS: m.tls != nil && m.tls.server != nil}
+	st := Status{Enabled: true, NodeID: m.nodeID, Listen: m.listenAddr, TLS: m.tls != nil && m.tls.server != nil,
+		BrokerType: wire.BrokerTypeEdge, BrokerVersion: version.Version,
+		ProtocolVersion: wire.ProtocolVersion(wire.VersionMajor, wire.VersionMinor)}
 	h := m.hook
 	st.Log = LogStatus{
 		SkipPeer:         h.skipPeer.Load(),

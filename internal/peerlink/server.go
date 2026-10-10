@@ -15,6 +15,7 @@ import (
 	"monstermq.io/edge/internal/config"
 	"monstermq.io/edge/internal/peerlink/wire"
 	"monstermq.io/edge/internal/tlsutil"
+	"monstermq.io/edge/internal/version"
 )
 
 const (
@@ -59,6 +60,8 @@ type consumerSlot struct {
 	oaRetained            atomic.Bool
 	topicRootMismatch     atomic.Bool
 	retainedClassMismatch atomic.Bool
+	// remoteBroker is what the consumer announced in its last accepted handshake.
+	remoteBroker atomic.Pointer[peerBroker]
 }
 
 type takeover struct {
@@ -88,6 +91,9 @@ func (c *consumerSlot) status(ls LogConsumerStats) ConsumerStatus {
 	}
 	if ms := c.lastFetch.Load(); ms > 0 {
 		cs.LastFetch = time.UnixMilli(ms).UTC().Format(time.RFC3339Nano)
+	}
+	if b := c.remoteBroker.Load(); b != nil {
+		cs.PeerBrokerType, cs.PeerBrokerVersion, cs.PeerProtocolVersion = b.Type, b.Version, b.Protocol
 	}
 	c.mu.Lock()
 	cs.Remote = c.remote
@@ -546,7 +552,7 @@ func writeRaw(c net.Conn, f wire.Frame) error {
 func (m *Manager) servePeer(conn net.Conn, tcp *net.TCPConn, br *bufio.Reader, cs *tls.ConnectionState, releasePreAuth func()) {
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(handshakeTimeout))
-	major, _, err := wire.ReadPreamble(br)
+	major, minor, err := wire.ReadPreamble(br)
 	if err != nil {
 		return
 	}
@@ -653,6 +659,8 @@ func (m *Manager) servePeer(conn net.Conn, tcp *net.TCPConn, br *bufio.Reader, c
 	root := m.namespaceRoot()
 	slot.topicRootMismatch.Store(root != "" && hello.TopicRoot != "" && root != hello.TopicRoot)
 	slot.retainedClassMismatch.Store(hello.RetainedClass != m.deps.RetainedClass)
+	slot.remoteBroker.Store(&peerBroker{Type: hello.BrokerType, Version: hello.BrokerVersion,
+		Protocol: wire.ProtocolVersion(major, minor)})
 	m.handshakeWarnings(slot, &hello, root, oaRet, why)
 
 	sess.snapOK = sess.caps&(wire.CapSnapshotFill|wire.CapResyncNewer) != 0 && m.retained != nil
@@ -672,6 +680,8 @@ func (m *Manager) servePeer(conn net.Conn, tcp *net.TCPConn, br *bufio.Reader, c
 		SourceNodeID:   m.nodeID,
 		TopicRoot:      root,
 		OASystem:       m.oaSystem,
+		BrokerType:     wire.BrokerTypeEdge,
+		BrokerVersion:  version.Version,
 	}
 	if resume.SourceReset {
 		ok.Flags |= wire.HelloOKSourceReset

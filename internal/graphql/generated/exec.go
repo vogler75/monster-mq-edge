@@ -413,6 +413,12 @@ type PeerLinkInfo {
     listen: String
     # The peer listener uses TLS
     tls: Boolean!
+    # Broker type of this node: FULL (main broker, Java) or EDGE (edge broker, Go)
+    brokerType: String!
+    # Build version of this broker
+    brokerVersion: String!
+    # PeerLink protocol version this node speaks, as major.minor (e.g. 1.0)
+    protocolVersion: String!
     # Configured peers in configuration order, without this node's own entry
     peers: [PeerLinkPeer!]!
     # The full status document of GET /peerlink/v1/status; null while PeerLink is disabled
@@ -441,6 +447,13 @@ type PeerLinkPeer {
     remote: String
     # Last error of the pull link; null when there is none
     lastError: String
+    # Broker type the peer announced in its last handshake: FULL or EDGE; null before the
+    # first handshake or when the peer does not announce it
+    brokerType: String
+    # Build version the peer announced in its last handshake; null like brokerType
+    brokerVersion: String
+    # PeerLink protocol version the peer speaks, as major.minor; null before the first handshake
+    protocolVersion: String
     # Counters of the pull link, the matching entry of status.sources; null without pull
     source: JSON
     # Counters of the serve link, the matching entry of status.consumers; null without serve
@@ -2577,6 +2590,12 @@ func (ec *executionContext) childFields_PeerLinkInfo(ctx context.Context, field 
 		return ec.fieldContext_PeerLinkInfo_listen(ctx, field)
 	case "tls":
 		return ec.fieldContext_PeerLinkInfo_tls(ctx, field)
+	case "brokerType":
+		return ec.fieldContext_PeerLinkInfo_brokerType(ctx, field)
+	case "brokerVersion":
+		return ec.fieldContext_PeerLinkInfo_brokerVersion(ctx, field)
+	case "protocolVersion":
+		return ec.fieldContext_PeerLinkInfo_protocolVersion(ctx, field)
 	case "peers":
 		return ec.fieldContext_PeerLinkInfo_peers(ctx, field)
 	case "status":
@@ -2605,6 +2624,12 @@ func (ec *executionContext) childFields_PeerLinkPeer(ctx context.Context, field 
 		return ec.fieldContext_PeerLinkPeer_remote(ctx, field)
 	case "lastError":
 		return ec.fieldContext_PeerLinkPeer_lastError(ctx, field)
+	case "brokerType":
+		return ec.fieldContext_PeerLinkPeer_brokerType(ctx, field)
+	case "brokerVersion":
+		return ec.fieldContext_PeerLinkPeer_brokerVersion(ctx, field)
+	case "protocolVersion":
+		return ec.fieldContext_PeerLinkPeer_protocolVersion(ctx, field)
 	case "source":
 		return ec.fieldContext_PeerLinkPeer_source(ctx, field)
 	case "consumer":
@@ -13676,6 +13701,75 @@ func (ec *executionContext) fieldContext_PeerLinkInfo_tls(_ context.Context, fie
 	return graphql.NewScalarFieldContext("PeerLinkInfo", field, false, false, errors.New("field of type Boolean does not have child fields"))
 }
 
+func (ec *executionContext) _PeerLinkInfo_brokerType(ctx context.Context, field graphql.CollectedField, obj *PeerLinkInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_PeerLinkInfo_brokerType(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.BrokerType, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_PeerLinkInfo_brokerType(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("PeerLinkInfo", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _PeerLinkInfo_brokerVersion(ctx context.Context, field graphql.CollectedField, obj *PeerLinkInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_PeerLinkInfo_brokerVersion(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.BrokerVersion, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_PeerLinkInfo_brokerVersion(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("PeerLinkInfo", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _PeerLinkInfo_protocolVersion(ctx context.Context, field graphql.CollectedField, obj *PeerLinkInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_PeerLinkInfo_protocolVersion(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.ProtocolVersion, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_PeerLinkInfo_protocolVersion(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("PeerLinkInfo", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
 func (ec *executionContext) _PeerLinkInfo_peers(ctx context.Context, field graphql.CollectedField, obj *PeerLinkInfo) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -13935,6 +14029,75 @@ func (ec *executionContext) _PeerLinkPeer_lastError(ctx context.Context, field g
 	)
 }
 func (ec *executionContext) fieldContext_PeerLinkPeer_lastError(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("PeerLinkPeer", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _PeerLinkPeer_brokerType(ctx context.Context, field graphql.CollectedField, obj *PeerLinkPeer) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_PeerLinkPeer_brokerType(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.BrokerType, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *string) graphql.Marshaler {
+			return ec.marshalOString2ᚖstring(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_PeerLinkPeer_brokerType(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("PeerLinkPeer", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _PeerLinkPeer_brokerVersion(ctx context.Context, field graphql.CollectedField, obj *PeerLinkPeer) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_PeerLinkPeer_brokerVersion(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.BrokerVersion, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *string) graphql.Marshaler {
+			return ec.marshalOString2ᚖstring(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_PeerLinkPeer_brokerVersion(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("PeerLinkPeer", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _PeerLinkPeer_protocolVersion(ctx context.Context, field graphql.CollectedField, obj *PeerLinkPeer) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_PeerLinkPeer_protocolVersion(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.ProtocolVersion, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *string) graphql.Marshaler {
+			return ec.marshalOString2ᚖstring(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_PeerLinkPeer_protocolVersion(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	return graphql.NewScalarFieldContext("PeerLinkPeer", field, false, false, errors.New("field of type String does not have child fields"))
 }
 
@@ -31665,6 +31828,21 @@ func (ec *executionContext) _PeerLinkInfo(ctx context.Context, sel ast.Selection
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
+		case "brokerType":
+			out.Values[i] = ec._PeerLinkInfo_brokerType(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "brokerVersion":
+			out.Values[i] = ec._PeerLinkInfo_brokerVersion(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "protocolVersion":
+			out.Values[i] = ec._PeerLinkInfo_protocolVersion(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
 		case "peers":
 			out.Values[i] = ec._PeerLinkInfo_peers(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
@@ -31750,6 +31928,21 @@ func (ec *executionContext) _PeerLinkPeer(ctx context.Context, sel ast.Selection
 			}
 		case "lastError":
 			out.Values[i] = ec._PeerLinkPeer_lastError(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		case "brokerType":
+			out.Values[i] = ec._PeerLinkPeer_brokerType(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		case "brokerVersion":
+			out.Values[i] = ec._PeerLinkPeer_brokerVersion(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		case "protocolVersion":
+			out.Values[i] = ec._PeerLinkPeer_protocolVersion(ctx, field, obj)
 			if out.Values[i] == graphql.RequiredNull {
 				out.Invalids++
 			}

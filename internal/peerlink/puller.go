@@ -18,6 +18,7 @@ import (
 	"monstermq.io/edge/internal/mqtt/packets"
 	"monstermq.io/edge/internal/peerlink/wire"
 	"monstermq.io/edge/internal/tlsutil"
+	"monstermq.io/edge/internal/version"
 )
 
 // Puller states (11.1).
@@ -100,6 +101,8 @@ type puller struct {
 	warnedFrame                                             atomic.Bool
 	deltasSent, interestSnaps                               atomic.Uint64
 	interestActive                                          atomic.Bool
+	// remoteBroker is what the source announced in the last handshake.
+	remoteBroker atomic.Pointer[peerBroker]
 }
 
 func newPuller(m *Manager, peer config.PeerConfig, tp tlsutil.Peer, secrets [][]byte) (*puller, error) {
@@ -502,6 +505,8 @@ func (p *puller) handshake(conn net.Conn, cs *tls.ConnectionState) (*handshakeSt
 		ExpectedSourceNodeID: p.nodeID,
 		TopicRoot:            m.namespaceRoot(),
 		OASystem:             m.oaSystem,
+		BrokerType:           wire.BrokerTypeEdge,
+		BrokerVersion:        version.Version,
 	}
 	if e := p.epoch.Load(); e != 0 {
 		h.LastEpoch = e
@@ -552,6 +557,8 @@ func (p *puller) handshake(conn net.Conn, cs *tls.ConnectionState) (*handshakeSt
 	hs := &handshakeState{br: br, fr: fr, caps: ok.Capabilities, flags: ok.Flags, epoch: ok.Epoch, srcRoot: ok.TopicRoot,
 		rttHalfMs: rtt.Milliseconds() / 2}
 	p.rttUs.Store(rtt.Microseconds())
+	p.remoteBroker.Store(&peerBroker{Type: ok.BrokerType, Version: ok.BrokerVersion,
+		Protocol: wire.ProtocolVersion(sh.VersionMajor, sh.VersionMinor)})
 	frameMax := max(m.cfg.Fetch.GetMaxBytes(), int(ok.MaxRecordBytes)) + wire.FrameSlack
 	if limit := m.cfg.Receive.GetMaxFrameBytes(); frameMax > limit {
 		frameMax = limit
@@ -1212,6 +1219,9 @@ func (p *puller) status() SourceStatus {
 	p.lastErrMu.Lock()
 	st.LastError = p.lastErr
 	p.lastErrMu.Unlock()
+	if b := p.remoteBroker.Load(); b != nil {
+		st.PeerBrokerType, st.PeerBrokerVersion, st.PeerProtocolVersion = b.Type, b.Version, b.Protocol
+	}
 	if p.m.tracker != nil && p.m.cfg.InterestOn(p.peer) {
 		st.Interest = &SourceInterest{Active: p.interestActive.Load(), DeltasSent: p.deltasSent.Load(),
 			SnapshotsSent: p.interestSnaps.Load()}
