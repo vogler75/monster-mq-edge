@@ -154,6 +154,7 @@ type QueryResolver interface {
 	Hmi(ctx context.Context, name string) (*Hmi, error)
 	HmiFiles(ctx context.Context, name string) ([]*DashboardFile, error)
 	ExportHmiZip(ctx context.Context, name string) (string, error)
+	PeerLink(ctx context.Context) (*PeerLinkInfo, error)
 	RedfishMappings(ctx context.Context) ([]*RedfishMapping, error)
 	RedfishMapping(ctx context.Context, name string) (*RedfishMapping, error)
 	RedfishLiveSensors(ctx context.Context, chassisID *string) ([]*RedfishSensorStatus, error)
@@ -398,6 +399,59 @@ func newExecutionContext(
 }
 
 var sources = []*ast.Source{
+	{Name: "../schema/peerlink.graphqls", Input: `# PeerLink configuration and live link state (doc/peerlink.md)
+#
+# Shared with the edge broker: keep this file identical in both repositories.
+
+# PeerLink on the broker node that answers the query
+type PeerLinkInfo {
+    # PeerLink is enabled on this node
+    enabled: Boolean!
+    # PeerLink NodeId of this node (the broker node id while PeerLink is disabled)
+    nodeId: String!
+    # host:port of the peer listener; null when no peer may pull from this node
+    listen: String
+    # The peer listener uses TLS
+    tls: Boolean!
+    # Configured peers in configuration order, without this node's own entry
+    peers: [PeerLinkPeer!]!
+    # The full status document of GET /peerlink/v1/status; null while PeerLink is disabled
+    status: JSON
+}
+
+# One entry of PeerLink.Peers with the state of its links. A peer has up to two links:
+# pull (this node dials the peer and receives its messages) and serve (the peer dials
+# this node and receives this node's messages).
+type PeerLinkPeer {
+    # Canonical NodeId of the peer
+    nodeId: String!
+    # Address this node dials; null when this node does not pull from the peer
+    address: String
+    # This node pulls from the peer: outbound connection, messages flow from the peer to this node
+    pull: Boolean!
+    # The peer may pull from this node: inbound connection, messages flow from this node to the peer
+    serve: Boolean!
+    # Interest routing of the link: INHERIT or OFF
+    interest: String!
+    # State of the pull link: STOPPED, BACKOFF, DIALING, HANDSHAKE, SNAPSHOT or STREAMING; null without pull
+    pullState: String
+    # State of the serve link: NEVER_CONNECTED, CONNECTED or DISCONNECTED; null without serve
+    serveState: String
+    # Remote address of the peer's inbound connection; null while it never connected
+    remote: String
+    # Last error of the pull link; null when there is none
+    lastError: String
+    # Counters of the pull link, the matching entry of status.sources; null without pull
+    source: JSON
+    # Counters of the serve link, the matching entry of status.consumers; null without serve
+    consumer: JSON
+}
+
+extend type Query {
+    # PeerLink configuration and the state of every peer link on this node
+    peerLink: PeerLinkInfo!
+}
+`, BuiltIn: false},
 	{Name: "../schema/redfish.graphqls", Input: `# Redfish API Gateway Configuration & Status Schema
 
 type RedfishThresholds {
@@ -2511,6 +2565,52 @@ func (ec *executionContext) childFields_NodeConnectionStatus(ctx context.Context
 		return ec.fieldContext_NodeConnectionStatus_timestamp(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type NodeConnectionStatus", field.Name)
+}
+
+func (ec *executionContext) childFields_PeerLinkInfo(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "enabled":
+		return ec.fieldContext_PeerLinkInfo_enabled(ctx, field)
+	case "nodeId":
+		return ec.fieldContext_PeerLinkInfo_nodeId(ctx, field)
+	case "listen":
+		return ec.fieldContext_PeerLinkInfo_listen(ctx, field)
+	case "tls":
+		return ec.fieldContext_PeerLinkInfo_tls(ctx, field)
+	case "peers":
+		return ec.fieldContext_PeerLinkInfo_peers(ctx, field)
+	case "status":
+		return ec.fieldContext_PeerLinkInfo_status(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type PeerLinkInfo", field.Name)
+}
+
+func (ec *executionContext) childFields_PeerLinkPeer(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "nodeId":
+		return ec.fieldContext_PeerLinkPeer_nodeId(ctx, field)
+	case "address":
+		return ec.fieldContext_PeerLinkPeer_address(ctx, field)
+	case "pull":
+		return ec.fieldContext_PeerLinkPeer_pull(ctx, field)
+	case "serve":
+		return ec.fieldContext_PeerLinkPeer_serve(ctx, field)
+	case "interest":
+		return ec.fieldContext_PeerLinkPeer_interest(ctx, field)
+	case "pullState":
+		return ec.fieldContext_PeerLinkPeer_pullState(ctx, field)
+	case "serveState":
+		return ec.fieldContext_PeerLinkPeer_serveState(ctx, field)
+	case "remote":
+		return ec.fieldContext_PeerLinkPeer_remote(ctx, field)
+	case "lastError":
+		return ec.fieldContext_PeerLinkPeer_lastError(ctx, field)
+	case "source":
+		return ec.fieldContext_PeerLinkPeer_source(ctx, field)
+	case "consumer":
+		return ec.fieldContext_PeerLinkPeer_consumer(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type PeerLinkPeer", field.Name)
 }
 
 func (ec *executionContext) childFields_PublishResult(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
@@ -13484,6 +13584,406 @@ func (ec *executionContext) fieldContext_NodeConnectionStatus_timestamp(_ contex
 	return graphql.NewScalarFieldContext("NodeConnectionStatus", field, false, false, errors.New("field of type Long does not have child fields"))
 }
 
+func (ec *executionContext) _PeerLinkInfo_enabled(ctx context.Context, field graphql.CollectedField, obj *PeerLinkInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_PeerLinkInfo_enabled(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Enabled, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_PeerLinkInfo_enabled(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("PeerLinkInfo", field, false, false, errors.New("field of type Boolean does not have child fields"))
+}
+
+func (ec *executionContext) _PeerLinkInfo_nodeId(ctx context.Context, field graphql.CollectedField, obj *PeerLinkInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_PeerLinkInfo_nodeId(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.NodeID, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_PeerLinkInfo_nodeId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("PeerLinkInfo", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _PeerLinkInfo_listen(ctx context.Context, field graphql.CollectedField, obj *PeerLinkInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_PeerLinkInfo_listen(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Listen, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *string) graphql.Marshaler {
+			return ec.marshalOString2ᚖstring(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_PeerLinkInfo_listen(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("PeerLinkInfo", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _PeerLinkInfo_tls(ctx context.Context, field graphql.CollectedField, obj *PeerLinkInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_PeerLinkInfo_tls(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.TLS, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_PeerLinkInfo_tls(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("PeerLinkInfo", field, false, false, errors.New("field of type Boolean does not have child fields"))
+}
+
+func (ec *executionContext) _PeerLinkInfo_peers(ctx context.Context, field graphql.CollectedField, obj *PeerLinkInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_PeerLinkInfo_peers(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Peers, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*PeerLinkPeer) graphql.Marshaler {
+			return ec.marshalNPeerLinkPeer2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐPeerLinkPeerᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_PeerLinkInfo_peers(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "PeerLinkInfo",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_PeerLinkPeer(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _PeerLinkInfo_status(ctx context.Context, field graphql.CollectedField, obj *PeerLinkInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_PeerLinkInfo_status(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Status, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v map[string]any) graphql.Marshaler {
+			return ec.marshalOJSON2map(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_PeerLinkInfo_status(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("PeerLinkInfo", field, false, false, errors.New("field of type JSON does not have child fields"))
+}
+
+func (ec *executionContext) _PeerLinkPeer_nodeId(ctx context.Context, field graphql.CollectedField, obj *PeerLinkPeer) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_PeerLinkPeer_nodeId(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.NodeID, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_PeerLinkPeer_nodeId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("PeerLinkPeer", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _PeerLinkPeer_address(ctx context.Context, field graphql.CollectedField, obj *PeerLinkPeer) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_PeerLinkPeer_address(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Address, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *string) graphql.Marshaler {
+			return ec.marshalOString2ᚖstring(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_PeerLinkPeer_address(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("PeerLinkPeer", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _PeerLinkPeer_pull(ctx context.Context, field graphql.CollectedField, obj *PeerLinkPeer) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_PeerLinkPeer_pull(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Pull, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_PeerLinkPeer_pull(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("PeerLinkPeer", field, false, false, errors.New("field of type Boolean does not have child fields"))
+}
+
+func (ec *executionContext) _PeerLinkPeer_serve(ctx context.Context, field graphql.CollectedField, obj *PeerLinkPeer) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_PeerLinkPeer_serve(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Serve, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_PeerLinkPeer_serve(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("PeerLinkPeer", field, false, false, errors.New("field of type Boolean does not have child fields"))
+}
+
+func (ec *executionContext) _PeerLinkPeer_interest(ctx context.Context, field graphql.CollectedField, obj *PeerLinkPeer) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_PeerLinkPeer_interest(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Interest, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_PeerLinkPeer_interest(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("PeerLinkPeer", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _PeerLinkPeer_pullState(ctx context.Context, field graphql.CollectedField, obj *PeerLinkPeer) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_PeerLinkPeer_pullState(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.PullState, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *string) graphql.Marshaler {
+			return ec.marshalOString2ᚖstring(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_PeerLinkPeer_pullState(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("PeerLinkPeer", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _PeerLinkPeer_serveState(ctx context.Context, field graphql.CollectedField, obj *PeerLinkPeer) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_PeerLinkPeer_serveState(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.ServeState, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *string) graphql.Marshaler {
+			return ec.marshalOString2ᚖstring(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_PeerLinkPeer_serveState(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("PeerLinkPeer", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _PeerLinkPeer_remote(ctx context.Context, field graphql.CollectedField, obj *PeerLinkPeer) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_PeerLinkPeer_remote(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Remote, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *string) graphql.Marshaler {
+			return ec.marshalOString2ᚖstring(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_PeerLinkPeer_remote(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("PeerLinkPeer", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _PeerLinkPeer_lastError(ctx context.Context, field graphql.CollectedField, obj *PeerLinkPeer) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_PeerLinkPeer_lastError(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.LastError, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *string) graphql.Marshaler {
+			return ec.marshalOString2ᚖstring(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_PeerLinkPeer_lastError(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("PeerLinkPeer", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _PeerLinkPeer_source(ctx context.Context, field graphql.CollectedField, obj *PeerLinkPeer) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_PeerLinkPeer_source(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Source, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v map[string]any) graphql.Marshaler {
+			return ec.marshalOJSON2map(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_PeerLinkPeer_source(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("PeerLinkPeer", field, false, false, errors.New("field of type JSON does not have child fields"))
+}
+
+func (ec *executionContext) _PeerLinkPeer_consumer(ctx context.Context, field graphql.CollectedField, obj *PeerLinkPeer) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_PeerLinkPeer_consumer(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Consumer, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v map[string]any) graphql.Marshaler {
+			return ec.marshalOJSON2map(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_PeerLinkPeer_consumer(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("PeerLinkPeer", field, false, false, errors.New("field of type JSON does not have child fields"))
+}
+
 func (ec *executionContext) _PublishResult_success(ctx context.Context, field graphql.CollectedField, obj *PublishResult) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -14860,6 +15360,38 @@ func (ec *executionContext) fieldContext_Query_exportHmiZip(ctx context.Context,
 	if fc.Args, err = ec.field_Query_exportHmiZip_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_peerLink(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_peerLink(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return ec.Resolvers.Query().PeerLink(ctx)
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *PeerLinkInfo) graphql.Marshaler {
+			return ec.marshalNPeerLinkInfo2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐPeerLinkInfo(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Query_peerLink(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_PeerLinkInfo(ctx, field)
+		},
 	}
 	return fc, nil
 }
@@ -31101,6 +31633,157 @@ func (ec *executionContext) _NodeConnectionStatus(ctx context.Context, sel ast.S
 	return out
 }
 
+var peerLinkInfoImplementors = []string{"PeerLinkInfo"}
+
+func (ec *executionContext) _PeerLinkInfo(ctx context.Context, sel ast.SelectionSet, obj *PeerLinkInfo) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, peerLinkInfoImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("PeerLinkInfo")
+		case "enabled":
+			out.Values[i] = ec._PeerLinkInfo_enabled(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "nodeId":
+			out.Values[i] = ec._PeerLinkInfo_nodeId(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "listen":
+			out.Values[i] = ec._PeerLinkInfo_listen(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		case "tls":
+			out.Values[i] = ec._PeerLinkInfo_tls(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "peers":
+			out.Values[i] = ec._PeerLinkInfo_peers(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "status":
+			out.Values[i] = ec._PeerLinkInfo_status(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var peerLinkPeerImplementors = []string{"PeerLinkPeer"}
+
+func (ec *executionContext) _PeerLinkPeer(ctx context.Context, sel ast.SelectionSet, obj *PeerLinkPeer) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, peerLinkPeerImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("PeerLinkPeer")
+		case "nodeId":
+			out.Values[i] = ec._PeerLinkPeer_nodeId(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "address":
+			out.Values[i] = ec._PeerLinkPeer_address(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		case "pull":
+			out.Values[i] = ec._PeerLinkPeer_pull(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "serve":
+			out.Values[i] = ec._PeerLinkPeer_serve(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "interest":
+			out.Values[i] = ec._PeerLinkPeer_interest(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "pullState":
+			out.Values[i] = ec._PeerLinkPeer_pullState(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		case "serveState":
+			out.Values[i] = ec._PeerLinkPeer_serveState(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		case "remote":
+			out.Values[i] = ec._PeerLinkPeer_remote(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		case "lastError":
+			out.Values[i] = ec._PeerLinkPeer_lastError(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		case "source":
+			out.Values[i] = ec._PeerLinkPeer_source(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		case "consumer":
+			out.Values[i] = ec._PeerLinkPeer_consumer(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
 var publishResultImplementors = []string{"PublishResult"}
 
 func (ec *executionContext) _PublishResult(ctx context.Context, sel ast.SelectionSet, obj *PublishResult) graphql.Marshaler {
@@ -31831,6 +32514,28 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 					}
 				}()
 				res = ec._Query_exportHmiZip(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "peerLink":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_peerLink(ctx, field)
 				if res == graphql.Null {
 					atomic.AddUint32(&fs.Invalids, 1)
 				}
@@ -38204,6 +38909,42 @@ func (ec *executionContext) unmarshalNPayloadFormat2monstermqᚗioᚋedgeᚋinte
 
 func (ec *executionContext) marshalNPayloadFormat2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐPayloadFormat(ctx context.Context, sel ast.SelectionSet, v PayloadFormat) graphql.Marshaler {
 	return v
+}
+
+func (ec *executionContext) marshalNPeerLinkInfo2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐPeerLinkInfo(ctx context.Context, sel ast.SelectionSet, v *PeerLinkInfo) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._PeerLinkInfo(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNPeerLinkPeer2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐPeerLinkPeerᚄ(ctx context.Context, sel ast.SelectionSet, v []*PeerLinkPeer) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNPeerLinkPeer2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐPeerLinkPeer(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNPeerLinkPeer2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐPeerLinkPeer(ctx context.Context, sel ast.SelectionSet, v *PeerLinkPeer) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._PeerLinkPeer(ctx, sel, v)
 }
 
 func (ec *executionContext) unmarshalNPublishInput2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐPublishInput(ctx context.Context, v any) (PublishInput, error) {

@@ -634,6 +634,7 @@ func build(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus, opts Optio
 	var gqlSrv *gql.Server
 	if cfg.GraphQL.Enabled && (cfg.GraphQL.HTTPEnabled() || cfg.GraphQL.TLSEnabled()) {
 		resolver := resolvers.New(cfg, storage, bus, archives, bridges, winCCUa, winCCOa, authCache, collector, logBus, logger, server, publishFn, hmiMgr, redfishMgr, rtspCameras, scripts)
+		resolver.PeerLinkMgr = pl
 		var rest *restapi.Handler
 		if cfg.RestApi.Enabled {
 			rest = restapi.New(cfg, authCache, storage.Retained, archives, bus, publishFn)

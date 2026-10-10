@@ -27,6 +27,7 @@ import (
 	"monstermq.io/edge/internal/hmi"
 	mlog "monstermq.io/edge/internal/log"
 	"monstermq.io/edge/internal/metrics"
+	"monstermq.io/edge/internal/peerlink"
 	"monstermq.io/edge/internal/pubsub"
 	"monstermq.io/edge/internal/redfish"
 	"monstermq.io/edge/internal/scripting"
@@ -55,6 +56,8 @@ type Resolver struct {
 	Redfish     *redfish.Manager
 	RtspCameras *rtspcamera.Manager
 	Scripts     *scripting.Manager
+	// PeerLinkMgr is nil while PeerLink is disabled.
+	PeerLinkMgr *peerlink.Manager
 
 	// Publish injects a message into the local broker (used by the publish mutation).
 	Publish func(topic string, payload []byte, retain bool, qos byte) error
