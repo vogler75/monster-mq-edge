@@ -473,6 +473,29 @@ type NodeConnectionStatus struct {
 	Timestamp      int64   `json:"timestamp"`
 }
 
+type PeerLinkInfo struct {
+	Enabled bool            `json:"enabled"`
+	NodeID  string          `json:"nodeId"`
+	Listen  *string         `json:"listen,omitempty"`
+	TLS     bool            `json:"tls"`
+	Peers   []*PeerLinkPeer `json:"peers"`
+	Status  map[string]any  `json:"status,omitempty"`
+}
+
+type PeerLinkPeer struct {
+	NodeID     string         `json:"nodeId"`
+	Address    *string        `json:"address,omitempty"`
+	Pull       bool           `json:"pull"`
+	Serve      bool           `json:"serve"`
+	Interest   string         `json:"interest"`
+	PullState  *string        `json:"pullState,omitempty"`
+	ServeState *string        `json:"serveState,omitempty"`
+	Remote     *string        `json:"remote,omitempty"`
+	LastError  *string        `json:"lastError,omitempty"`
+	Source     map[string]any `json:"source,omitempty"`
+	Consumer   map[string]any `json:"consumer,omitempty"`
+}
+
 type PublishInput struct {
 	Topic    string      `json:"topic"`
 	Payload  string      `json:"payload"`

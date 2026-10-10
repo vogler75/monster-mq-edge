@@ -397,6 +397,12 @@ func (m *Manager) Addr() string { return m.listenAddr }
 // NodeID returns this node's canonical NodeId.
 func (m *Manager) NodeID() string { return m.nodeID }
 
+// Peers returns the configured peers in configuration order, without this node's own entry.
+func (m *Manager) Peers() []config.PeerConfig { return m.deps.Setup.Peers }
+
+// Serving reports whether any peer may pull from this node, i.e. whether Addr is the peer listener.
+func (m *Manager) Serving() bool { return len(m.consumers) > 0 }
+
 // RetainedViaOA reports whether retained replicas from source go to the in-memory retained view
 // only, because WinCC OA replicates the retained datapoints between both sides (oaRetained, 9.5).
 // It is one map lookup plus one atomic load, for StorageHook.
