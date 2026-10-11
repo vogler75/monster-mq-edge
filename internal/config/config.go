@@ -886,7 +886,7 @@ type PeerLinkConfig struct {
 // PeerLinkInterest is interest routing (plan-peerlink-interest-routing 11): a source forwards to a
 // peer only what the peer's subscriptions, bus and archive groups want.
 type PeerLinkInterest struct {
-	Enabled           bool   `yaml:"Enabled"`
+	Enabled           *bool  `yaml:"Enabled"`
 	Unknown           string `yaml:"Unknown"` // ALL | NONE: mask of a peer until its first snapshot
 	FlushMs           *int   `yaml:"FlushMs"`
 	MaxScanPerFetch   *int   `yaml:"MaxScanPerFetch"`
@@ -1179,6 +1179,7 @@ func (r PeerLinkReceive) GetInjectWorkers() int {
 	return intOr(r.InjectWorkers, peerLinkDefaultInjectWorkers)
 }
 
+func (i PeerLinkInterest) GetEnabled() bool { return boolOr(i.Enabled, true) }
 func (i PeerLinkInterest) GetUnknown() string { return stringOr(i.Unknown, PeerLinkInterestAll) }
 func (i PeerLinkInterest) GetFlushMs() int    { return intOr(i.FlushMs, peerLinkDefaultInterestFlush) }
 func (i PeerLinkInterest) GetMaxScanPerFetch() int {
@@ -1193,7 +1194,7 @@ func (i PeerLinkInterest) GetMaxFilterBytes() int {
 
 // InterestOn reports whether interest routing may be agreed on the link with peer.
 func (p *PeerLinkConfig) InterestOn(peer PeerConfig) bool {
-	return p.Interest.Enabled && peer.GetInterest() != PeerLinkInterestOff
+	return p.Interest.GetEnabled() && peer.GetInterest() != PeerLinkInterestOff
 }
 
 // GetInterest returns the per-peer interest setting: INHERIT (default) or OFF.
@@ -1527,7 +1528,7 @@ func (p *PeerLinkConfig) validate(env peerLinkEnv) (*PeerLinkSetup, error) {
 	if in.GetMaxFiltersPerPeer() < 1 {
 		fail("Interest.MaxFiltersPerPeer must be at least 1")
 	}
-	if in.Enabled {
+	if in.GetEnabled() {
 		consumers := 0
 		for _, peer := range s.Peers {
 			if peer.GetServe() {

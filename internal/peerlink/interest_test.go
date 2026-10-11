@@ -434,7 +434,7 @@ func TestTrackerFlushTimer(t *testing.T) {
 }
 
 func withInterest(c *config.PeerLinkConfig, _ *Deps) {
-	c.Interest.Enabled = true
+	c.Interest.Enabled = boolp(true)
 	c.Interest.FlushMs = intp(5)
 }
 

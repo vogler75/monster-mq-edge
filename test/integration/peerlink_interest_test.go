@@ -20,7 +20,7 @@ import (
 // plInterest enables interest routing. Archive interest is off because the provisioned Default
 // archive group holds "#", which would make every node interested in everything.
 func plInterest(c *config.Config) {
-	c.PeerLink.Interest.Enabled = true
+	c.PeerLink.Interest.Enabled = boolPtr(true)
 	c.PeerLink.Interest.FlushMs = intPtr(5)
 	c.PeerLink.Receive.Archive = boolPtr(false)
 }

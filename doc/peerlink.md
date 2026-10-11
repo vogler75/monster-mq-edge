@@ -411,7 +411,7 @@ behaviour). See [Interest routing](#interest-routing) for how it works.
 
 | Key | Default | Description |
 |---|---|---|
-| `Enabled` | `false` | Offer interest routing to all peers. |
+| `Enabled` | `true` | Offer interest routing to all peers. |
 | `Unknown` | `ALL` | What a source captures for a peer until the peer's first interest snapshot arrives (for example right after the source restarted). `ALL`: everything, so nothing is missed. `NONE`: nothing, which saves log memory when peers connect late. |
 | `FlushMs` | `5` | Consumer side: subscription changes are coalesced and sent at most this often. ≥ 1. |
 | `MaxScanPerFetch` | `65536` | Source side: log offsets scanned per `FETCH` for one consumer when most records are not for it. ≥ 1024. |

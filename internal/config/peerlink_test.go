@@ -97,6 +97,7 @@ func TestPeerLinkDefaults(t *testing.T) {
 		"Tls.Enabled":             {p.Tls.Enabled, false},
 		"Tls.AutoGenerate":        {p.Tls.AutoGenerate, false},
 		"Capture.Wills":           {p.Capture.GetWills(), true},
+		"Interest.Enabled":        {p.Interest.GetEnabled(), true},
 		"Fetch.CrcOnTls":          {p.Fetch.CrcOnTls, false},
 		"Receive.Bus":             {p.Receive.GetBus(), true},
 		"Receive.BridgeOutbound":  {p.Receive.BridgeOutbound, false},
@@ -411,7 +412,8 @@ func TestPeerLinkValidation(t *testing.T) {
 		{"InjectWorkers 16", func(c *Config) { c.PeerLink.Receive.InjectWorkers = ptr(16) }, ""},
 
 		// Interest routing.
-		{"Interest enabled", func(c *Config) { c.PeerLink.Interest.Enabled = true }, ""},
+		{"Interest enabled", func(c *Config) { c.PeerLink.Interest.Enabled = ptr(true) }, ""},
+		{"Interest disabled", func(c *Config) { c.PeerLink.Interest.Enabled = ptr(false) }, ""},
 		{"Interest.Unknown", func(c *Config) { c.PeerLink.Interest.Unknown = "SOME" }, "Interest.Unknown"},
 		{"Interest.Unknown NONE", func(c *Config) { c.PeerLink.Interest.Unknown = "NONE" }, ""},
 		{"Interest.FlushMs 0", func(c *Config) { c.PeerLink.Interest.FlushMs = ptr(0) }, "Interest.FlushMs"},
@@ -462,7 +464,7 @@ func TestPeerLinkValidation(t *testing.T) {
 }
 
 func interestPeers(c *Config, n int, enabled bool) {
-	c.PeerLink.Interest.Enabled = enabled
+	c.PeerLink.Interest.Enabled = ptr(enabled)
 	c.PeerLink.Peers = nil
 	for i := range n {
 		c.PeerLink.Peers = append(c.PeerLink.Peers, PeerConfig{NodeID: fmt.Sprintf("node-%d", i+100)})
@@ -755,7 +757,7 @@ func TestPeerLinkFixture(t *testing.T) {
 		t.Error("AnyServe")
 	}
 	in := p.Interest
-	if !in.Enabled || in.GetUnknown() != PeerLinkInterestNone || in.GetFlushMs() != 10 || in.GetMaxScanPerFetch() != 32768 ||
+	if !in.GetEnabled() || in.GetUnknown() != PeerLinkInterestNone || in.GetFlushMs() != 10 || in.GetMaxScanPerFetch() != 32768 ||
 		in.GetMaxFiltersPerPeer() != 5000 || in.GetMaxFilterBytes() != 512 {
 		t.Errorf("Interest: %+v", in)
 	}

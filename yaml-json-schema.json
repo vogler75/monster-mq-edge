@@ -481,7 +481,7 @@
           "additionalProperties": false,
           "description": "Interest routing: a source forwards to a peer only what the peer's subscriptions, bus and archive groups want. Both ends must enable it; at most 64 peers with Serve.",
           "properties": {
-            "Enabled":           { "type": "boolean", "default": false },
+            "Enabled":           { "type": "boolean", "default": true },
             "Unknown":           { "type": "string", "enum": ["ALL", "NONE"], "default": "ALL", "description": "What a source forwards to a capable peer before its first interest snapshot." },
             "FlushMs":           { "type": "integer", "minimum": 1, "default": 5, "description": "Coalescing window of interest deltas." },
             "MaxScanPerFetch":   { "type": "integer", "minimum": 1024, "default": 65536, "description": "Log offsets a source scans per FETCH or sweep tick for a filtered peer." },

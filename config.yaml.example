@@ -203,7 +203,7 @@ PeerLink:
     MaxFrameBytes: 16842752         # 16 MiB + 64 KiB
     InjectWorkers: 1                # reserved; values above 1 only log a WARN
   Interest:                         # forward to a peer only what it subscribes to (both ends)
-    Enabled: false                  # at most 64 peers with Serve
+    Enabled: true                   # at most 64 peers with Serve
     Unknown: ALL                    # ALL | NONE before a peer's first interest snapshot
     FlushMs: 5                      # coalescing window of interest deltas
     MaxScanPerFetch: 65536          # log offsets scanned per FETCH for a filtered peer
