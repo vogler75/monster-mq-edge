@@ -134,8 +134,9 @@ type logConsumer struct {
 	committed uint64 // C[c]: next offset the consumer needs; 1 at epoch start
 	served    uint64 // S[c]: one past the highest offset ever served; 1 before the first batch
 	acctNext  uint64 // loss is accounted below this offset (8.5)
-	lostTotal uint64
-	state     LogConsumerState
+	lostTotal    uint64
+	reportedLost uint64
+	state        LogConsumerState
 	// reading counts ReadFor calls between snapshot and served update. Observation waits for them:
 	// counting then could charge records the read already returned, or skip a truncated tail.
 	reading int
@@ -887,6 +888,7 @@ func (l *Log) readSparse(c int, from uint64, maxRecords, maxBytes int, out *[][]
 	con := &l.consumers[c]
 	l.observeLocked(con)
 	con.reading++
+	lost := con.lostTotal - con.reportedLost
 	base := max(from, lso)
 	n := min(leo-base, uint64(l.maxScan))
 	if maxRecords <= 0 {
@@ -906,7 +908,7 @@ func (l *Log) readSparse(c int, from uint64, maxRecords, maxBytes int, out *[][]
 	}
 	l.mu.Unlock()
 
-	res := LogReadResult{Base: base, Lost: base - from, LSO: lso, LEO: leo}
+	res := LogReadResult{Base: base, Lost: lost, LSO: lso, LEO: leo}
 	bit := uint64(1) << uint(c)
 	total := 0
 	skipped := false
@@ -956,6 +958,9 @@ func (l *Log) readSparse(c int, from uint64, maxRecords, maxBytes int, out *[][]
 	l.mu.Lock()
 	con = &l.consumers[c]
 	con.served = max(con.served, base+res.Span)
+	if !res.Truncated || res.Span > 0 {
+		con.reportedLost += lost
+	}
 	con.reading--
 	l.mu.Unlock()
 	return res, nil
@@ -1189,9 +1194,16 @@ func (l *Log) Resume(c int, lastEpoch, resumeOffset uint64) (LogResume, error) {
 			con.committed = resumeOffset
 			ck, a, b = l.updateLWMLocked()
 		}
+		l.observeLocked(con)
 		if resumeOffset >= l.lso {
 			r.ResumeAt = resumeOffset
 			r.ConsumerStateUsed = true
+		} else if l.masked {
+			r.ResumeAt = max(resumeOffset, con.committed, l.lso)
+			r.ConsumerStateUsed = resumeOffset >= l.lso || resumeOffset >= con.committed
+			lost := con.lostTotal - con.reportedLost
+			con.reportedLost = con.lostTotal
+			r.LostOnResume = lost
 		} else {
 			r.ResumeAt = l.lso
 			r.LostOnResume = l.lso - resumeOffset
@@ -1199,11 +1211,15 @@ func (l *Log) Resume(c int, lastEpoch, resumeOffset uint64) (LogResume, error) {
 	default:
 		r.SourceReset = lastEpoch != 0
 		r.ResumeAt = max(con.committed, l.lso)
-		if l.lso > con.committed {
+		l.observeLocked(con)
+		if l.masked {
+			lost := con.lostTotal - con.reportedLost
+			con.reportedLost = con.lostTotal
+			r.LostOnResume = lost
+		} else if l.lso > con.committed {
 			r.LostOnResume = l.lso - con.committed
 		}
 	}
-	l.observeLocked(con)
 	r.LSO = l.lso
 	r.Committed = con.committed
 	l.mu.Unlock()

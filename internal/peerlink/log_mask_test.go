@@ -216,3 +216,43 @@ func TestLogUnmaskedReadSparseIsDense(t *testing.T) {
 		t.Fatalf("res %+v err %v", res, err)
 	}
 }
+
+func TestLogMaskedReadSparseNoFalseGap(t *testing.T) {
+	l := logTestNew(t, LogConfig{Masked: true, Consumers: []string{"a", "b"}})
+	// 10 records wanted only by b.
+	for range 10 {
+		logTestAppendMask(t, l, 2)
+	}
+	// b consumes and commits up to 11; a auto-advances because it had no interest.
+	if err := l.Commit(1, 11); err != nil {
+		t.Fatal(err)
+	}
+	if lso, _ := l.Bounds(); lso != 11 {
+		t.Fatalf("lso = %d, want 11", lso)
+	}
+	var out [][]byte
+	var deltas []uint32
+	// a fetches from 1: since records 1..10 were not wanted by a, res.Lost must be 0 (no false gap).
+	res, err := l.ReadSparse(0, 1, 100, 0, &out, &deltas)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Lost != 0 {
+		t.Fatalf("res.Lost = %d, want 0", res.Lost)
+	}
+	if res.Base != 11 {
+		t.Fatalf("res.Base = %d, want 11", res.Base)
+	}
+	if res.Count != 0 {
+		t.Fatalf("res.Count = %d, want 0", res.Count)
+	}
+	// Resume with same epoch also must not report false loss.
+	r, err := l.Resume(0, l.Epoch(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.LostOnResume != 0 {
+		t.Fatalf("r.LostOnResume = %d, want 0", r.LostOnResume)
+	}
+}
+
