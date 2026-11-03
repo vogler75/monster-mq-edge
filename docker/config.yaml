@@ -46,6 +46,7 @@ GraphQL:
 
 Features:
   DeviceImportExport: true
+  VirtualTopicTrees: false
   MqttClient: true
   WinCCUa: true
   WinCCOa: true
