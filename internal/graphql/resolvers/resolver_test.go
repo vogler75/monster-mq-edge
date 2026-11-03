@@ -248,4 +248,17 @@ func TestAnonymousAndAdminAuth(t *testing.T) {
 	}
 }
 
-
+func TestDeviceToGenericGraphQLVirtualTopicTreeStripping(t *testing.T) {
+	d := stores.DeviceConfig{
+		Name:      "test-tree",
+		Namespace: "enterprise",
+		NodeID:    "*",
+		Type:      "VirtualTopicTree",
+		Config:    `{"schemaVersion":1,"id":"test-tree","name":"Test","rootPath":"enterprise","revision":"secret-rev-123","nodes":[]}`,
+	}
+	dev := deviceToGenericGraphQL(d)
+	cfg := dev.Config
+	if rev, exists := cfg["revision"]; exists && rev != "" {
+		t.Errorf("expected revision to be stripped from exported virtual topic tree, got %v", rev)
+	}
+}

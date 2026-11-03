@@ -482,11 +482,17 @@ func parseTimeArg(s *string) (*time.Time, error) {
 }
 
 func deviceToGenericGraphQL(d stores.DeviceConfig) *generated.Device {
+	cfg := parseDeviceConfigObject(d.Config)
+	if d.Type == virtualtrees.DeviceType {
+		if t, err := virtualtrees.ParseJSON([]byte(d.Config)); err == nil {
+			cfg = parseDeviceConfigObject(string(t.Document()))
+		}
+	}
 	return &generated.Device{
 		Name:      d.Name,
 		Namespace: d.Namespace,
 		NodeID:    d.NodeID,
-		Config:    parseDeviceConfigObject(d.Config),
+		Config:    cfg,
 		Enabled:   d.Enabled,
 		Type:      deviceTypeToExternal(d.Type),
 		CreatedAt: timeStringPtr(d.CreatedAt),
@@ -616,6 +622,18 @@ func (r *mutationResolver) Publish(ctx context.Context, input generated.PublishI
 	if err := r.requireTopic(ctx, input.Topic, true); err != nil {
 		return nil, err
 	}
+	if vr := r.vtReads(); vr != nil && vr.InVirtualNamespace(input.Topic) {
+		canonical, reject := vr.Publish(input.Topic)
+		if reject != "" {
+			errMsg := "Publish to virtual topic rejected: " + reject
+			return &generated.PublishResult{Success: false, Topic: input.Topic, Timestamp: now, Error: ptr(errMsg)}, nil
+		}
+		if canonical != input.Topic {
+			if err := r.requireTopic(ctx, canonical, true); err != nil {
+				return nil, err
+			}
+		}
+	}
 	if strings.ContainsRune(input.Topic, '+') || strings.ContainsRune(input.Topic, '#') {
 		errMsg := "Topic must not contain wildcard characters '+' or '#'"
 		return &generated.PublishResult{Success: false, Topic: input.Topic, Timestamp: now, Error: ptr(errMsg)}, nil
@@ -705,7 +723,7 @@ func (r *mutationResolver) ImportDevices(ctx context.Context, configs []*generat
 			vtEntries = append(vtEntries, virtualtrees.ImportEntry{Name: in.Name, Config: in.Config})
 			continue
 		}
-		if r.vtManager().Tree(strings.TrimSpace(in.Name)) != nil {
+		if m := r.vtManager(); m != nil && m.Tree(strings.TrimSpace(in.Name)) != nil {
 			res.Failed++
 			res.Errors = append(res.Errors, fmt.Sprintf("config[%d] %q: name is used by a virtual topic tree", i, in.Name))
 			continue
