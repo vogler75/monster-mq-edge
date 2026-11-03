@@ -50,6 +50,7 @@ import (
 	"monstermq.io/edge/internal/topic"
 	"monstermq.io/edge/internal/unsmodeler"
 	"monstermq.io/edge/internal/version"
+	"monstermq.io/edge/internal/virtualtrees"
 	"monstermq.io/edge/internal/winccoabrowse"
 	"monstermq.io/edge/internal/winccoanative"
 )
@@ -521,6 +522,26 @@ func build(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus, opts Optio
 		return nil, fmt.Errorf("add storage hook: %w", err)
 	}
 
+	var vtMgr *virtualtrees.Manager
+	if cfg.Features.VirtualTopicTrees && storage.DeviceConfig != nil {
+		vtMgr = virtualtrees.NewManager(storage.DeviceConfig, logger)
+		vtMgr.SetRetainedFinder(func(ctx context.Context, filter string, fn func(string) bool) error {
+			if retainedInMemory || storage.Retained == nil {
+				for _, pk := range server.Topics.Messages(filter) {
+					if !fn(pk.TopicName) {
+						break
+					}
+				}
+				return nil
+			}
+			return storage.Retained.FindMatchingMessages(ctx, filter, func(m stores.BrokerMessage) bool { return fn(m.TopicName) })
+		})
+		if err := vtMgr.Load(ctx); err != nil {
+			logger.Warn("virtual topic trees: load failed", "err", err)
+		}
+		server.SetVirtualTrees(vtMgr.Resolver)
+	}
+
 	if cfg.QueuedMessagesEnabled {
 		logger.Info("queued messages: enabled", "store", cfg.QueueStore(), "max", cfg.GetMaxQueueMessages())
 		if err := server.AddHook(NewQueueHook(storage, subs, server, logger, cfg.GetMaxQueueMessages(), queueOpts...), nil); err != nil {
@@ -781,6 +802,7 @@ func build(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus, opts Optio
 		resolver.PeerLinkMgr = pl
 		resolver.KafkaClients = kafkaClients
 		resolver.ProtocolSessions = protoSessions
+	resolver.VirtualTrees = vtMgr
 		if nativeOn {
 			resolver.Browse = browse
 			resolver.UnsMgr = unsMgr

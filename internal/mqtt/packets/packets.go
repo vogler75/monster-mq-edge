@@ -139,6 +139,7 @@ type Packet struct {
 	ReservedBit     byte          // reserved, do not use (except in testing)
 	Ignore          bool          // if true, do not perform any message forwarding operations
 	Will            bool          // the publish is a client's will message; never encoded, not copied by Copy
+	Canonical       string        // set on a virtual presentation copy: the canonical topic; never encoded, not copied by Copy
 }
 
 // Forward describes a publish injected by the peer link. OnPublish,

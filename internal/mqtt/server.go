@@ -19,6 +19,7 @@ import (
 	"monstermq.io/edge/internal/mqtt/listeners"
 	"monstermq.io/edge/internal/mqtt/packets"
 	"monstermq.io/edge/internal/mqtt/system"
+	"monstermq.io/edge/internal/virtualtrees"
 
 	"log/slog"
 )
@@ -168,6 +169,7 @@ type Server struct {
 	retainLocks  [64]sync.Mutex       // per-topic stripes for Options.SerializeRetained
 	sysMu        sync.Mutex           // guards sysExtra
 	sysExtra     []func() map[string]string
+	virtual      func() *virtualtrees.Resolver
 }
 
 // loop contains interval tickers for the system events loop.
@@ -1093,6 +1095,23 @@ func (s *Server) processPublish(cl *Client, pk packets.Packet) error {
 		return cl.WritePacket(ack)
 	}
 
+	if code := s.resolveVirtualPublish(cl, &pk); code != packets.CodeSuccess {
+		if cl.Net.Inline {
+			return code
+		}
+		if pk.FixedHeader.Qos == 0 {
+			return nil
+		}
+		if cl.Properties.ProtocolVersion != 5 {
+			return s.DisconnectClient(cl, code)
+		}
+		ackType := packets.Puback
+		if pk.FixedHeader.Qos == 2 {
+			ackType = packets.Pubrec
+		}
+		return cl.WritePacket(s.buildAck(pk.PacketID, ackType, 0, pk.Properties, code))
+	}
+
 	s.stampPublish(cl, &pk)
 
 	if !cl.Net.Inline && pk.FixedHeader.Qos > 0 {
@@ -1234,6 +1253,9 @@ func (s *Server) RetainOnly(cl *Client, pk packets.Packet) error {
 			return packets.ErrNotAuthorized
 		}
 	}
+	if code := s.resolveVirtualPublish(cl, &pk); code != packets.CodeSuccess {
+		return code
+	}
 
 	pk.ProtocolVersion = cl.Properties.ProtocolVersion
 	pk.FixedHeader.Retain = true
@@ -1311,8 +1333,9 @@ func matchClientWildcards(subs []packets.Subscription, topic string) (packets.Su
 	return matched, found
 }
 
-// publishToSubscribers publishes a publish packet to all subscribers with matching topic filters.
-func (s *Server) publishToSubscribers(pk packets.Packet) {
+// deliverToSubscribers publishes a publish packet to all subscribers with
+// matching topic filters; inline subscriptions only see canonical topics.
+func (s *Server) deliverToSubscribers(pk packets.Packet, inline bool) {
 	if pk.Ignore || len(pk.TopicName) == 0 {
 		return
 	}
@@ -1331,13 +1354,13 @@ func (s *Server) publishToSubscribers(pk packets.Packet) {
 	wSnap := s.Topics.wildcardSnap.Load()
 	if wSnap == nil || len(wSnap.shared) == 0 {
 		entry := s.Topics.getExact(pk.TopicName)
-		if entry != nil {
+		if entry != nil && inline {
 			for i := range entry.inline {
 				inl := &entry.inline[i]
 				inl.Handler(s.inlineClient, inl.Subscription, pk)
 			}
 		}
-		if wSnap != nil {
+		if wSnap != nil && inline {
 			for i := range wSnap.inline {
 				inl := &wSnap.inline[i]
 				if matchMQTTTopic(inl.Filter, pk.TopicName) {
@@ -1424,8 +1447,10 @@ func (s *Server) publishToSubscribers(pk packets.Packet) {
 		subscribers.MergeSharedSelected()
 	}
 
-	for _, inlineSubscription := range subscribers.InlineSubscriptions {
-		inlineSubscription.Handler(s.inlineClient, inlineSubscription.Subscription, pk)
+	if inline {
+		for _, inlineSubscription := range subscribers.InlineSubscriptions {
+			inlineSubscription.Handler(s.inlineClient, inlineSubscription.Subscription, pk)
+		}
 	}
 
 	for id, subs := range subscribers.Subscriptions {
@@ -1472,6 +1497,9 @@ func (s *Server) publishToClientPtr(cl *Client, sub packets.Subscription, pk *pa
 	}
 
 	if !s.hooks.OnACLCheck(cl, pk.TopicName, false) {
+		return packets.Packet{}, packets.ErrNotAuthorized
+	}
+	if pk.Canonical != "" && !s.hooks.OnACLCheck(cl, pk.Canonical, false) {
 		return packets.Packet{}, packets.ErrNotAuthorized
 	}
 
@@ -1633,16 +1661,10 @@ func (s *Server) publishRetainedToClient(cl *Client, sub packets.Subscription, e
 	}
 
 	sub.FwdRetainedFlag = true
-	var pks []packets.Packet
-	var err error
-	if s.hooks.Provides(OnSelectRetainedMessages) {
-		pks, err = s.hooks.OnSelectRetainedMessages(sub.Filter)
-		if err != nil {
-			s.Log.Error("failed to get retained messages from hook", "error", err, "filter", sub.Filter)
-			return
-		}
-	} else {
-		pks = s.Topics.Messages(sub.Filter)
+	pks, err := s.selectPresentedRetained(sub.Filter)
+	if err != nil {
+		s.Log.Error("failed to get retained messages", "error", err, "filter", sub.Filter)
+		return
 	}
 
 	now := time.Now().Unix()
@@ -2169,6 +2191,10 @@ func (s *Server) sendLWT(cl *Client) {
 	}
 	if modifiedLWT.MessageExpiry > 0 {
 		pk.Expiry = pk.Created + int64(modifiedLWT.MessageExpiry)
+	}
+	if code := s.resolveVirtualPublish(cl, &pk); code != packets.CodeSuccess {
+		atomic.StoreUint32(&cl.Properties.Will.Flag, 0)
+		return
 	}
 
 	if cl.Properties.Will.WillDelayInterval > 0 {

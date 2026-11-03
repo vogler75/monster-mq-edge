@@ -160,10 +160,28 @@ func (h *QueueHook) OnPublished(_ *mqtt.Client, pk packets.Packet) {
 	}
 
 	ctx := context.Background()
-	subs, err := h.collectOfflineSubscribers(ctx, pk.TopicName)
+	names := []string{pk.TopicName}
+	canonical := pk.TopicName
+	if h.server != nil {
+		if vr := h.server.VirtualTrees(); vr != nil {
+			names = vr.Presentations(canonical)
+		}
+	}
+	for _, name := range names {
+		h.enqueueOffline(ctx, pk, name, canonical)
+	}
+}
+
+// enqueueOffline queues the message under one presentation name for the
+// offline persistent sessions subscribed to it.
+func (h *QueueHook) enqueueOffline(ctx context.Context, pk packets.Packet, name, canonical string) {
+	subs, err := h.collectOfflineSubscribers(ctx, name)
 	if err != nil {
-		h.logger.Warn("queue hook: collect offline subs failed", "topic", pk.TopicName, "err", err)
+		h.logger.Warn("queue hook: collect offline subs failed", "topic", name, "err", err)
 		return
+	}
+	if name != canonical && len(subs) > 0 {
+		subs = slices.DeleteFunc(subs, func(id string) bool { return !h.allowedRead(id, canonical) })
 	}
 	if pk.Forward != nil {
 		// The publisher of a replica was connected to the peer; its own offline
@@ -180,7 +198,7 @@ func (h *QueueHook) OnPublished(_ *mqtt.Client, pk packets.Packet) {
 	msg := stores.BrokerMessage{
 		MessageUUID: uuid.NewString(),
 		MessageID:   pk.PacketID,
-		TopicName:   strings.Clone(pk.TopicName), // may point into a connection read buffer
+		TopicName:   strings.Clone(name), // may point into a connection read buffer
 		Payload:     append([]byte(nil), pk.Payload...),
 		QoS:         pk.FixedHeader.Qos,
 		IsRetain:    pk.FixedHeader.Retain,
@@ -199,11 +217,11 @@ func (h *QueueHook) OnPublished(_ *mqtt.Client, pk packets.Packet) {
 	}
 	result, err := h.store.Queue.EnqueueMultiLimited(ctx, msg, subs, int64(h.maxQueueMessages))
 	if err != nil {
-		h.logger.Warn("queue hook: enqueue failed", "topic", pk.TopicName, "n", len(subs), "err", err)
+		h.logger.Warn("queue hook: enqueue failed", "topic", name, "n", len(subs), "err", err)
 		return
 	}
 	if len(result.Rejected) > 0 {
-		h.logger.Warn("queue hook: client queues full, message dropped", "topic", pk.TopicName, "clients", len(result.Rejected), "limit", h.maxQueueMessages)
+		h.logger.Warn("queue hook: client queues full, message dropped", "topic", name, "clients", len(result.Rejected), "limit", h.maxQueueMessages)
 	}
 }
 
@@ -237,29 +255,35 @@ func (h *QueueHook) collectOfflineSubscribers(ctx context.Context, topicName str
 		}
 
 		// Defense-in-depth: check if offline client is authorized to subscribe/read topicName
-		if h.server != nil {
-			var clientForCheck *mqtt.Client
-			if cl, ok := h.server.Clients.Get(cid); ok {
-				clientForCheck = cl
-			} else {
-				h.mu.RLock()
-				uname := h.clientUsernames[cid]
-				h.mu.RUnlock()
-				clientForCheck = &mqtt.Client{
-					ID: cid,
-					Properties: mqtt.ClientProperties{
-						Username: []byte(uname),
-					},
-				}
-			}
-			if !h.server.Hooks().OnACLCheck(clientForCheck, topicName, false) {
-				continue
-			}
+		if !h.allowedRead(cid, topicName) {
+			continue
 		}
 
 		live = append(live, cid)
 	}
 	return live, nil
+}
+
+// allowedRead checks the read ACL of a (possibly offline) client.
+func (h *QueueHook) allowedRead(cid, topicName string) bool {
+	if h.server == nil {
+		return true
+	}
+	var clientForCheck *mqtt.Client
+	if cl, ok := h.server.Clients.Get(cid); ok {
+		clientForCheck = cl
+	} else {
+		h.mu.RLock()
+		uname := h.clientUsernames[cid]
+		h.mu.RUnlock()
+		clientForCheck = &mqtt.Client{
+			ID: cid,
+			Properties: mqtt.ClientProperties{
+				Username: []byte(uname),
+			},
+		}
+	}
+	return h.server.Hooks().OnACLCheck(clientForCheck, topicName, false)
 }
 
 // OnSessionEstablished dequeues any stored messages for the (re)connecting

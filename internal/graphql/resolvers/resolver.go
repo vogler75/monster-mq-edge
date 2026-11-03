@@ -689,10 +689,25 @@ func (r *mutationResolver) ImportDevices(ctx context.Context, configs []*generat
 		return res, nil
 	}
 
+	var vtEntries []virtualtrees.ImportEntry
 	for i, in := range configs {
 		if in == nil {
 			res.Failed++
 			res.Errors = append(res.Errors, fmt.Sprintf("config[%d]: missing device config", i))
+			continue
+		}
+		if in.Type != nil && strings.TrimSpace(*in.Type) == virtualtrees.DeviceType {
+			if r.vtManager() == nil {
+				res.Failed++
+				res.Errors = append(res.Errors, fmt.Sprintf("config[%d] %q: %s", i, in.Name, vtFeatureDisabled))
+				continue
+			}
+			vtEntries = append(vtEntries, virtualtrees.ImportEntry{Name: in.Name, Config: in.Config})
+			continue
+		}
+		if r.vtManager().Tree(strings.TrimSpace(in.Name)) != nil {
+			res.Failed++
+			res.Errors = append(res.Errors, fmt.Sprintf("config[%d] %q: name is used by a virtual topic tree", i, in.Name))
 			continue
 		}
 		device, err := deviceInputToStore(*in)
@@ -708,8 +723,15 @@ func (r *mutationResolver) ImportDevices(ctx context.Context, configs []*generat
 		}
 		res.Imported++
 	}
+	deviceImports := res.Imported
+	if len(vtEntries) > 0 {
+		vr := r.vtManager().Import(ctx, vtEntries)
+		res.Imported += vr.Imported
+		res.Failed += vr.Failed
+		res.Errors = append(res.Errors, vr.Errors...)
+	}
 	res.Success = res.Imported > 0
-	if res.Imported > 0 {
+	if deviceImports > 0 {
 		r.reloadDeviceManagers(ctx, "device import")
 	}
 	return res, nil
@@ -943,10 +965,15 @@ func (r *queryResolver) RetainedMessage(ctx context.Context, topic string, forma
 	if err := r.requireTopic(ctx, topic, false); err != nil {
 		return nil, err
 	}
-	msg, err := r.Storage.Retained.Get(ctx, topic)
+	canonical, ok := r.vtResolveRead(ctx, topic)
+	if !ok {
+		return nil, nil
+	}
+	msg, err := r.Storage.Retained.Get(ctx, canonical)
 	if err != nil || msg == nil {
 		return nil, err
 	}
+	msg.TopicName = topic
 	return brokerMsgToRetained(*msg, format), nil
 }
 
@@ -960,7 +987,7 @@ func (r *queryResolver) RetainedMessages(ctx context.Context, topicFilter *strin
 	}
 	max := intPtr(limit, 100)
 	out := []*generated.RetainedMessage{}
-	err := r.Storage.Retained.FindMatchingMessages(ctx, filter, func(m stores.BrokerMessage) bool {
+	err := r.vtFindMessages(ctx, filter, r.Storage.Retained, func(m stores.BrokerMessage) bool {
 		if !r.allowTopic(ctx, m.TopicName, false) {
 			return true
 		}
@@ -1014,14 +1041,19 @@ func (r *queryResolver) CurrentValue(ctx context.Context, topic string, format *
 	if err := r.requireTopic(ctx, topic, false); err != nil {
 		return nil, err
 	}
-	store := r.lastValueStoreFor(archiveGroup, topic)
+	canonical, ok := r.vtResolveRead(ctx, topic)
+	if !ok {
+		return nil, nil
+	}
+	store := r.lastValueStoreFor(archiveGroup, canonical)
 	if store == nil {
 		return nil, nil
 	}
-	msg, err := store.Get(ctx, topic)
+	msg, err := store.Get(ctx, canonical)
 	if err != nil || msg == nil {
 		return nil, err
 	}
+	msg.TopicName = topic
 	return brokerMsgToTopicValue(*msg, format), nil
 }
 
@@ -1035,7 +1067,7 @@ func (r *queryResolver) CurrentValues(ctx context.Context, topicFilter string, f
 	}
 	max := intPtr(limit, 100)
 	out := []*generated.TopicValue{}
-	err := store.FindMatchingMessages(ctx, topicFilter, func(m stores.BrokerMessage) bool {
+	err := r.vtFindMessages(ctx, topicFilter, store, func(m stores.BrokerMessage) bool {
 		if !r.allowTopic(ctx, m.TopicName, false) {
 			return true
 		}
@@ -1114,9 +1146,26 @@ func (r *queryResolver) ArchivedMessages(ctx context.Context, topicFilter string
 	}
 	from, _ := parseTimeArg(startTime)
 	to, _ := parseTimeArg(endTime)
-	rows, err := arc.GetHistory(ctx, topicFilter, from, to, intPtr(limit, 100))
+	max := intPtr(limit, 100)
+	var rows []stores.ArchivedMessage
+	err := vtFind(r.Resolver, ctx, topicFilter, func(f string, fn func(stores.ArchivedMessage) bool) error {
+		part, err := arc.GetHistory(ctx, f, from, to, max)
+		for _, row := range part {
+			if !fn(row) {
+				break
+			}
+		}
+		return err
+	}, func(m stores.ArchivedMessage) string { return m.Topic }, func(name string, m stores.ArchivedMessage) bool {
+		m.Topic = name
+		rows = append(rows, m)
+		return true
+	})
 	if err != nil {
 		return nil, err
+	}
+	if len(rows) > max {
+		rows = rows[:max]
 	}
 	out := make([]*generated.ArchivedMessage, 0, len(rows))
 	for _, row := range rows {
@@ -1307,6 +1356,41 @@ func (r *queryResolver) BrowseTopics(ctx context.Context, topic string, archiveG
 	if topic == "" {
 		topic = "+"
 	}
+	if r.vtReads() == nil {
+		return r.browsePhysical(ctx, topic, archiveGroup)
+	}
+	store := r.lastValueStoreFor(archiveGroup, topic)
+	if !strings.ContainsAny(topic, "+#") {
+		if err := r.requireTopic(ctx, topic, false); err != nil {
+			return nil, err
+		}
+		vr := r.vtReads()
+		if !vr.InVirtualNamespace(topic) {
+			return r.browsePhysical(ctx, topic, archiveGroup)
+		}
+		if c, ok := r.vtResolveRead(ctx, topic); ok && store != nil {
+			if msg, err := store.Get(ctx, c); err == nil && msg != nil {
+				return []*generated.Topic{{Name: topic, IsLeaf: true}}, nil
+			}
+		}
+		for _, p := range vr.StructuralPaths() {
+			if p == topic {
+				return []*generated.Topic{{Name: topic, IsLeaf: false}}, nil
+			}
+		}
+		return []*generated.Topic{}, nil
+	}
+	out := []*generated.Topic{}
+	if store != nil {
+		var err error
+		if out, err = r.browsePhysical(ctx, topic, archiveGroup); err != nil {
+			return nil, err
+		}
+	}
+	return r.vtBrowse(ctx, topic, store, out)
+}
+
+func (r *queryResolver) browsePhysical(ctx context.Context, topic string, archiveGroup *string) ([]*generated.Topic, error) {
 	store := r.lastValueStoreFor(archiveGroup, topic)
 	if store == nil {
 		return []*generated.Topic{}, nil
@@ -1717,7 +1801,8 @@ func (r *subscriptionResolver) TopicUpdates(ctx context.Context, topicFilters []
 	if err := r.Bus.Validate(topicFilters); err != nil {
 		return nil, err
 	}
-	id, msgCh := r.Bus.Subscribe(topicFilters, 64)
+	busFilters, project := r.vtStreamFilters(topicFilters)
+	id, msgCh := r.Bus.Subscribe(busFilters, 64)
 	out := make(chan *generated.TopicUpdate, 64)
 	go func() {
 		defer r.Bus.Unsubscribe(id)
@@ -1730,13 +1815,18 @@ func (r *subscriptionResolver) TopicUpdates(ctx context.Context, topicFilters []
 				if !ok {
 					return
 				}
-				if !r.allowTopic(ctx, m.TopicName, false) {
+				msgs := []stores.BrokerMessage{m}
+				if project {
+					msgs = r.vtPresent(ctx, topicFilters, m)
+				} else if !r.allowTopic(ctx, m.TopicName, false) {
 					continue
 				}
-				select {
-				case out <- brokerMsgToTopicUpdate(m, format):
-				case <-ctx.Done():
-					return
+				for _, pm := range msgs {
+					select {
+					case out <- brokerMsgToTopicUpdate(pm, format):
+					case <-ctx.Done():
+						return
+					}
 				}
 			}
 		}
@@ -1761,7 +1851,8 @@ func (r *subscriptionResolver) TopicUpdatesBulk(ctx context.Context, topicFilter
 	if err := r.Bus.Validate(topicFilters); err != nil {
 		return nil, err
 	}
-	id, msgCh := r.Bus.Subscribe(topicFilters, 256)
+	busFilters, project := r.vtStreamFilters(topicFilters)
+	id, msgCh := r.Bus.Subscribe(busFilters, 256)
 	out := make(chan *generated.TopicUpdateBulk, 16)
 	go func() {
 		defer r.Bus.Unsubscribe(id)
@@ -1794,10 +1885,15 @@ func (r *subscriptionResolver) TopicUpdatesBulk(ctx context.Context, topicFilter
 					flush()
 					return
 				}
-				if !r.allowTopic(ctx, m.TopicName, false) {
+				msgs := []stores.BrokerMessage{m}
+				if project {
+					msgs = r.vtPresent(ctx, topicFilters, m)
+				} else if !r.allowTopic(ctx, m.TopicName, false) {
 					continue
 				}
-				batch = append(batch, brokerMsgToTopicUpdate(m, format))
+				for _, pm := range msgs {
+					batch = append(batch, brokerMsgToTopicUpdate(pm, format))
+				}
 				if len(batch) >= max {
 					flush()
 					if !t.Stop() {
