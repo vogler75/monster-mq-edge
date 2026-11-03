@@ -153,18 +153,19 @@ func (t *Tree[V]) FindData(topic string) []Entry[V] {
 				}
 				if len(rest) == 0 {
 					appendDataset(&out, child)
+					// A trailing '#' also matches its parent level: "a/+/#" matches "a/b".
+					if h := child.children["#"]; h != nil {
+						appendDataset(&out, h)
+					}
 				} else {
 					walk(child, rest[0], rest[1:], level+1, childDollar)
 				}
 			case current:
 				if len(rest) == 0 {
 					appendDataset(&out, child)
-					// Look for trailing '#' patterns: e.g. "a/#" matches "a".
-					// (Mirror of the Kotlin TopicTree.findDataOfTopicName branch
-					// that recurses with current="" and empty rest. Note: that
-					// recursion also lets "a/+" match "a" via the '+' arm — a
-					// known deviation from MQTT spec carried over for parity.)
-					walk(child, "", nil, level+1, childDollar)
+					if h := child.children["#"]; h != nil {
+						appendDataset(&out, h)
+					}
 				} else {
 					walk(child, rest[0], rest[1:], level+1, childDollar)
 				}
@@ -184,9 +185,7 @@ func appendDataset[V any](out *[]Entry[V], n *node[V]) {
 // IsMatching is FindData reduced to a bool — returns true as soon as any
 // stored pattern matches the topic and has at least one dataset entry.
 //
-// Note: unlike FindData, IsMatching does NOT recurse for trailing '#' after
-// the topic is fully consumed. This matches the Kotlin isTopicNameMatching
-// behavior (so "a/#" matches "a" via FindData but not via IsMatching).
+// A trailing '#' matches its parent level as in FindData.
 func (t *Tree[V]) IsMatching(topic string) bool {
 	levels := splitTopic(topic)
 	if len(levels) == 0 {
@@ -219,12 +218,18 @@ func (t *Tree[V]) IsMatching(topic string) bool {
 					if len(child.dataset) > 0 {
 						return true
 					}
+					if h := child.children["#"]; h != nil && len(h.dataset) > 0 {
+						return true
+					}
 				} else if walk(child, rest[0], rest[1:], level+1, childDollar) {
 					return true
 				}
 			case current:
 				if len(rest) == 0 {
 					if len(child.dataset) > 0 {
+						return true
+					}
+					if h := child.children["#"]; h != nil && len(h.dataset) > 0 {
 						return true
 					}
 				} else if walk(child, rest[0], rest[1:], level+1, childDollar) {

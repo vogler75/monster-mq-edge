@@ -88,6 +88,7 @@ Features:
   WinCCUa: false
   WinCCOa: false
   DeviceImportExport: true
+  VirtualTopicTrees: false
   Mcp: false
   Hmi: true
   Redfish: false

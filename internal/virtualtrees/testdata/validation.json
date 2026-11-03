@@ -1,0 +1,122 @@
+[
+  {
+    "name": "duplicate-sibling",
+    "valid": false,
+    "errors": ["DUPLICATE_PATH"],
+    "trees": [
+      { "schemaVersion": 1, "id": "t", "name": "t", "rootPath": "r", "enabled": true, "nodes": [
+        { "id": "a", "parentId": null, "segment": "x" },
+        { "id": "b", "parentId": null, "segment": "x" }
+      ] }
+    ]
+  },
+  {
+    "name": "invalid-parent",
+    "valid": false,
+    "errors": ["INVALID_PARENT"],
+    "trees": [
+      { "schemaVersion": 1, "id": "t", "name": "t", "rootPath": "r", "enabled": true, "nodes": [
+        { "id": "a", "parentId": "missing", "segment": "x" }
+      ] }
+    ]
+  },
+  {
+    "name": "cycle",
+    "valid": false,
+    "errors": ["CYCLE"],
+    "trees": [
+      { "schemaVersion": 1, "id": "t", "name": "t", "rootPath": "r", "enabled": true, "nodes": [
+        { "id": "a", "parentId": "b", "segment": "x" },
+        { "id": "b", "parentId": "a", "segment": "y" }
+      ] }
+    ]
+  },
+  {
+    "name": "invalid-segments",
+    "valid": false,
+    "errors": ["INVALID_SEGMENT"],
+    "trees": [
+      { "schemaVersion": 1, "id": "t", "name": "t", "rootPath": "r", "enabled": true, "nodes": [
+        { "id": "a", "parentId": null, "segment": "a/b" },
+        { "id": "b", "parentId": null, "segment": "+" },
+        { "id": "c", "parentId": null, "segment": "#" },
+        { "id": "d", "parentId": null, "segment": "" }
+      ] }
+    ]
+  },
+  {
+    "name": "wildcard-source-template",
+    "valid": false,
+    "errors": ["UNSUPPORTED_WILDCARD"],
+    "trees": [
+      { "schemaVersion": 1, "id": "t", "name": "t", "rootPath": "r", "enabled": true, "nodes": [
+        { "id": "a", "parentId": null, "segment": "a", "binding": { "kind": "SUBTREE", "target": "devices/+/values", "access": "READ_ONLY" } },
+        { "id": "b", "parentId": null, "segment": "b", "binding": { "kind": "EXACT", "target": "plc1/#", "access": "READ_ONLY" } }
+      ] }
+    ]
+  },
+  {
+    "name": "target-in-virtual-root",
+    "valid": false,
+    "errors": ["TARGET_IN_VIRTUAL_ROOT"],
+    "trees": [
+      { "schemaVersion": 1, "id": "ta", "name": "a", "rootPath": "va", "enabled": true, "nodes": [
+        { "id": "a", "parentId": null, "segment": "a", "binding": { "kind": "SUBTREE", "target": "vb/x", "access": "READ_ONLY" } }
+      ] },
+      { "schemaVersion": 1, "id": "tb", "name": "b", "rootPath": "vb", "enabled": false, "nodes": [] }
+    ]
+  },
+  {
+    "name": "target-in-own-root",
+    "valid": false,
+    "errors": ["TARGET_IN_VIRTUAL_ROOT"],
+    "trees": [
+      { "schemaVersion": 1, "id": "t", "name": "t", "rootPath": "r", "enabled": true, "nodes": [
+        { "id": "a", "parentId": null, "segment": "a", "binding": { "kind": "EXACT", "target": "r/b", "access": "READ_ONLY" } }
+      ] }
+    ]
+  },
+  {
+    "name": "overlapping-roots",
+    "valid": false,
+    "errors": ["ROOT_CONFLICT"],
+    "trees": [
+      { "schemaVersion": 1, "id": "ta", "name": "a", "rootPath": "ent", "enabled": true, "nodes": [] },
+      { "schemaVersion": 1, "id": "tb", "name": "b", "rootPath": "ent/sub", "enabled": false, "nodes": [] }
+    ]
+  },
+  {
+    "name": "reserved-root",
+    "valid": false,
+    "errors": ["RESERVED_TOPIC"],
+    "trees": [
+      { "schemaVersion": 1, "id": "t", "name": "t", "rootPath": "$SYS", "enabled": true, "nodes": [] }
+    ]
+  },
+  {
+    "name": "wildcard-root",
+    "valid": false,
+    "errors": ["INVALID_TOPIC"],
+    "trees": [
+      { "schemaVersion": 1, "id": "t", "name": "t", "rootPath": "ent/#", "enabled": true, "nodes": [] }
+    ]
+  },
+  {
+    "name": "unknown-schema-version",
+    "valid": false,
+    "errors": ["UNSUPPORTED_SCHEMA_VERSION"],
+    "trees": [
+      { "schemaVersion": 2, "id": "t", "name": "t", "rootPath": "r", "enabled": true, "nodes": [] }
+    ]
+  },
+  {
+    "name": "invalid-access",
+    "valid": false,
+    "errors": ["INVALID_BINDING"],
+    "trees": [
+      { "schemaVersion": 1, "id": "t", "name": "t", "rootPath": "r", "enabled": true, "nodes": [
+        { "id": "a", "parentId": null, "segment": "a", "binding": { "kind": "SUBTREE", "target": "plc1", "access": "WRITE_ONLY" } }
+      ] }
+    ]
+  }
+]

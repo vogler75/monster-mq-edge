@@ -116,6 +116,7 @@ RedisServer:
 
 Features:
   DeviceImportExport: true
+  VirtualTopicTrees: false
   MqttClient: true
   WinCCUa: false
   WinCCOa: false

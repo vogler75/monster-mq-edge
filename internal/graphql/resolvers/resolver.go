@@ -36,6 +36,7 @@ import (
 	"monstermq.io/edge/internal/stores"
 	"monstermq.io/edge/internal/unsmodeler"
 	"monstermq.io/edge/internal/version"
+	"monstermq.io/edge/internal/virtualtrees"
 	"monstermq.io/edge/internal/winccoabrowse"
 	"monstermq.io/edge/internal/winccoanative"
 )
@@ -77,6 +78,8 @@ type Resolver struct {
 	ProtocolSessions interface {
 		Close(clientID string) bool
 	}
+	// VirtualTrees is nil while Features.VirtualTopicTrees is off.
+	VirtualTrees *virtualtrees.Manager
 
 	// Publish injects a message into the local broker (used by the publish mutation).
 	Publish func(topic string, payload []byte, retain bool, qos byte) error
@@ -131,6 +134,9 @@ func (r *Resolver) enabledFeatures() []string {
 	}
 	if r.Cfg.Features.DeviceImportExport {
 		out = append(out, "DeviceImportExport")
+	}
+	if r.Cfg.Features.VirtualTopicTrees {
+		out = append(out, "VirtualTopicTrees")
 	}
 	if r.Cfg.Features.Mcp || r.Cfg.MCP.Enabled {
 		out = append(out, "Mcp")

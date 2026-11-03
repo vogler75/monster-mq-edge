@@ -1,0 +1,207 @@
+[
+  {
+    "name": "issue-example-mount",
+    "description": "Issue #217 section 2: plc1/# mounted read-only at enterprise/plant/area",
+    "trees": [
+      {
+        "schemaVersion": 1, "id": "enterprise-tree", "name": "Enterprise", "rootPath": "enterprise", "enabled": true,
+        "nodes": [
+          { "id": "plant", "parentId": null, "segment": "plant" },
+          { "id": "area", "parentId": "plant", "segment": "area", "binding": { "kind": "SUBTREE", "target": "plc1", "access": "READ_ONLY" } }
+        ]
+      }
+    ],
+    "publish": [
+      { "topic": "enterprise/plant/area/values/v1", "reject": "READ_ONLY" },
+      { "topic": "plc1/values/v1", "canonical": "plc1/values/v1" },
+      { "topic": "enterprise/plant", "reject": "UNBOUND" },
+      { "topic": "enterprise", "reject": "UNBOUND" },
+      { "topic": "enterprise/plant/area2/x", "reject": "UNBOUND" }
+    ],
+    "project": [
+      { "canonical": "plc1/values/v1", "virtual": ["enterprise/plant/area/values/v1"] },
+      { "canonical": "plc1", "virtual": ["enterprise/plant/area"] },
+      { "canonical": "plc1//x", "virtual": ["enterprise/plant/area//x"] },
+      { "canonical": "plc1/", "virtual": ["enterprise/plant/area/"] },
+      { "canonical": "plc10/values/v1", "virtual": [] },
+      { "canonical": "other/plc1", "virtual": [] }
+    ],
+    "deliver": [
+      { "filter": "enterprise/plant/area/values/v1", "canonical": "plc1/values/v1", "presented": ["enterprise/plant/area/values/v1"] },
+      { "filter": "enterprise/plant/area/#", "canonical": "plc1/values/v1", "presented": ["enterprise/plant/area/values/v1"] },
+      { "filter": "enterprise/plant/area/#", "canonical": "plc1", "presented": ["enterprise/plant/area"] },
+      { "filter": "enterprise/plant/area/values/+", "canonical": "plc1/values/v1", "presented": ["enterprise/plant/area/values/v1"] },
+      { "filter": "enterprise/plant/area/values/+", "canonical": "plc1/values/v1/deep", "presented": [] },
+      { "filter": "enterprise/+/area/#", "canonical": "plc1/values/v1", "presented": ["enterprise/plant/area/values/v1"] },
+      { "filter": "enterprise/#", "canonical": "plc1/a/b/c", "presented": ["enterprise/plant/area/a/b/c"] },
+      { "filter": "enterprise/plant/area2/#", "canonical": "plc1/x", "presented": [] },
+      { "filter": "plc1/#", "canonical": "plc1/values/v1", "presented": ["plc1/values/v1"] },
+      { "filter": "#", "canonical": "plc1/values/v1", "presented": ["enterprise/plant/area/values/v1", "plc1/values/v1"] },
+      { "filter": "+/values/v1", "canonical": "plc1/values/v1", "presented": ["plc1/values/v1"] },
+      { "filter": "+/+/+/+/v1", "canonical": "plc1/values/v1", "presented": ["enterprise/plant/area/values/v1"] }
+    ]
+  },
+  {
+    "name": "writable-mount",
+    "description": "READ_WRITE mount routes virtual publishes to the canonical prefix",
+    "trees": [
+      {
+        "schemaVersion": 1, "id": "ops", "name": "Ops", "rootPath": "ops", "enabled": true,
+        "nodes": [
+          { "id": "line1", "parentId": null, "segment": "line1", "binding": { "kind": "SUBTREE", "target": "plc2", "access": "READ_WRITE" } }
+        ]
+      }
+    ],
+    "publish": [
+      { "topic": "ops/line1/a/b", "canonical": "plc2/a/b" },
+      { "topic": "ops/line1", "canonical": "plc2" },
+      { "topic": "ops/line1//x", "canonical": "plc2//x" },
+      { "topic": "ops/x", "reject": "UNBOUND" },
+      { "topic": "ops", "reject": "UNBOUND" },
+      { "topic": "ops2/line1", "canonical": "ops2/line1" }
+    ],
+    "deliver": [
+      { "filter": "ops/#", "canonical": "plc2/a/b", "presented": ["ops/line1/a/b"] },
+      { "filter": "plc2/#", "canonical": "plc2/a/b", "presented": ["plc2/a/b"] }
+    ]
+  },
+  {
+    "name": "exact-bindings",
+    "description": "Exact bindings use unrelated names and never cover descendants",
+    "trees": [
+      {
+        "schemaVersion": 1, "id": "ent", "name": "Enterprise", "rootPath": "enterprise", "enabled": true,
+        "nodes": [
+          { "id": "plant", "parentId": null, "segment": "plant" },
+          { "id": "area", "parentId": "plant", "segment": "area" },
+          { "id": "power", "parentId": "area", "segment": "power", "binding": { "kind": "EXACT", "target": "plc1/values/v1", "access": "READ_ONLY" } },
+          { "id": "sp", "parentId": "area", "segment": "setpoint", "binding": { "kind": "EXACT", "target": "plc1/sp", "access": "READ_WRITE" } }
+        ]
+      }
+    ],
+    "publish": [
+      { "topic": "enterprise/plant/area/setpoint", "canonical": "plc1/sp" },
+      { "topic": "enterprise/plant/area/power", "reject": "READ_ONLY" },
+      { "topic": "enterprise/plant/area/setpoint/x", "reject": "UNBOUND" },
+      { "topic": "enterprise/plant/area", "reject": "UNBOUND" }
+    ],
+    "project": [
+      { "canonical": "plc1/values/v1", "virtual": ["enterprise/plant/area/power"] },
+      { "canonical": "plc1/values/v1/x", "virtual": [] },
+      { "canonical": "plc1/values", "virtual": [] }
+    ],
+    "deliver": [
+      { "filter": "enterprise/plant/area/+", "canonical": "plc1/values/v1", "presented": ["enterprise/plant/area/power"] },
+      { "filter": "enterprise/plant/area", "canonical": "plc1/values/v1", "presented": [] },
+      { "filter": "enterprise/#", "canonical": "plc1/sp", "presented": ["enterprise/plant/area/setpoint"] }
+    ]
+  },
+  {
+    "name": "precedence",
+    "description": "Exact override, nested mount override, folder below a mount does not shadow",
+    "trees": [
+      {
+        "schemaVersion": 1, "id": "prec", "name": "Precedence", "rootPath": "e", "enabled": true,
+        "nodes": [
+          { "id": "area", "parentId": null, "segment": "area", "binding": { "kind": "SUBTREE", "target": "plc1", "access": "READ_WRITE" } },
+          { "id": "power", "parentId": "area", "segment": "power", "binding": { "kind": "EXACT", "target": "plc9/p", "access": "READ_WRITE" } },
+          { "id": "line", "parentId": "area", "segment": "line", "binding": { "kind": "SUBTREE", "target": "plc2", "access": "READ_ONLY" } },
+          { "id": "values", "parentId": "area", "segment": "values" }
+        ]
+      }
+    ],
+    "publish": [
+      { "topic": "e/area/power", "canonical": "plc9/p" },
+      { "topic": "e/area/power/x", "canonical": "plc1/power/x" },
+      { "topic": "e/area/line/x", "reject": "READ_ONLY" },
+      { "topic": "e/area/values/v1", "canonical": "plc1/values/v1" }
+    ],
+    "project": [
+      { "canonical": "plc1/power", "virtual": [] },
+      { "canonical": "plc1/power/x", "virtual": ["e/area/power/x"] },
+      { "canonical": "plc9/p", "virtual": ["e/area/power"] },
+      { "canonical": "plc1/line", "virtual": [] },
+      { "canonical": "plc1/line/x", "virtual": [] },
+      { "canonical": "plc2/x", "virtual": ["e/area/line/x"] },
+      { "canonical": "plc2", "virtual": ["e/area/line"] },
+      { "canonical": "plc1/values/v1", "virtual": ["e/area/values/v1"] }
+    ],
+    "deliver": [
+      { "filter": "e/area/#", "canonical": "plc1/power", "presented": [] },
+      { "filter": "e/area/#", "canonical": "plc9/p", "presented": ["e/area/power"] },
+      { "filter": "e/area/line/#", "canonical": "plc1/line/x", "presented": [] },
+      { "filter": "e/area/values/#", "canonical": "plc1/values/v1", "presented": ["e/area/values/v1"] }
+    ]
+  },
+  {
+    "name": "aliases",
+    "description": "Several virtual paths in one or more trees present the same physical topic",
+    "trees": [
+      {
+        "schemaVersion": 1, "id": "ta", "name": "A", "rootPath": "a", "enabled": true,
+        "nodes": [
+          { "id": "m1", "parentId": null, "segment": "m1", "binding": { "kind": "SUBTREE", "target": "plc1", "access": "READ_ONLY" } },
+          { "id": "x", "parentId": null, "segment": "x", "binding": { "kind": "EXACT", "target": "plc1/v", "access": "READ_ONLY" } }
+        ]
+      },
+      {
+        "schemaVersion": 1, "id": "tb", "name": "B", "rootPath": "b", "enabled": true,
+        "nodes": [
+          { "id": "m2", "parentId": null, "segment": "m2", "binding": { "kind": "SUBTREE", "target": "plc1/values", "access": "READ_ONLY" } }
+        ]
+      }
+    ],
+    "project": [
+      { "canonical": "plc1/v", "virtual": ["a/m1/v", "a/x"] },
+      { "canonical": "plc1/values/t", "virtual": ["a/m1/values/t", "b/m2/t"] }
+    ],
+    "deliver": [
+      { "filter": "#", "canonical": "plc1/values/t", "presented": ["a/m1/values/t", "b/m2/t", "plc1/values/t"] },
+      { "filter": "+/+/t", "canonical": "plc1/values/t", "presented": ["b/m2/t", "plc1/values/t"] },
+      { "filter": "a/#", "canonical": "plc1/v", "presented": ["a/m1/v", "a/x"] }
+    ]
+  },
+  {
+    "name": "disabled-tree",
+    "description": "A disabled tree keeps its root reserved but routes nothing",
+    "trees": [
+      {
+        "schemaVersion": 1, "id": "dis", "name": "Disabled", "rootPath": "d", "enabled": false,
+        "nodes": [
+          { "id": "m", "parentId": null, "segment": "m", "binding": { "kind": "SUBTREE", "target": "plc1", "access": "READ_WRITE" } }
+        ]
+      }
+    ],
+    "publish": [
+      { "topic": "d/m/x", "reject": "TREE_DISABLED" },
+      { "topic": "plc1/x", "canonical": "plc1/x" }
+    ],
+    "project": [ { "canonical": "plc1/x", "virtual": [] } ],
+    "deliver": [
+      { "filter": "d/#", "canonical": "plc1/x", "presented": [] },
+      { "filter": "plc1/#", "canonical": "plc1/x", "presented": ["plc1/x"] }
+    ]
+  },
+  {
+    "name": "case-and-utf8",
+    "description": "Identities are case sensitive and UTF-8 is preserved",
+    "trees": [
+      {
+        "schemaVersion": 1, "id": "names", "name": "Names", "rootPath": "Ent", "enabled": true,
+        "nodes": [
+          { "id": "u", "parentId": null, "segment": "Äreä", "binding": { "kind": "SUBTREE", "target": "Plc1", "access": "READ_ONLY" } },
+          { "id": "l", "parentId": null, "segment": "area", "binding": { "kind": "SUBTREE", "target": "plc1", "access": "READ_ONLY" } }
+        ]
+      }
+    ],
+    "project": [
+      { "canonical": "Plc1/Wert/日本", "virtual": ["Ent/Äreä/Wert/日本"] },
+      { "canonical": "plc1/x", "virtual": ["Ent/area/x"] },
+      { "canonical": "PLC1/x", "virtual": [] }
+    ],
+    "deliver": [
+      { "filter": "ent/#", "canonical": "plc1/x", "presented": [] },
+      { "filter": "Ent/+/x", "canonical": "plc1/x", "presented": ["Ent/area/x"] }
+    ]
+  }
+]

@@ -236,6 +236,7 @@ type FeaturesConfig struct {
 	WinCCUa            bool `yaml:"WinCCUa"`
 	WinCCOa            bool `yaml:"WinCCOa"`
 	DeviceImportExport bool `yaml:"DeviceImportExport"`
+	VirtualTopicTrees  bool `yaml:"VirtualTopicTrees"`
 	Mcp                bool `yaml:"Mcp"`
 	Hmi                bool `yaml:"Hmi"`
 	Redfish            bool `yaml:"Redfish"`
@@ -620,7 +621,7 @@ func Default() *Config {
 			TLSPort:                 4443,
 			RequireHTTPSFromOutside: false,
 		},
-		Dashboard: DashboardConfig{Enabled: true, Path: ""},
+		Dashboard:  DashboardConfig{Enabled: true, Path: ""},
 		RestApi:    RestApiConfig{Enabled: true},
 		MCP:        MCPConfig{Enabled: false},
 		Prometheus: PrometheusConfig{Enabled: false, Port: 3001, RawQueryLimit: 10000},
@@ -650,7 +651,7 @@ func Default() *Config {
 				},
 			},
 		},
-		Features: FeaturesConfig{MqttClient: false, WinCCUa: false, WinCCOa: false, DeviceImportExport: false, Mcp: false, Hmi: false, Redfish: false, RtspCamera: false, PythonScripts: false, GenAi: false, Kafka: false, RedisServer: false},
+		Features: FeaturesConfig{MqttClient: false, WinCCUa: false, WinCCOa: false, DeviceImportExport: false, VirtualTopicTrees: false, Mcp: false, Hmi: false, Redfish: false, RtspCamera: false, PythonScripts: false, GenAi: false, Kafka: false, RedisServer: false},
 		HostMonitoring: HostMonitoringConfig{
 			Enabled:         false,
 			BaseTopic:       "nodes/{NodeId}/host",
@@ -1383,7 +1384,7 @@ func (r PeerLinkReceive) GetInjectWorkers() int {
 	return intOr(r.InjectWorkers, peerLinkDefaultInjectWorkers)
 }
 
-func (i PeerLinkInterest) GetEnabled() bool { return boolOr(i.Enabled, true) }
+func (i PeerLinkInterest) GetEnabled() bool   { return boolOr(i.Enabled, true) }
 func (i PeerLinkInterest) GetUnknown() string { return stringOr(i.Unknown, PeerLinkInterestAll) }
 func (i PeerLinkInterest) GetFlushMs() int    { return intOr(i.FlushMs, peerLinkDefaultInterestFlush) }
 func (i PeerLinkInterest) GetMaxScanPerFetch() int {

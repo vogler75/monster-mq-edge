@@ -1407,6 +1407,87 @@ type UserPropertyInput struct {
 	Value string `json:"value"`
 }
 
+type VirtualTopicBinding struct {
+	Kind   VirtualTopicBindingKind `json:"kind"`
+	Target string                  `json:"target"`
+	Access VirtualTopicAccess      `json:"access"`
+}
+
+type VirtualTopicBindingInput struct {
+	Kind   VirtualTopicBindingKind `json:"kind"`
+	Target string                  `json:"target"`
+	Access *VirtualTopicAccess     `json:"access,omitempty"`
+}
+
+type VirtualTopicIssue struct {
+	Code    string  `json:"code"`
+	NodeID  *string `json:"nodeId,omitempty"`
+	Path    *string `json:"path,omitempty"`
+	Message string  `json:"message"`
+}
+
+type VirtualTopicNode struct {
+	ID          string               `json:"id"`
+	ParentID    *string              `json:"parentId,omitempty"`
+	Segment     string               `json:"segment"`
+	Description *string              `json:"description,omitempty"`
+	Binding     *VirtualTopicBinding `json:"binding,omitempty"`
+}
+
+type VirtualTopicNodeInput struct {
+	ID          string                    `json:"id"`
+	ParentID    *string                   `json:"parentId,omitempty"`
+	Segment     string                    `json:"segment"`
+	Description *string                   `json:"description,omitempty"`
+	Binding     *VirtualTopicBindingInput `json:"binding,omitempty"`
+}
+
+type VirtualTopicPreviewResult struct {
+	Routes []*VirtualTopicRoute `json:"routes"`
+	Errors []*VirtualTopicIssue `json:"errors"`
+}
+
+type VirtualTopicRoute struct {
+	NodeID        string             `json:"nodeId"`
+	VirtualPath   string             `json:"virtualPath"`
+	CanonicalPath string             `json:"canonicalPath"`
+	Access        VirtualTopicAccess `json:"access"`
+}
+
+type VirtualTopicTree struct {
+	SchemaVersion int                 `json:"schemaVersion"`
+	ID            string              `json:"id"`
+	Name          string              `json:"name"`
+	RootPath      string              `json:"rootPath"`
+	Description   *string             `json:"description,omitempty"`
+	Enabled       bool                `json:"enabled"`
+	Revision      string              `json:"revision"`
+	Nodes         []*VirtualTopicNode `json:"nodes"`
+}
+
+type VirtualTopicTreeInput struct {
+	SchemaVersion int                      `json:"schemaVersion"`
+	ID            string                   `json:"id"`
+	Name          string                   `json:"name"`
+	RootPath      string                   `json:"rootPath"`
+	Description   *string                  `json:"description,omitempty"`
+	Enabled       *bool                    `json:"enabled,omitempty"`
+	Nodes         []*VirtualTopicNodeInput `json:"nodes"`
+}
+
+type VirtualTopicTreeMutationResult struct {
+	Success         bool                 `json:"success"`
+	Tree            *VirtualTopicTree    `json:"tree,omitempty"`
+	AppliedRevision *string              `json:"appliedRevision,omitempty"`
+	Errors          []*VirtualTopicIssue `json:"errors"`
+}
+
+type VirtualTopicValidationResult struct {
+	Valid    bool                 `json:"valid"`
+	Errors   []*VirtualTopicIssue `json:"errors"`
+	Warnings []*VirtualTopicIssue `json:"warnings"`
+}
+
 type WinCCOaAddress struct {
 	Query       string `json:"query"`
 	Topic       string `json:"topic"`
@@ -2785,6 +2866,173 @@ func (e *UnsModelerSeverity) UnmarshalJSON(b []byte) error {
 }
 
 func (e UnsModelerSeverity) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type VirtualTopicAccess string
+
+const (
+	VirtualTopicAccessReadOnly  VirtualTopicAccess = "READ_ONLY"
+	VirtualTopicAccessReadWrite VirtualTopicAccess = "READ_WRITE"
+)
+
+var AllVirtualTopicAccess = []VirtualTopicAccess{
+	VirtualTopicAccessReadOnly,
+	VirtualTopicAccessReadWrite,
+}
+
+func (e VirtualTopicAccess) IsValid() bool {
+	switch e {
+	case VirtualTopicAccessReadOnly, VirtualTopicAccessReadWrite:
+		return true
+	}
+	return false
+}
+
+func (e VirtualTopicAccess) String() string {
+	return string(e)
+}
+
+func (e *VirtualTopicAccess) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = VirtualTopicAccess(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid VirtualTopicAccess", str)
+	}
+	return nil
+}
+
+func (e VirtualTopicAccess) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *VirtualTopicAccess) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e VirtualTopicAccess) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type VirtualTopicBindingKind string
+
+const (
+	VirtualTopicBindingKindExact   VirtualTopicBindingKind = "EXACT"
+	VirtualTopicBindingKindSubtree VirtualTopicBindingKind = "SUBTREE"
+)
+
+var AllVirtualTopicBindingKind = []VirtualTopicBindingKind{
+	VirtualTopicBindingKindExact,
+	VirtualTopicBindingKindSubtree,
+}
+
+func (e VirtualTopicBindingKind) IsValid() bool {
+	switch e {
+	case VirtualTopicBindingKindExact, VirtualTopicBindingKindSubtree:
+		return true
+	}
+	return false
+}
+
+func (e VirtualTopicBindingKind) String() string {
+	return string(e)
+}
+
+func (e *VirtualTopicBindingKind) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = VirtualTopicBindingKind(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid VirtualTopicBindingKind", str)
+	}
+	return nil
+}
+
+func (e VirtualTopicBindingKind) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *VirtualTopicBindingKind) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e VirtualTopicBindingKind) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type VirtualTopicOperation string
+
+const (
+	VirtualTopicOperationPublish   VirtualTopicOperation = "PUBLISH"
+	VirtualTopicOperationSubscribe VirtualTopicOperation = "SUBSCRIBE"
+	VirtualTopicOperationProject   VirtualTopicOperation = "PROJECT"
+)
+
+var AllVirtualTopicOperation = []VirtualTopicOperation{
+	VirtualTopicOperationPublish,
+	VirtualTopicOperationSubscribe,
+	VirtualTopicOperationProject,
+}
+
+func (e VirtualTopicOperation) IsValid() bool {
+	switch e {
+	case VirtualTopicOperationPublish, VirtualTopicOperationSubscribe, VirtualTopicOperationProject:
+		return true
+	}
+	return false
+}
+
+func (e VirtualTopicOperation) String() string {
+	return string(e)
+}
+
+func (e *VirtualTopicOperation) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = VirtualTopicOperation(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid VirtualTopicOperation", str)
+	}
+	return nil
+}
+
+func (e VirtualTopicOperation) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *VirtualTopicOperation) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e VirtualTopicOperation) MarshalJSON() ([]byte, error) {
 	var buf bytes.Buffer
 	e.MarshalGQL(&buf)
 	return buf.Bytes(), nil

@@ -155,6 +155,8 @@ type MutationResolver interface {
 	RtspCamera(ctx context.Context) (*RtspCameraDeviceMutations, error)
 	Script(ctx context.Context) (*ScriptMutations, error)
 	UnsModeler(ctx context.Context) (*UnsModelerMutations, error)
+	SaveVirtualTopicTree(ctx context.Context, input VirtualTopicTreeInput, expectedRevision *string) (*VirtualTopicTreeMutationResult, error)
+	DeleteVirtualTopicTree(ctx context.Context, id string, expectedRevision string) (*VirtualTopicTreeMutationResult, error)
 	WinCCOaDevice(ctx context.Context) (*WinCCOaDeviceMutations, error)
 	WinCCUaDevice(ctx context.Context) (*WinCCUaDeviceMutations, error)
 }
@@ -206,6 +208,10 @@ type QueryResolver interface {
 	UnsModelerValidate(ctx context.Context, name string, document string) ([]*UnsModelerIssue, error)
 	UnsModelerSchema(ctx context.Context, direction *UnsModelerDirection) (string, error)
 	UnsModelerDefaultPrompt(ctx context.Context, direction UnsModelerDirection) (string, error)
+	VirtualTopicTrees(ctx context.Context) ([]*VirtualTopicTree, error)
+	VirtualTopicTree(ctx context.Context, id string) (*VirtualTopicTree, error)
+	ValidateVirtualTopicTree(ctx context.Context, input VirtualTopicTreeInput) (*VirtualTopicValidationResult, error)
+	PreviewVirtualTopicTree(ctx context.Context, input VirtualTopicTreeInput, topicOrFilter string, operation VirtualTopicOperation) (*VirtualTopicPreviewResult, error)
 	Winccoa(ctx context.Context) (*WinCCOaQuery, error)
 	WinCCOaClients(ctx context.Context, name *string, node *string) ([]*WinCCOaClient, error)
 	WinCCUaClients(ctx context.Context, name *string, node *string) ([]*WinCCUaClient, error)
@@ -378,6 +384,9 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 		ec.unmarshalInputUpdateDatabaseConnectionInput,
 		ec.unmarshalInputUpdateUserInput,
 		ec.unmarshalInputUserPropertyInput,
+		ec.unmarshalInputVirtualTopicBindingInput,
+		ec.unmarshalInputVirtualTopicNodeInput,
+		ec.unmarshalInputVirtualTopicTreeInput,
 		ec.unmarshalInputWinCCOaAddressInput,
 		ec.unmarshalInputWinCCOaClientInput,
 		ec.unmarshalInputWinCCOaConnectionConfigInput,
@@ -2410,6 +2419,39 @@ type UnsModelerMutations {
 
 extend type Mutation {
     unsModeler: UnsModelerMutations!
+}
+`, BuiltIn: false},
+	{Name: "../schema/virtualtopictrees.graphqls", Input: `# Virtual MQTT topic trees with subtree mounts (issue #217)
+# Shared contract with MonsterMQ Edge - keep both schemas identical.
+
+enum VirtualTopicBindingKind { EXACT SUBTREE }
+enum VirtualTopicAccess { READ_ONLY READ_WRITE }
+enum VirtualTopicOperation { PUBLISH SUBSCRIBE PROJECT }
+
+type VirtualTopicBinding { kind: VirtualTopicBindingKind! target: String! access: VirtualTopicAccess! }
+type VirtualTopicNode { id: ID! parentId: ID segment: String! description: String binding: VirtualTopicBinding }
+type VirtualTopicTree { schemaVersion: Int! id: ID! name: String! rootPath: String! description: String enabled: Boolean! revision: String! nodes: [VirtualTopicNode!]! }
+
+input VirtualTopicBindingInput { kind: VirtualTopicBindingKind! target: String! access: VirtualTopicAccess = READ_ONLY }
+input VirtualTopicNodeInput { id: ID! parentId: ID segment: String! description: String binding: VirtualTopicBindingInput }
+input VirtualTopicTreeInput { schemaVersion: Int! id: ID! name: String! rootPath: String! description: String enabled: Boolean = true nodes: [VirtualTopicNodeInput!]! }
+
+type VirtualTopicIssue { code: String! nodeId: ID path: String message: String! }
+type VirtualTopicValidationResult { valid: Boolean! errors: [VirtualTopicIssue!]! warnings: [VirtualTopicIssue!]! }
+type VirtualTopicRoute { nodeId: ID! virtualPath: String! canonicalPath: String! access: VirtualTopicAccess! }
+type VirtualTopicPreviewResult { routes: [VirtualTopicRoute!]! errors: [VirtualTopicIssue!]! }
+type VirtualTopicTreeMutationResult { success: Boolean! tree: VirtualTopicTree appliedRevision: String errors: [VirtualTopicIssue!]! }
+
+extend type Query {
+  virtualTopicTrees: [VirtualTopicTree!]!
+  virtualTopicTree(id: ID!): VirtualTopicTree
+  validateVirtualTopicTree(input: VirtualTopicTreeInput!): VirtualTopicValidationResult!
+  previewVirtualTopicTree(input: VirtualTopicTreeInput!, topicOrFilter: String!, operation: VirtualTopicOperation!): VirtualTopicPreviewResult!
+}
+
+extend type Mutation {
+  saveVirtualTopicTree(input: VirtualTopicTreeInput!, expectedRevision: String): VirtualTopicTreeMutationResult!
+  deleteVirtualTopicTree(id: ID!, expectedRevision: String!): VirtualTopicTreeMutationResult!
 }
 `, BuiltIn: false},
 	{Name: "../schema/winccoa-browse.graphqls", Input: `# WinCC OA browsing of the embedded broker (UNS Modeler, plan-uns-modeler-design.md
@@ -4776,6 +4818,120 @@ func (ec *executionContext) childFields_UserProperty(ctx context.Context, field 
 	return nil, fmt.Errorf("no field named %q was found under type UserProperty", field.Name)
 }
 
+func (ec *executionContext) childFields_VirtualTopicBinding(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "kind":
+		return ec.fieldContext_VirtualTopicBinding_kind(ctx, field)
+	case "target":
+		return ec.fieldContext_VirtualTopicBinding_target(ctx, field)
+	case "access":
+		return ec.fieldContext_VirtualTopicBinding_access(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type VirtualTopicBinding", field.Name)
+}
+
+func (ec *executionContext) childFields_VirtualTopicIssue(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "code":
+		return ec.fieldContext_VirtualTopicIssue_code(ctx, field)
+	case "nodeId":
+		return ec.fieldContext_VirtualTopicIssue_nodeId(ctx, field)
+	case "path":
+		return ec.fieldContext_VirtualTopicIssue_path(ctx, field)
+	case "message":
+		return ec.fieldContext_VirtualTopicIssue_message(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type VirtualTopicIssue", field.Name)
+}
+
+func (ec *executionContext) childFields_VirtualTopicNode(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "id":
+		return ec.fieldContext_VirtualTopicNode_id(ctx, field)
+	case "parentId":
+		return ec.fieldContext_VirtualTopicNode_parentId(ctx, field)
+	case "segment":
+		return ec.fieldContext_VirtualTopicNode_segment(ctx, field)
+	case "description":
+		return ec.fieldContext_VirtualTopicNode_description(ctx, field)
+	case "binding":
+		return ec.fieldContext_VirtualTopicNode_binding(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type VirtualTopicNode", field.Name)
+}
+
+func (ec *executionContext) childFields_VirtualTopicPreviewResult(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "routes":
+		return ec.fieldContext_VirtualTopicPreviewResult_routes(ctx, field)
+	case "errors":
+		return ec.fieldContext_VirtualTopicPreviewResult_errors(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type VirtualTopicPreviewResult", field.Name)
+}
+
+func (ec *executionContext) childFields_VirtualTopicRoute(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "nodeId":
+		return ec.fieldContext_VirtualTopicRoute_nodeId(ctx, field)
+	case "virtualPath":
+		return ec.fieldContext_VirtualTopicRoute_virtualPath(ctx, field)
+	case "canonicalPath":
+		return ec.fieldContext_VirtualTopicRoute_canonicalPath(ctx, field)
+	case "access":
+		return ec.fieldContext_VirtualTopicRoute_access(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type VirtualTopicRoute", field.Name)
+}
+
+func (ec *executionContext) childFields_VirtualTopicTree(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "schemaVersion":
+		return ec.fieldContext_VirtualTopicTree_schemaVersion(ctx, field)
+	case "id":
+		return ec.fieldContext_VirtualTopicTree_id(ctx, field)
+	case "name":
+		return ec.fieldContext_VirtualTopicTree_name(ctx, field)
+	case "rootPath":
+		return ec.fieldContext_VirtualTopicTree_rootPath(ctx, field)
+	case "description":
+		return ec.fieldContext_VirtualTopicTree_description(ctx, field)
+	case "enabled":
+		return ec.fieldContext_VirtualTopicTree_enabled(ctx, field)
+	case "revision":
+		return ec.fieldContext_VirtualTopicTree_revision(ctx, field)
+	case "nodes":
+		return ec.fieldContext_VirtualTopicTree_nodes(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type VirtualTopicTree", field.Name)
+}
+
+func (ec *executionContext) childFields_VirtualTopicTreeMutationResult(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "success":
+		return ec.fieldContext_VirtualTopicTreeMutationResult_success(ctx, field)
+	case "tree":
+		return ec.fieldContext_VirtualTopicTreeMutationResult_tree(ctx, field)
+	case "appliedRevision":
+		return ec.fieldContext_VirtualTopicTreeMutationResult_appliedRevision(ctx, field)
+	case "errors":
+		return ec.fieldContext_VirtualTopicTreeMutationResult_errors(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type VirtualTopicTreeMutationResult", field.Name)
+}
+
+func (ec *executionContext) childFields_VirtualTopicValidationResult(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "valid":
+		return ec.fieldContext_VirtualTopicValidationResult_valid(ctx, field)
+	case "errors":
+		return ec.fieldContext_VirtualTopicValidationResult_errors(ctx, field)
+	case "warnings":
+		return ec.fieldContext_VirtualTopicValidationResult_warnings(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type VirtualTopicValidationResult", field.Name)
+}
+
 func (ec *executionContext) childFields_WinCCOaAddress(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 	switch field.Name {
 	case "query":
@@ -6278,6 +6434,28 @@ func (ec *executionContext) field_Mutation_deleteRedfishMapping_args(ctx context
 	return args, nil
 }
 
+func (ec *executionContext) field_Mutation_deleteVirtualTopicTree_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "id",
+		func(ctx context.Context, v any) (string, error) {
+			return ec.unmarshalNID2string(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["id"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "expectedRevision",
+		func(ctx context.Context, v any) (string, error) {
+			return ec.unmarshalNString2string(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["expectedRevision"] = arg1
+	return args, nil
+}
+
 func (ec *executionContext) field_Mutation_importDevices_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
@@ -6383,6 +6561,28 @@ func (ec *executionContext) field_Mutation_saveRedfishMapping_args(ctx context.C
 		return nil, err
 	}
 	args["enabled"] = arg2
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_saveVirtualTopicTree_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (VirtualTopicTreeInput, error) {
+			return ec.unmarshalNVirtualTopicTreeInput2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicTreeInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "expectedRevision",
+		func(ctx context.Context, v any) (*string, error) {
+			return ec.unmarshalOString2ᚖstring(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["expectedRevision"] = arg1
 	return args, nil
 }
 
@@ -6902,6 +7102,36 @@ func (ec *executionContext) field_Query_mqttClients_args(ctx context.Context, ra
 	return args, nil
 }
 
+func (ec *executionContext) field_Query_previewVirtualTopicTree_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (VirtualTopicTreeInput, error) {
+			return ec.unmarshalNVirtualTopicTreeInput2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicTreeInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "topicOrFilter",
+		func(ctx context.Context, v any) (string, error) {
+			return ec.unmarshalNString2string(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["topicOrFilter"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "operation",
+		func(ctx context.Context, v any) (VirtualTopicOperation, error) {
+			return ec.unmarshalNVirtualTopicOperation2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicOperation(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["operation"] = arg2
+	return args, nil
+}
+
 func (ec *executionContext) field_Query_redfishLiveSensors_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
@@ -7341,6 +7571,34 @@ func (ec *executionContext) field_Query_users_args(ctx context.Context, rawArgs 
 		return nil, err
 	}
 	args["username"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_validateVirtualTopicTree_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (VirtualTopicTreeInput, error) {
+			return ec.unmarshalNVirtualTopicTreeInput2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicTreeInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_virtualTopicTree_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "id",
+		func(ctx context.Context, v any) (string, error) {
+			return ec.unmarshalNID2string(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["id"] = arg0
 	return args, nil
 }
 
@@ -18432,6 +18690,94 @@ func (ec *executionContext) fieldContext_Mutation_unsModeler(_ context.Context, 
 	return fc, nil
 }
 
+func (ec *executionContext) _Mutation_saveVirtualTopicTree(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_saveVirtualTopicTree(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().SaveVirtualTopicTree(ctx, fc.Args["input"].(VirtualTopicTreeInput), fc.Args["expectedRevision"].(*string))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *VirtualTopicTreeMutationResult) graphql.Marshaler {
+			return ec.marshalNVirtualTopicTreeMutationResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicTreeMutationResult(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_saveVirtualTopicTree(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_VirtualTopicTreeMutationResult(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_saveVirtualTopicTree_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_deleteVirtualTopicTree(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_deleteVirtualTopicTree(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().DeleteVirtualTopicTree(ctx, fc.Args["id"].(string), fc.Args["expectedRevision"].(string))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *VirtualTopicTreeMutationResult) graphql.Marshaler {
+			return ec.marshalNVirtualTopicTreeMutationResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicTreeMutationResult(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_deleteVirtualTopicTree(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_VirtualTopicTreeMutationResult(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_deleteVirtualTopicTree_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Mutation_winCCOaDevice(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -21299,6 +21645,170 @@ func (ec *executionContext) fieldContext_Query_unsModelerDefaultPrompt(ctx conte
 	}()
 	ctx = graphql.WithFieldContext(ctx, fc)
 	if fc.Args, err = ec.field_Query_unsModelerDefaultPrompt_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_virtualTopicTrees(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_virtualTopicTrees(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return ec.Resolvers.Query().VirtualTopicTrees(ctx)
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*VirtualTopicTree) graphql.Marshaler {
+			return ec.marshalNVirtualTopicTree2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicTreeᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Query_virtualTopicTrees(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_VirtualTopicTree(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_virtualTopicTree(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_virtualTopicTree(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().VirtualTopicTree(ctx, fc.Args["id"].(string))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *VirtualTopicTree) graphql.Marshaler {
+			return ec.marshalOVirtualTopicTree2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicTree(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_Query_virtualTopicTree(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_VirtualTopicTree(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_virtualTopicTree_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_validateVirtualTopicTree(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_validateVirtualTopicTree(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().ValidateVirtualTopicTree(ctx, fc.Args["input"].(VirtualTopicTreeInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *VirtualTopicValidationResult) graphql.Marshaler {
+			return ec.marshalNVirtualTopicValidationResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicValidationResult(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Query_validateVirtualTopicTree(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_VirtualTopicValidationResult(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_validateVirtualTopicTree_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_previewVirtualTopicTree(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_previewVirtualTopicTree(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().PreviewVirtualTopicTree(ctx, fc.Args["input"].(VirtualTopicTreeInput), fc.Args["topicOrFilter"].(string), fc.Args["operation"].(VirtualTopicOperation))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *VirtualTopicPreviewResult) graphql.Marshaler {
+			return ec.marshalNVirtualTopicPreviewResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicPreviewResult(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Query_previewVirtualTopicTree(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_VirtualTopicPreviewResult(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_previewVirtualTopicTree_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
 	}
@@ -29972,6 +30482,837 @@ func (ec *executionContext) fieldContext_UserProperty_value(_ context.Context, f
 	return graphql.NewScalarFieldContext("UserProperty", field, false, false, errors.New("field of type String does not have child fields"))
 }
 
+func (ec *executionContext) _VirtualTopicBinding_kind(ctx context.Context, field graphql.CollectedField, obj *VirtualTopicBinding) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_VirtualTopicBinding_kind(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Kind, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v VirtualTopicBindingKind) graphql.Marshaler {
+			return ec.marshalNVirtualTopicBindingKind2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicBindingKind(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_VirtualTopicBinding_kind(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("VirtualTopicBinding", field, false, false, errors.New("field of type VirtualTopicBindingKind does not have child fields"))
+}
+
+func (ec *executionContext) _VirtualTopicBinding_target(ctx context.Context, field graphql.CollectedField, obj *VirtualTopicBinding) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_VirtualTopicBinding_target(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Target, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_VirtualTopicBinding_target(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("VirtualTopicBinding", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _VirtualTopicBinding_access(ctx context.Context, field graphql.CollectedField, obj *VirtualTopicBinding) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_VirtualTopicBinding_access(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Access, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v VirtualTopicAccess) graphql.Marshaler {
+			return ec.marshalNVirtualTopicAccess2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicAccess(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_VirtualTopicBinding_access(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("VirtualTopicBinding", field, false, false, errors.New("field of type VirtualTopicAccess does not have child fields"))
+}
+
+func (ec *executionContext) _VirtualTopicIssue_code(ctx context.Context, field graphql.CollectedField, obj *VirtualTopicIssue) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_VirtualTopicIssue_code(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Code, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_VirtualTopicIssue_code(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("VirtualTopicIssue", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _VirtualTopicIssue_nodeId(ctx context.Context, field graphql.CollectedField, obj *VirtualTopicIssue) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_VirtualTopicIssue_nodeId(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.NodeID, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *string) graphql.Marshaler {
+			return ec.marshalOID2ᚖstring(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_VirtualTopicIssue_nodeId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("VirtualTopicIssue", field, false, false, errors.New("field of type ID does not have child fields"))
+}
+
+func (ec *executionContext) _VirtualTopicIssue_path(ctx context.Context, field graphql.CollectedField, obj *VirtualTopicIssue) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_VirtualTopicIssue_path(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Path, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *string) graphql.Marshaler {
+			return ec.marshalOString2ᚖstring(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_VirtualTopicIssue_path(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("VirtualTopicIssue", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _VirtualTopicIssue_message(ctx context.Context, field graphql.CollectedField, obj *VirtualTopicIssue) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_VirtualTopicIssue_message(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Message, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_VirtualTopicIssue_message(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("VirtualTopicIssue", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _VirtualTopicNode_id(ctx context.Context, field graphql.CollectedField, obj *VirtualTopicNode) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_VirtualTopicNode_id(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.ID, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNID2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_VirtualTopicNode_id(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("VirtualTopicNode", field, false, false, errors.New("field of type ID does not have child fields"))
+}
+
+func (ec *executionContext) _VirtualTopicNode_parentId(ctx context.Context, field graphql.CollectedField, obj *VirtualTopicNode) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_VirtualTopicNode_parentId(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.ParentID, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *string) graphql.Marshaler {
+			return ec.marshalOID2ᚖstring(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_VirtualTopicNode_parentId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("VirtualTopicNode", field, false, false, errors.New("field of type ID does not have child fields"))
+}
+
+func (ec *executionContext) _VirtualTopicNode_segment(ctx context.Context, field graphql.CollectedField, obj *VirtualTopicNode) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_VirtualTopicNode_segment(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Segment, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_VirtualTopicNode_segment(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("VirtualTopicNode", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _VirtualTopicNode_description(ctx context.Context, field graphql.CollectedField, obj *VirtualTopicNode) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_VirtualTopicNode_description(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Description, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *string) graphql.Marshaler {
+			return ec.marshalOString2ᚖstring(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_VirtualTopicNode_description(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("VirtualTopicNode", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _VirtualTopicNode_binding(ctx context.Context, field graphql.CollectedField, obj *VirtualTopicNode) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_VirtualTopicNode_binding(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Binding, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *VirtualTopicBinding) graphql.Marshaler {
+			return ec.marshalOVirtualTopicBinding2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicBinding(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_VirtualTopicNode_binding(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "VirtualTopicNode",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_VirtualTopicBinding(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _VirtualTopicPreviewResult_routes(ctx context.Context, field graphql.CollectedField, obj *VirtualTopicPreviewResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_VirtualTopicPreviewResult_routes(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Routes, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*VirtualTopicRoute) graphql.Marshaler {
+			return ec.marshalNVirtualTopicRoute2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicRouteᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_VirtualTopicPreviewResult_routes(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "VirtualTopicPreviewResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_VirtualTopicRoute(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _VirtualTopicPreviewResult_errors(ctx context.Context, field graphql.CollectedField, obj *VirtualTopicPreviewResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_VirtualTopicPreviewResult_errors(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Errors, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*VirtualTopicIssue) graphql.Marshaler {
+			return ec.marshalNVirtualTopicIssue2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicIssueᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_VirtualTopicPreviewResult_errors(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "VirtualTopicPreviewResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_VirtualTopicIssue(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _VirtualTopicRoute_nodeId(ctx context.Context, field graphql.CollectedField, obj *VirtualTopicRoute) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_VirtualTopicRoute_nodeId(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.NodeID, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNID2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_VirtualTopicRoute_nodeId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("VirtualTopicRoute", field, false, false, errors.New("field of type ID does not have child fields"))
+}
+
+func (ec *executionContext) _VirtualTopicRoute_virtualPath(ctx context.Context, field graphql.CollectedField, obj *VirtualTopicRoute) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_VirtualTopicRoute_virtualPath(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.VirtualPath, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_VirtualTopicRoute_virtualPath(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("VirtualTopicRoute", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _VirtualTopicRoute_canonicalPath(ctx context.Context, field graphql.CollectedField, obj *VirtualTopicRoute) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_VirtualTopicRoute_canonicalPath(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.CanonicalPath, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_VirtualTopicRoute_canonicalPath(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("VirtualTopicRoute", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _VirtualTopicRoute_access(ctx context.Context, field graphql.CollectedField, obj *VirtualTopicRoute) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_VirtualTopicRoute_access(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Access, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v VirtualTopicAccess) graphql.Marshaler {
+			return ec.marshalNVirtualTopicAccess2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicAccess(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_VirtualTopicRoute_access(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("VirtualTopicRoute", field, false, false, errors.New("field of type VirtualTopicAccess does not have child fields"))
+}
+
+func (ec *executionContext) _VirtualTopicTree_schemaVersion(ctx context.Context, field graphql.CollectedField, obj *VirtualTopicTree) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_VirtualTopicTree_schemaVersion(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.SchemaVersion, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int) graphql.Marshaler {
+			return ec.marshalNInt2int(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_VirtualTopicTree_schemaVersion(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("VirtualTopicTree", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _VirtualTopicTree_id(ctx context.Context, field graphql.CollectedField, obj *VirtualTopicTree) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_VirtualTopicTree_id(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.ID, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNID2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_VirtualTopicTree_id(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("VirtualTopicTree", field, false, false, errors.New("field of type ID does not have child fields"))
+}
+
+func (ec *executionContext) _VirtualTopicTree_name(ctx context.Context, field graphql.CollectedField, obj *VirtualTopicTree) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_VirtualTopicTree_name(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Name, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_VirtualTopicTree_name(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("VirtualTopicTree", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _VirtualTopicTree_rootPath(ctx context.Context, field graphql.CollectedField, obj *VirtualTopicTree) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_VirtualTopicTree_rootPath(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.RootPath, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_VirtualTopicTree_rootPath(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("VirtualTopicTree", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _VirtualTopicTree_description(ctx context.Context, field graphql.CollectedField, obj *VirtualTopicTree) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_VirtualTopicTree_description(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Description, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *string) graphql.Marshaler {
+			return ec.marshalOString2ᚖstring(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_VirtualTopicTree_description(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("VirtualTopicTree", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _VirtualTopicTree_enabled(ctx context.Context, field graphql.CollectedField, obj *VirtualTopicTree) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_VirtualTopicTree_enabled(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Enabled, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_VirtualTopicTree_enabled(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("VirtualTopicTree", field, false, false, errors.New("field of type Boolean does not have child fields"))
+}
+
+func (ec *executionContext) _VirtualTopicTree_revision(ctx context.Context, field graphql.CollectedField, obj *VirtualTopicTree) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_VirtualTopicTree_revision(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Revision, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_VirtualTopicTree_revision(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("VirtualTopicTree", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _VirtualTopicTree_nodes(ctx context.Context, field graphql.CollectedField, obj *VirtualTopicTree) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_VirtualTopicTree_nodes(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Nodes, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*VirtualTopicNode) graphql.Marshaler {
+			return ec.marshalNVirtualTopicNode2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicNodeᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_VirtualTopicTree_nodes(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "VirtualTopicTree",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_VirtualTopicNode(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _VirtualTopicTreeMutationResult_success(ctx context.Context, field graphql.CollectedField, obj *VirtualTopicTreeMutationResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_VirtualTopicTreeMutationResult_success(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Success, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_VirtualTopicTreeMutationResult_success(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("VirtualTopicTreeMutationResult", field, false, false, errors.New("field of type Boolean does not have child fields"))
+}
+
+func (ec *executionContext) _VirtualTopicTreeMutationResult_tree(ctx context.Context, field graphql.CollectedField, obj *VirtualTopicTreeMutationResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_VirtualTopicTreeMutationResult_tree(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Tree, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *VirtualTopicTree) graphql.Marshaler {
+			return ec.marshalOVirtualTopicTree2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicTree(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_VirtualTopicTreeMutationResult_tree(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "VirtualTopicTreeMutationResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_VirtualTopicTree(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _VirtualTopicTreeMutationResult_appliedRevision(ctx context.Context, field graphql.CollectedField, obj *VirtualTopicTreeMutationResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_VirtualTopicTreeMutationResult_appliedRevision(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.AppliedRevision, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *string) graphql.Marshaler {
+			return ec.marshalOString2ᚖstring(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_VirtualTopicTreeMutationResult_appliedRevision(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("VirtualTopicTreeMutationResult", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _VirtualTopicTreeMutationResult_errors(ctx context.Context, field graphql.CollectedField, obj *VirtualTopicTreeMutationResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_VirtualTopicTreeMutationResult_errors(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Errors, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*VirtualTopicIssue) graphql.Marshaler {
+			return ec.marshalNVirtualTopicIssue2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicIssueᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_VirtualTopicTreeMutationResult_errors(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "VirtualTopicTreeMutationResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_VirtualTopicIssue(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _VirtualTopicValidationResult_valid(ctx context.Context, field graphql.CollectedField, obj *VirtualTopicValidationResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_VirtualTopicValidationResult_valid(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Valid, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_VirtualTopicValidationResult_valid(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("VirtualTopicValidationResult", field, false, false, errors.New("field of type Boolean does not have child fields"))
+}
+
+func (ec *executionContext) _VirtualTopicValidationResult_errors(ctx context.Context, field graphql.CollectedField, obj *VirtualTopicValidationResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_VirtualTopicValidationResult_errors(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Errors, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*VirtualTopicIssue) graphql.Marshaler {
+			return ec.marshalNVirtualTopicIssue2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicIssueᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_VirtualTopicValidationResult_errors(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "VirtualTopicValidationResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_VirtualTopicIssue(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _VirtualTopicValidationResult_warnings(ctx context.Context, field graphql.CollectedField, obj *VirtualTopicValidationResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_VirtualTopicValidationResult_warnings(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Warnings, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*VirtualTopicIssue) graphql.Marshaler {
+			return ec.marshalNVirtualTopicIssue2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicIssueᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_VirtualTopicValidationResult_warnings(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "VirtualTopicValidationResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_VirtualTopicIssue(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _WinCCOaAddress_query(ctx context.Context, field graphql.CollectedField, obj *WinCCOaAddress) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -37947,6 +39288,188 @@ func (ec *executionContext) unmarshalInputUserPropertyInput(ctx context.Context,
 	return it, nil
 }
 
+func (ec *executionContext) unmarshalInputVirtualTopicBindingInput(ctx context.Context, obj any) (VirtualTopicBindingInput, error) {
+	var it VirtualTopicBindingInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	if _, present := asMap["access"]; !present {
+		asMap["access"] = "READ_ONLY"
+	}
+
+	fieldsInOrder := [...]string{"kind", "target", "access"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "kind":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("kind"))
+			data, err := ec.unmarshalNVirtualTopicBindingKind2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicBindingKind(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Kind = data
+		case "target":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("target"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Target = data
+		case "access":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("access"))
+			data, err := ec.unmarshalOVirtualTopicAccess2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicAccess(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Access = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputVirtualTopicNodeInput(ctx context.Context, obj any) (VirtualTopicNodeInput, error) {
+	var it VirtualTopicNodeInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"id", "parentId", "segment", "description", "binding"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "id":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("id"))
+			data, err := ec.unmarshalNID2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ID = data
+		case "parentId":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("parentId"))
+			data, err := ec.unmarshalOID2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ParentID = data
+		case "segment":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("segment"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Segment = data
+		case "description":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("description"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Description = data
+		case "binding":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("binding"))
+			data, err := ec.unmarshalOVirtualTopicBindingInput2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicBindingInput(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Binding = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputVirtualTopicTreeInput(ctx context.Context, obj any) (VirtualTopicTreeInput, error) {
+	var it VirtualTopicTreeInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	if _, present := asMap["enabled"]; !present {
+		asMap["enabled"] = true
+	}
+
+	fieldsInOrder := [...]string{"schemaVersion", "id", "name", "rootPath", "description", "enabled", "nodes"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "schemaVersion":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("schemaVersion"))
+			data, err := ec.unmarshalNInt2int(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.SchemaVersion = data
+		case "id":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("id"))
+			data, err := ec.unmarshalNID2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ID = data
+		case "name":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("name"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Name = data
+		case "rootPath":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("rootPath"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.RootPath = data
+		case "description":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("description"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Description = data
+		case "enabled":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("enabled"))
+			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Enabled = data
+		case "nodes":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("nodes"))
+			data, err := ec.unmarshalNVirtualTopicNodeInput2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicNodeInputᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Nodes = data
+		}
+	}
+	return it, nil
+}
+
 func (ec *executionContext) unmarshalInputWinCCOaAddressInput(ctx context.Context, obj any) (WinCCOaAddressInput, error) {
 	var it WinCCOaAddressInput
 	if obj == nil {
@@ -43538,6 +45061,20 @@ func (ec *executionContext) _Mutation(ctx context.Context, sel ast.SelectionSet)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
+		case "saveVirtualTopicTree":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_saveVirtualTopicTree(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "deleteVirtualTopicTree":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_deleteVirtualTopicTree(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
 		case "winCCOaDevice":
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Mutation_winCCOaDevice(ctx, field)
@@ -44960,6 +46497,94 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 					}
 				}()
 				res = ec._Query_unsModelerDefaultPrompt(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "virtualTopicTrees":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_virtualTopicTrees(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "virtualTopicTree":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_virtualTopicTree(ctx, field)
+				if res == graphql.RequiredNull {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "validateVirtualTopicTree":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_validateVirtualTopicTree(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "previewVirtualTopicTree":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_previewVirtualTopicTree(ctx, field)
 				if res == graphql.Null {
 					atomic.AddUint32(&fs.Invalids, 1)
 				}
@@ -49728,6 +51353,435 @@ func (ec *executionContext) _UserProperty(ctx context.Context, sel ast.Selection
 	return out
 }
 
+var virtualTopicBindingImplementors = []string{"VirtualTopicBinding"}
+
+func (ec *executionContext) _VirtualTopicBinding(ctx context.Context, sel ast.SelectionSet, obj *VirtualTopicBinding) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, virtualTopicBindingImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("VirtualTopicBinding")
+		case "kind":
+			out.Values[i] = ec._VirtualTopicBinding_kind(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "target":
+			out.Values[i] = ec._VirtualTopicBinding_target(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "access":
+			out.Values[i] = ec._VirtualTopicBinding_access(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var virtualTopicIssueImplementors = []string{"VirtualTopicIssue"}
+
+func (ec *executionContext) _VirtualTopicIssue(ctx context.Context, sel ast.SelectionSet, obj *VirtualTopicIssue) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, virtualTopicIssueImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("VirtualTopicIssue")
+		case "code":
+			out.Values[i] = ec._VirtualTopicIssue_code(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "nodeId":
+			out.Values[i] = ec._VirtualTopicIssue_nodeId(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		case "path":
+			out.Values[i] = ec._VirtualTopicIssue_path(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		case "message":
+			out.Values[i] = ec._VirtualTopicIssue_message(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var virtualTopicNodeImplementors = []string{"VirtualTopicNode"}
+
+func (ec *executionContext) _VirtualTopicNode(ctx context.Context, sel ast.SelectionSet, obj *VirtualTopicNode) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, virtualTopicNodeImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("VirtualTopicNode")
+		case "id":
+			out.Values[i] = ec._VirtualTopicNode_id(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "parentId":
+			out.Values[i] = ec._VirtualTopicNode_parentId(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		case "segment":
+			out.Values[i] = ec._VirtualTopicNode_segment(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "description":
+			out.Values[i] = ec._VirtualTopicNode_description(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		case "binding":
+			out.Values[i] = ec._VirtualTopicNode_binding(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var virtualTopicPreviewResultImplementors = []string{"VirtualTopicPreviewResult"}
+
+func (ec *executionContext) _VirtualTopicPreviewResult(ctx context.Context, sel ast.SelectionSet, obj *VirtualTopicPreviewResult) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, virtualTopicPreviewResultImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("VirtualTopicPreviewResult")
+		case "routes":
+			out.Values[i] = ec._VirtualTopicPreviewResult_routes(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "errors":
+			out.Values[i] = ec._VirtualTopicPreviewResult_errors(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var virtualTopicRouteImplementors = []string{"VirtualTopicRoute"}
+
+func (ec *executionContext) _VirtualTopicRoute(ctx context.Context, sel ast.SelectionSet, obj *VirtualTopicRoute) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, virtualTopicRouteImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("VirtualTopicRoute")
+		case "nodeId":
+			out.Values[i] = ec._VirtualTopicRoute_nodeId(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "virtualPath":
+			out.Values[i] = ec._VirtualTopicRoute_virtualPath(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "canonicalPath":
+			out.Values[i] = ec._VirtualTopicRoute_canonicalPath(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "access":
+			out.Values[i] = ec._VirtualTopicRoute_access(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var virtualTopicTreeImplementors = []string{"VirtualTopicTree"}
+
+func (ec *executionContext) _VirtualTopicTree(ctx context.Context, sel ast.SelectionSet, obj *VirtualTopicTree) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, virtualTopicTreeImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("VirtualTopicTree")
+		case "schemaVersion":
+			out.Values[i] = ec._VirtualTopicTree_schemaVersion(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "id":
+			out.Values[i] = ec._VirtualTopicTree_id(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "name":
+			out.Values[i] = ec._VirtualTopicTree_name(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "rootPath":
+			out.Values[i] = ec._VirtualTopicTree_rootPath(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "description":
+			out.Values[i] = ec._VirtualTopicTree_description(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		case "enabled":
+			out.Values[i] = ec._VirtualTopicTree_enabled(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "revision":
+			out.Values[i] = ec._VirtualTopicTree_revision(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "nodes":
+			out.Values[i] = ec._VirtualTopicTree_nodes(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var virtualTopicTreeMutationResultImplementors = []string{"VirtualTopicTreeMutationResult"}
+
+func (ec *executionContext) _VirtualTopicTreeMutationResult(ctx context.Context, sel ast.SelectionSet, obj *VirtualTopicTreeMutationResult) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, virtualTopicTreeMutationResultImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("VirtualTopicTreeMutationResult")
+		case "success":
+			out.Values[i] = ec._VirtualTopicTreeMutationResult_success(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "tree":
+			out.Values[i] = ec._VirtualTopicTreeMutationResult_tree(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		case "appliedRevision":
+			out.Values[i] = ec._VirtualTopicTreeMutationResult_appliedRevision(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		case "errors":
+			out.Values[i] = ec._VirtualTopicTreeMutationResult_errors(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var virtualTopicValidationResultImplementors = []string{"VirtualTopicValidationResult"}
+
+func (ec *executionContext) _VirtualTopicValidationResult(ctx context.Context, sel ast.SelectionSet, obj *VirtualTopicValidationResult) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, virtualTopicValidationResultImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("VirtualTopicValidationResult")
+		case "valid":
+			out.Values[i] = ec._VirtualTopicValidationResult_valid(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "errors":
+			out.Values[i] = ec._VirtualTopicValidationResult_errors(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "warnings":
+			out.Values[i] = ec._VirtualTopicValidationResult_warnings(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
 var winCCOaAddressImplementors = []string{"WinCCOaAddress"}
 
 func (ec *executionContext) _WinCCOaAddress(ctx context.Context, sel ast.SelectionSet, obj *WinCCOaAddress) graphql.Marshaler {
@@ -53288,6 +55342,22 @@ func (ec *executionContext) marshalNHmiResult2ᚖmonstermqᚗioᚋedgeᚋinterna
 	return ec._HmiResult(ctx, sel, v)
 }
 
+func (ec *executionContext) unmarshalNID2string(ctx context.Context, v any) (string, error) {
+	res, err := graphql.UnmarshalID(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNID2string(ctx context.Context, sel ast.SelectionSet, v string) graphql.Marshaler {
+	_ = sel
+	res := graphql.MarshalID(v)
+	if res == graphql.Null {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+	}
+	return res
+}
+
 func (ec *executionContext) marshalNImportDeviceConfigResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐImportDeviceConfigResult(ctx context.Context, sel ast.SelectionSet, v *ImportDeviceConfigResult) graphql.Marshaler {
 	if v == nil {
 		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
@@ -54803,6 +56873,194 @@ func (ec *executionContext) unmarshalNUserPropertyInput2ᚖmonstermqᚗioᚋedge
 	return &res, graphql.ErrorOnPath(ctx, err)
 }
 
+func (ec *executionContext) unmarshalNVirtualTopicAccess2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicAccess(ctx context.Context, v any) (VirtualTopicAccess, error) {
+	var res VirtualTopicAccess
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNVirtualTopicAccess2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicAccess(ctx context.Context, sel ast.SelectionSet, v VirtualTopicAccess) graphql.Marshaler {
+	return v
+}
+
+func (ec *executionContext) unmarshalNVirtualTopicBindingKind2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicBindingKind(ctx context.Context, v any) (VirtualTopicBindingKind, error) {
+	var res VirtualTopicBindingKind
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNVirtualTopicBindingKind2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicBindingKind(ctx context.Context, sel ast.SelectionSet, v VirtualTopicBindingKind) graphql.Marshaler {
+	return v
+}
+
+func (ec *executionContext) marshalNVirtualTopicIssue2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicIssueᚄ(ctx context.Context, sel ast.SelectionSet, v []*VirtualTopicIssue) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNVirtualTopicIssue2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicIssue(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNVirtualTopicIssue2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicIssue(ctx context.Context, sel ast.SelectionSet, v *VirtualTopicIssue) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._VirtualTopicIssue(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNVirtualTopicNode2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicNodeᚄ(ctx context.Context, sel ast.SelectionSet, v []*VirtualTopicNode) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNVirtualTopicNode2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicNode(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNVirtualTopicNode2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicNode(ctx context.Context, sel ast.SelectionSet, v *VirtualTopicNode) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._VirtualTopicNode(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalNVirtualTopicNodeInput2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicNodeInputᚄ(ctx context.Context, v any) ([]*VirtualTopicNodeInput, error) {
+	vSlice := graphql.CoerceList(v)
+	var err error
+	res := make([]*VirtualTopicNodeInput, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNVirtualTopicNodeInput2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicNodeInput(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) unmarshalNVirtualTopicNodeInput2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicNodeInput(ctx context.Context, v any) (*VirtualTopicNodeInput, error) {
+	res, err := ec.unmarshalInputVirtualTopicNodeInput(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNVirtualTopicOperation2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicOperation(ctx context.Context, v any) (VirtualTopicOperation, error) {
+	var res VirtualTopicOperation
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNVirtualTopicOperation2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicOperation(ctx context.Context, sel ast.SelectionSet, v VirtualTopicOperation) graphql.Marshaler {
+	return v
+}
+
+func (ec *executionContext) marshalNVirtualTopicPreviewResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicPreviewResult(ctx context.Context, sel ast.SelectionSet, v *VirtualTopicPreviewResult) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._VirtualTopicPreviewResult(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNVirtualTopicRoute2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicRouteᚄ(ctx context.Context, sel ast.SelectionSet, v []*VirtualTopicRoute) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNVirtualTopicRoute2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicRoute(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNVirtualTopicRoute2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicRoute(ctx context.Context, sel ast.SelectionSet, v *VirtualTopicRoute) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._VirtualTopicRoute(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNVirtualTopicTree2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicTreeᚄ(ctx context.Context, sel ast.SelectionSet, v []*VirtualTopicTree) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNVirtualTopicTree2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicTree(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNVirtualTopicTree2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicTree(ctx context.Context, sel ast.SelectionSet, v *VirtualTopicTree) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._VirtualTopicTree(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalNVirtualTopicTreeInput2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicTreeInput(ctx context.Context, v any) (VirtualTopicTreeInput, error) {
+	res, err := ec.unmarshalInputVirtualTopicTreeInput(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNVirtualTopicTreeMutationResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicTreeMutationResult(ctx context.Context, sel ast.SelectionSet, v *VirtualTopicTreeMutationResult) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._VirtualTopicTreeMutationResult(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNVirtualTopicValidationResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicValidationResult(ctx context.Context, sel ast.SelectionSet, v *VirtualTopicValidationResult) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._VirtualTopicValidationResult(ctx, sel, v)
+}
+
 func (ec *executionContext) marshalNWinCCOaAddress2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaAddressᚄ(ctx context.Context, sel ast.SelectionSet, v []*WinCCOaAddress) graphql.Marshaler {
 	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
 		fc := graphql.GetFieldContext(ctx)
@@ -55639,6 +57897,24 @@ func (ec *executionContext) marshalOHmi2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgr
 	return ec._Hmi(ctx, sel, v)
 }
 
+func (ec *executionContext) unmarshalOID2ᚖstring(ctx context.Context, v any) (*string, error) {
+	if v == nil {
+		return nil, nil
+	}
+	res, err := graphql.UnmarshalID(v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalOID2ᚖstring(ctx context.Context, sel ast.SelectionSet, v *string) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	_ = sel
+	_ = ctx
+	res := graphql.MarshalID(*v)
+	return res
+}
+
 func (ec *executionContext) unmarshalOInt2ᚖint(ctx context.Context, v any) (*int, error) {
 	if v == nil {
 		return nil, nil
@@ -56131,6 +58407,44 @@ func (ec *executionContext) unmarshalOUserPropertyInput2ᚕᚖmonstermqᚗioᚋe
 		}
 	}
 	return res, nil
+}
+
+func (ec *executionContext) unmarshalOVirtualTopicAccess2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicAccess(ctx context.Context, v any) (*VirtualTopicAccess, error) {
+	if v == nil {
+		return nil, nil
+	}
+	var res = new(VirtualTopicAccess)
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalOVirtualTopicAccess2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicAccess(ctx context.Context, sel ast.SelectionSet, v *VirtualTopicAccess) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return v
+}
+
+func (ec *executionContext) marshalOVirtualTopicBinding2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicBinding(ctx context.Context, sel ast.SelectionSet, v *VirtualTopicBinding) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._VirtualTopicBinding(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalOVirtualTopicBindingInput2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicBindingInput(ctx context.Context, v any) (*VirtualTopicBindingInput, error) {
+	if v == nil {
+		return nil, nil
+	}
+	res, err := ec.unmarshalInputVirtualTopicBindingInput(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalOVirtualTopicTree2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐVirtualTopicTree(ctx context.Context, sel ast.SelectionSet, v *VirtualTopicTree) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._VirtualTopicTree(ctx, sel, v)
 }
 
 func (ec *executionContext) unmarshalOWinCCOaAddressInput2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐWinCCOaAddressInputᚄ(ctx context.Context, v any) ([]*WinCCOaAddressInput, error) {
