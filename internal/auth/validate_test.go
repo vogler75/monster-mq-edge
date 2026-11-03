@@ -143,3 +143,37 @@ func BenchmarkBcryptCost10(b *testing.B) {
 		_ = bcrypt.CompareHashAndPassword(h, []byte("secret"))
 	}
 }
+
+// TestAnonymousUserRecordNeedsAnonymousEnabled: the default Anonymous record
+// has no password, so logging in by its name must follow AnonymousEnabled.
+func TestAnonymousUserRecordNeedsAnonymousEnabled(t *testing.T) {
+	ctx := context.Background()
+	store := &fakeUserStore{users: []stores.User{
+		{Username: AnonymousUser, Enabled: true},
+		{Username: "bob", Enabled: true},
+	}}
+	c := NewCache(store, false, true)
+	if err := c.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if c.Validate(AnonymousUser, "") {
+		t.Error("Validate: Anonymous accepted with anonymousAllow=false")
+	}
+	if _, ok := c.Authenticate(ctx, AnonymousUser, ""); ok {
+		t.Error("Authenticate: Anonymous accepted with anonymousAllow=false")
+	}
+	if !c.Validate("bob", "") {
+		t.Error("Validate: user with empty password hash rejected")
+	}
+	if _, ok := c.Authenticate(ctx, "bob", ""); !ok {
+		t.Error("Authenticate: user with empty password hash rejected")
+	}
+
+	c.anonymousAllow = true
+	if !c.Validate(AnonymousUser, "") {
+		t.Error("Validate: Anonymous rejected with anonymousAllow=true")
+	}
+	if _, ok := c.Authenticate(ctx, AnonymousUser, ""); !ok {
+		t.Error("Authenticate: Anonymous rejected with anonymousAllow=true")
+	}
+}

@@ -73,7 +73,7 @@ func NewCache(store stores.UserStore, anonymousAllow bool, aclCheckOnSubscribe b
 
 // Authenticate validates credentials and returns the enabled user.
 func (c *Cache) Authenticate(ctx context.Context, username, password string) (*stores.User, bool) {
-	if username == "" {
+	if username == "" || (username == AnonymousUser && !c.IsAnonymousEnabled()) {
 		return nil, false
 	}
 	u, err := c.store.ValidateCredentials(ctx, username, password)
@@ -189,8 +189,9 @@ func (c *Cache) IsAnonymousEnabled() bool {
 }
 
 // Validate returns true if (username, password) match an enabled user.
+// The Anonymous user has no password, so it follows IsAnonymousEnabled.
 func (c *Cache) Validate(username, password string) bool {
-	if username == "" {
+	if username == "" || username == AnonymousUser {
 		return c.IsAnonymousEnabled()
 	}
 	u, ok := c.lookup(username)
