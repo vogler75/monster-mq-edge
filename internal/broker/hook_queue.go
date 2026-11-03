@@ -160,16 +160,16 @@ func (h *QueueHook) OnPublished(_ *mqtt.Client, pk packets.Packet) {
 	}
 
 	ctx := context.Background()
-	names := []string{pk.TopicName}
 	canonical := pk.TopicName
 	if h.server != nil {
 		if vr := h.server.VirtualTrees(); vr != nil {
-			names = vr.Presentations(canonical)
+			for _, name := range vr.Presentations(canonical) {
+				h.enqueueOffline(ctx, pk, name, canonical)
+			}
+			return
 		}
 	}
-	for _, name := range names {
-		h.enqueueOffline(ctx, pk, name, canonical)
-	}
+	h.enqueueOffline(ctx, pk, canonical, canonical)
 }
 
 // enqueueOffline queues the message under one presentation name for the

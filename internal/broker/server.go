@@ -802,7 +802,7 @@ func build(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus, opts Optio
 		resolver.PeerLinkMgr = pl
 		resolver.KafkaClients = kafkaClients
 		resolver.ProtocolSessions = protoSessions
-	resolver.VirtualTrees = vtMgr
+		resolver.VirtualTrees = vtMgr
 		if nativeOn {
 			resolver.Browse = browse
 			resolver.UnsMgr = unsMgr
