@@ -313,6 +313,10 @@ func (g *Group) flushQueue() {
 }
 
 func matchTopic(pattern, topic string) bool {
+	// MQTT 4.7.2: a filter starting with a wildcard must not match $-topics ($SYS/...).
+	if strings.HasPrefix(topic, "$") && (strings.HasPrefix(pattern, "#") || strings.HasPrefix(pattern, "+")) {
+		return false
+	}
 	if pattern == "#" {
 		return true
 	}
