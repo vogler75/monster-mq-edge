@@ -342,6 +342,10 @@ func (s *Service) stopWild(ctx context.Context) {
 
 // TopicMatches reports whether an MQTT topic matches a filter.
 func TopicMatches(filter, topic string) bool {
+	// MQTT 4.7.2: a filter starting with a wildcard must not match $-topics ($SYS/...).
+	if strings.HasPrefix(topic, "$") && (strings.HasPrefix(filter, "#") || strings.HasPrefix(filter, "+")) {
+		return false
+	}
 	fs := strings.Split(filter, "/")
 	ts := strings.Split(topic, "/")
 	for i, f := range fs {

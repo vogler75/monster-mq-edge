@@ -1820,6 +1820,10 @@ func (m *MetricsStore) PurgeOlderThan(ctx context.Context, t time.Time) (int64, 
 // helpers ----------------------------------------------------------------
 
 func matchTopic(pattern, topic string) bool {
+	// MQTT 4.7.2: a filter starting with a wildcard must not match $-topics ($SYS/...).
+	if strings.HasPrefix(topic, "$") && (strings.HasPrefix(pattern, "#") || strings.HasPrefix(pattern, "+")) {
+		return false
+	}
 	pp := strings.Split(pattern, "/")
 	tt := strings.Split(topic, "/")
 	for i, p := range pp {
