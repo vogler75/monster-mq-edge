@@ -37,3 +37,11 @@ func TestAnthropicTempTransportRetriesWithoutTemperature(t *testing.T) {
 		t.Fatalf("expected temperature dropped afterwards, got %v", bodies)
 	}
 }
+
+func TestStripThinkingBlocks(t *testing.T) {
+	in := `{"id":"x","content":[{"type":"thinking","thinking":"","signature":"s"},{"type":"text","text":"hi"}]}`
+	out := string(stripThinkingBlocks([]byte(in)))
+	if strings.Contains(out, "thinking") || !strings.Contains(out, `"text":"hi"`) {
+		t.Fatalf("unexpected: %s", out)
+	}
+}

@@ -26,6 +26,60 @@ func newAnthropicTempTransport(sendTemperature bool) *anthropicTempTransport {
 }
 
 func (t *anthropicTempTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.roundTrip(req)
+	if err != nil || resp.StatusCode != http.StatusOK || resp.Body == nil {
+		return resp, err
+	}
+	body, rerr := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if rerr != nil {
+		return nil, rerr
+	}
+	body = stripThinkingBlocks(body)
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	resp.ContentLength = int64(len(body))
+	resp.Header.Del("Content-Length")
+	return resp, nil
+}
+
+// stripThinkingBlocks removes "thinking" and "redacted_thinking" content
+// blocks from a Messages response: the langchaingo client fails on content
+// types it does not know.
+func stripThinkingBlocks(body []byte) []byte {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(body, &m) != nil {
+		return body
+	}
+	raw, ok := m["content"]
+	if !ok {
+		return body
+	}
+	var blocks []json.RawMessage
+	if json.Unmarshal(raw, &blocks) != nil {
+		return body
+	}
+	kept := make([]json.RawMessage, 0, len(blocks))
+	for _, b := range blocks {
+		var h struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(b, &h) == nil && (h.Type == "thinking" || h.Type == "redacted_thinking") {
+			continue
+		}
+		kept = append(kept, b)
+	}
+	if len(kept) == len(blocks) {
+		return body
+	}
+	m["content"], _ = json.Marshal(kept)
+	out, err := json.Marshal(m)
+	if err != nil {
+		return body
+	}
+	return out
+}
+
+func (t *anthropicTempTransport) roundTrip(req *http.Request) (*http.Response, error) {
 	if req.Body == nil || req.Method != http.MethodPost {
 		return t.base.RoundTrip(req)
 	}
