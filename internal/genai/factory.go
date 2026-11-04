@@ -182,6 +182,8 @@ func CreateProvider(ctx context.Context, params ProviderParams) (Provider, error
 		if params.Endpoint != "" {
 			opts = append(opts, anthropic.WithBaseURL(params.Endpoint))
 		}
+		// Newer Claude models reject `temperature`; the transport removes it.
+		opts = append(opts, anthropic.WithHTTPClient(&http.Client{Transport: newAnthropicTempTransport(params.Temperature > 0)}))
 		model, err = anthropic.New(opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create Anthropic Claude client: %w", err)
