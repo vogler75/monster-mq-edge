@@ -33,6 +33,10 @@ func SplitTopic(topic string) (fixed [MaxFixedTopicLevels]string, restJSON strin
 // MatchTopic checks whether a concrete MQTT topic matches a subscription pattern.
 // Supports + (single level) and # (multi level, must be the last level) wildcards.
 func MatchTopic(pattern, topic string) bool {
+	// MQTT 4.7.2: a filter starting with a wildcard must not match $-topics ($SYS/...).
+	if strings.HasPrefix(topic, "$") && (strings.HasPrefix(pattern, "#") || strings.HasPrefix(pattern, "+")) {
+		return false
+	}
 	pp := strings.Split(pattern, "/")
 	tt := strings.Split(topic, "/")
 	for i, p := range pp {
