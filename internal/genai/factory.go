@@ -66,6 +66,7 @@ func CreateAssistantProvider(ctx context.Context, cfg config.GenAIConfig) (Provi
 		if params.ApiKey == "" {
 			params.ApiKey = os.Getenv("GEMINI_API_KEY")
 		}
+		params.Endpoint = resolveEnv(cfg.Providers.Gemini.Endpoint)
 		if params.Model == "" {
 			params.Model = "gemini-2.5-flash"
 		}
@@ -73,6 +74,10 @@ func CreateAssistantProvider(ctx context.Context, cfg config.GenAIConfig) (Provi
 		params.ApiKey = resolveEnv(cfg.Providers.Claude.ApiKey)
 		if params.ApiKey == "" {
 			params.ApiKey = os.Getenv("ANTHROPIC_API_KEY")
+		}
+		params.Endpoint = resolveEnv(cfg.Providers.Claude.Endpoint)
+		if params.Endpoint == "" {
+			params.Endpoint = os.Getenv("ANTHROPIC_BASE_URL")
 		}
 		if params.Model == "" {
 			params.Model = "claude-3-7-sonnet-20250219"

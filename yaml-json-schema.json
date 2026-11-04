@@ -417,14 +417,16 @@
               "type": "object",
               "title": "Google Gemini",
               "properties": {
-                "ApiKey": { "type": "string", "title": "API Key", "description": "Google Gemini API key (e.g. '${GEMINI_API_KEY}')" }
+                "ApiKey": { "type": "string", "title": "API Key", "description": "Google Gemini API key (e.g. '${GEMINI_API_KEY}')" },
+                "Endpoint": { "type": "string", "title": "Custom Endpoint", "description": "Custom OpenAI-compatible Gemini base URL, e.g. a gateway/proxy (default: https://generativelanguage.googleapis.com/v1beta/openai)" }
               }
             },
             "Claude": {
               "type": "object",
               "title": "Anthropic Claude",
               "properties": {
-                "ApiKey": { "type": "string", "title": "API Key", "description": "Anthropic API key (e.g. '${ANTHROPIC_API_KEY}')" }
+                "ApiKey": { "type": "string", "title": "API Key", "description": "Anthropic API key (e.g. '${ANTHROPIC_API_KEY}')" },
+                "Endpoint": { "type": "string", "title": "Custom Endpoint", "description": "Custom Anthropic base URL, e.g. a gateway/proxy (default: https://api.anthropic.com; falls back to ANTHROPIC_BASE_URL)" }
               }
             },
             "OpenAI": {

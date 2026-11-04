@@ -401,16 +401,26 @@ type GenAiAssistantConfig struct {
 }
 
 type GenAiProvidersConfig struct {
-	Gemini     GenAiApiKeyConfig     `yaml:"Gemini"`
-	Claude     GenAiApiKeyConfig     `yaml:"Claude"`
+	Gemini     GenAiGeminiConfig     `yaml:"Gemini"`
+	Claude     GenAiClaudeConfig     `yaml:"Claude"`
 	OpenAI     GenAiOpenAIConfig     `yaml:"OpenAI"`
 	Ollama     GenAiOllamaConfig     `yaml:"Ollama"`
 	LlamaCpp   GenAiLlamaCppConfig   `yaml:"LlamaCpp"`
 	OpenRouter GenAiOpenRouterConfig `yaml:"OpenRouter"`
 }
 
-type GenAiApiKeyConfig struct {
-	ApiKey string `yaml:"ApiKey"`
+// GenAiGeminiConfig configures Google Gemini. Endpoint, if set, must be an
+// OpenAI-compatible base URL (default: Google's /v1beta/openai endpoint).
+type GenAiGeminiConfig struct {
+	ApiKey   string `yaml:"ApiKey"`
+	Endpoint string `yaml:"Endpoint"`
+}
+
+// GenAiClaudeConfig configures Anthropic models. Endpoint overrides the
+// Anthropic base URL (e.g. a gateway/proxy or Bedrock/Vertex-compatible front).
+type GenAiClaudeConfig struct {
+	ApiKey   string `yaml:"ApiKey"`
+	Endpoint string `yaml:"Endpoint"`
 }
 
 type GenAiOpenAIConfig struct {

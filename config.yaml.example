@@ -139,8 +139,10 @@ GenAI:
   Providers:
     Gemini:
       ApiKey: "${GEMINI_API_KEY}"
+      # Endpoint: "https://my-gateway.example.com/v1beta/openai"   # optional, OpenAI-compatible base URL
     Claude:
       ApiKey: "${ANTHROPIC_API_KEY}"
+      # Endpoint: "https://my-gateway.example.com"   # optional custom Anthropic base URL
     OpenAI:
       ApiKey: "${OPENAI_API_KEY}"
       Endpoint: "http://localhost:8080/v1"
