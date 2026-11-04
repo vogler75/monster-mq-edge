@@ -75,10 +75,11 @@ func (e effectiveMeta) writes() int {
 }
 
 func effectiveArchive(s *Settings, te *TypeElement, de *DatapointElement) *Archive {
-	if s == nil || !s.OaArchiveEnabled {
-		return nil
+	var enabled bool
+	var group string
+	if s != nil && s.OaArchiveEnabled {
+		enabled, group = true, s.OaArchiveGroup
 	}
-	enabled, group := s.OaArchiveEnabled, s.OaArchiveGroup
 	if te != nil && te.Archive != nil {
 		enabled = te.Archive.Enabled
 		if te.Archive.Group != "" {

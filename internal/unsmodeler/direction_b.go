@@ -201,7 +201,7 @@ func (m *Manager) promptB(s *Settings, req AiRunRequest, draft *Document) (strin
 	if s.OaArchiveEnabled && s.OaArchiveGroup != "" {
 		fmt.Fprintf(&b, "- Device default archiving is enabled with WinCC OA archive group %q. All created datapoint elements will be archived by default; set element archive metadata only when a different group or enabled: false is needed.\n", s.OaArchiveGroup)
 	} else {
-		b.WriteString("- WinCC OA archiving is disabled for this device. Do not add archive metadata or select an archive group; no _archive configuration will be written, even if the proposal contains archive metadata.\n")
+		b.WriteString("- WinCC OA archiving is disabled for this device. Do not add archive metadata; archive metadata in your answer is removed.\n")
 	}
 	b.WriteString("- Alert classes are names of _AlertClass datapoints, e.g. alert or warning.\n" +
 		"- Source time: when a JSON payload has a field that holds the time of a value, set timePath to that field and timeFormat " +
@@ -279,8 +279,10 @@ func promptDraftB(doc *Document) []byte {
 
 // stampB sets source, aiRun and the excluded flags of the draft on an AI
 // (or imported) Direction B document, before validation. Key order and
-// number spelling of the document are kept.
-func stampB(raw []byte, draft *Document, in *TopicInput, run *AiRun) ([]byte, error) {
+// number spelling of the document are kept. With stripArchive, element
+// archive metadata of the document is dropped: while device archiving is
+// disabled only archive settings edited in the draft count.
+func stampB(raw []byte, draft *Document, in *TopicInput, run *AiRun, stripArchive bool) ([]byte, error) {
 	v, _, ok := decodeDocument(raw)
 	if !ok {
 		return nil, fmt.Errorf("not valid JSON")
@@ -336,6 +338,26 @@ func stampB(raw []byte, draft *Document, in *TopicInput, run *AiRun) ([]byte, er
 				continue
 			}
 			deleteKey(o, "excluded")
+			if stripArchive {
+				if elems, ok := o.vals["elements"].([]any); ok {
+					kept := elems[:0]
+					for _, e := range elems {
+						if eo, ok := e.(*jsonObject); ok {
+							deleteKey(eo, "archive")
+							// A datapoint element with nothing but its path is invalid.
+							if len(eo.keys) == 1 && eo.keys[0] == "path" {
+								continue
+							}
+						}
+						kept = append(kept, e)
+					}
+					if len(kept) == 0 {
+						deleteKey(o, "elements")
+					} else {
+						o.vals["elements"] = kept
+					}
+				}
+			}
 			name, _ := o.vals["name"].(string)
 			seen[name] = true
 			if excluded[name] {
@@ -406,7 +428,7 @@ func (m *Manager) prepareBDoc(ctx context.Context, device string, s *Settings, r
 	if is := fatalIssue(raw); is != nil {
 		return PreparedAnswer{Issues: []Issue{*is}}
 	}
-	stamped, err := stampB(raw, draft, in, run)
+	stamped, err := stampB(raw, draft, in, run, !s.OaArchiveEnabled)
 	if err != nil {
 		return PreparedAnswer{Issues: []Issue{{Severity: SeverityError, Message: "the document must be a JSON object: " + err.Error()}}}
 	}

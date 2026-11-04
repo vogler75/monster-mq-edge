@@ -110,7 +110,7 @@ func validateB(ctx context.Context, doc *Document, env ValidationEnv) []Issue {
 			}
 			checkRange(e.PvRange, ep+"/pvRange", add)
 			checkAlert(e.Alert, e.ElementType, ep+"/alert", add)
-			if s.OaArchiveEnabled && e.Archive != nil && e.Archive.Enabled && e.Archive.Group == "" && s.OaArchiveGroup == "" {
+			if e.Archive != nil && e.Archive.Enabled && e.Archive.Group == "" && (!s.OaArchiveEnabled || s.OaArchiveGroup == "") {
 				add(SeverityError, ep+"/archive", "archive.group is required when archiving is enabled and no default archive group is set on the device")
 			}
 		}
@@ -235,7 +235,7 @@ func validateB(ctx context.Context, doc *Document, env ValidationEnv) []Issue {
 				continue
 			}
 			for j, e := range ti.t.Elements {
-				if s.OaArchiveEnabled && e.Archive != nil && e.Archive.Enabled && e.Archive.Group != "" {
+				if e.Archive != nil && e.Archive.Enabled && e.Archive.Group != "" {
 					refs = append(refs, groupRef{group: e.Archive.Group, ptr: fmt.Sprintf("%s/elements/%d/archive/group", ti.ptr, j)})
 				}
 			}
@@ -245,7 +245,7 @@ func validateB(ctx context.Context, doc *Document, env ValidationEnv) []Issue {
 				continue
 			}
 			for j, e := range d.Elements {
-				if s.OaArchiveEnabled && e.Archive != nil && e.Archive.Enabled && e.Archive.Group != "" {
+				if e.Archive != nil && e.Archive.Enabled && e.Archive.Group != "" {
 					refs = append(refs, groupRef{group: e.Archive.Group, ptr: fmt.Sprintf("/datapoints/%d/elements/%d/archive/group", i, j)})
 				}
 			}
@@ -324,7 +324,7 @@ func validateB(ctx context.Context, doc *Document, env ValidationEnv) []Issue {
 			if et != "" {
 				checkDatapointMeta(e, et, ep, add)
 			}
-			if s.OaArchiveEnabled && e.Archive != nil && e.Archive.Enabled {
+			if e.Archive != nil && e.Archive.Enabled {
 				var teGroup string
 				if ti.t != nil {
 					for _, te := range ti.t.Elements {
@@ -334,7 +334,7 @@ func validateB(ctx context.Context, doc *Document, env ValidationEnv) []Issue {
 						}
 					}
 				}
-				if e.Archive.Group == "" && teGroup == "" && s.OaArchiveGroup == "" {
+				if e.Archive.Group == "" && teGroup == "" && (!s.OaArchiveEnabled || s.OaArchiveGroup == "") {
 					add(SeverityError, ep+"/archive", "archive.group is required when archiving is enabled and no default archive group is set on the device")
 				}
 			}

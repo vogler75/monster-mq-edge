@@ -531,7 +531,7 @@ func TestDirectionBArchiving(t *testing.T) {
 		t.Fatalf("expected non-existent archive group error, got %v", res.Issues)
 	}
 
-	// Disabled device archiving ignores proposal archive metadata.
+	// Disabled device archiving has no default group; explicit element settings still need one.
 	sNoDefault := settingsB()
 	sNoDefault.OaArchiveEnabled = false
 	sNoDefault.OaArchiveGroup = ""
@@ -541,12 +541,16 @@ func TestDirectionBArchiving(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if HasErrors(res.Issues) {
-		t.Fatalf("disabled archiving rejected an unused archive config: %v", res.Issues)
+	if !hasIssue(res.Issues, SeverityError, "/types/0/elements/0/archive", "archive.group is required when archiving is enabled") {
+		t.Fatalf("expected missing archive group error, got %v", res.Issues)
 	}
-	res, err = Validate(context.Background(), []byte(docNonExistent), ValidationEnv{Settings: sNoDefault, Roots: TopicRoots{}, OA: oa})
-	if err != nil || HasErrors(res.Issues) {
-		t.Fatalf("disabled archiving resolved an unused archive group: %v, %v", res, err)
+	sDisabledWithGroup := settingsB()
+	sDisabledWithGroup.OaArchiveGroup = "EVENT"
+	explicit, _ := ParseDocument([]byte(`{"schemaVersion":1,"direction":"mqtt_to_winccoa","source":{"mode":"live","topicFilters":["plant/#"]},
+		"types":[{"name":"UNS_T1","elements":[{"path":"a","elementType":"float","archive":{"enabled":true,"group":"FAST"}},{"path":"b","elementType":"float"}]}],
+		"datapoints":[{"name":"UNS_D1","type":"UNS_T1","bindings":[{"element":"a","topic":"plant/a"},{"element":"b","topic":"plant/b"}]}]}`))
+	if p := Plan(explicit, sDisabledWithGroup); p.ConfigWrites != 1 {
+		t.Fatalf("disabled default: want only the explicit archive write, got %+v", p)
 	}
 
 	// 3. CreateInWinCCOa with device default + overrides
