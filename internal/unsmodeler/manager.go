@@ -283,6 +283,14 @@ func (m *Manager) restartFlow(ctx context.Context, name string) {
 
 // Stop stops every device.
 func (m *Manager) Stop() {
+	m.runs.mu.Lock()
+	for _, st := range m.runs.last {
+		if st.Status == "running" {
+			st.cancel(context.Canceled)
+			st.cancelRequested = true
+		}
+	}
+	m.runs.mu.Unlock()
 	m.mu.Lock()
 	devs := m.devices
 	m.devices = map[string]*device{}

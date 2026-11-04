@@ -66,15 +66,15 @@ func (r *Resolver) unsDevice(d stores.DeviceConfig) *generated.UnsModelerDevice 
 		s, _ = unsmodeler.ParseSettings("")
 	}
 	cfg := &generated.UnsModelerConfig{
-		Direction:     unsDirection(s.Direction),
-		ApprovalMode:  generated.UnsModelerApprovalMode(strings.ToUpper(s.ApprovalMode)),
-		SystemPrompt:  optString(s.SystemPrompt),
-		AiMaxSteps:    s.AiMaxSteps,
-		AiTimeoutSec:  s.AiTimeoutSec,
-		AiTokenBudget: s.AiTokenBudget,
-		Redundancy:    generated.UnsModelerRedundancy(s.Redundancy),
-		UnsRoot:       optString(s.UnsRoot),
-		AllowWrite:    s.AllowWrite,
+		Direction:        unsDirection(s.Direction),
+		ApprovalMode:     generated.UnsModelerApprovalMode(strings.ToUpper(s.ApprovalMode)),
+		SystemPrompt:     optString(s.SystemPrompt),
+		AiMaxSteps:       s.AiMaxSteps,
+		AiTimeoutSec:     s.AiTimeoutSec,
+		AiTokenBudget:    s.AiTokenBudget,
+		Redundancy:       generated.UnsModelerRedundancy(s.Redundancy),
+		UnsRoot:          optString(s.UnsRoot),
+		AllowWrite:       s.AllowWrite,
 		OaPrefix:         optString(s.OaPrefix),
 		FlowEnabled:      s.Flow(),
 		OaArchiveEnabled: s.OaArchiveEnabled,
@@ -497,6 +497,17 @@ func (r *unsModelerMutationsResolver) StartAiRun(ctx context.Context, _ *generat
 	return &generated.UnsModelerAiRunResult{Success: true, Errors: []string{}, Run: unsAiRun(st)}, nil
 }
 
+func (r *unsModelerMutationsResolver) CancelAiRun(ctx context.Context, _ *generated.UnsModelerMutations, name string) (*generated.UnsModelerAiRunResult, error) {
+	if r.UnsMgr == nil {
+		return &generated.UnsModelerAiRunResult{Success: false, Errors: []string{errUnsNotEmbedded.Error()}}, nil
+	}
+	st, err := r.UnsMgr.CancelAiRun(name)
+	if err != nil {
+		return &generated.UnsModelerAiRunResult{Success: false, Errors: []string{err.Error()}}, nil
+	}
+	return &generated.UnsModelerAiRunResult{Success: true, Errors: []string{}, Run: unsAiRun(st)}, nil
+}
+
 // Direction B -------------------------------------------------------------
 
 func (r *unsModelerDeviceResolver) CreatePlan(ctx context.Context, obj *generated.UnsModelerDevice) (*generated.UnsModelerCreatePlan, error) {
@@ -571,7 +582,6 @@ func (r *unsModelerMutationsResolver) ImportProposal(ctx context.Context, _ *gen
 	res.Success = true
 	return res, nil
 }
-
 
 // unsTopicData converts the topics and values the dashboard collected live.
 func unsTopicData(in []*generated.TopicDataInput) map[string]string {

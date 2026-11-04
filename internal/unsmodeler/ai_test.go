@@ -46,6 +46,9 @@ func (f *fakeAI) GenerateWithTools(ctx context.Context, req genai.ToolRequest, t
 	}
 	res := &genai.ToolResponse{}
 	for _, s := range f.script {
+		if err := ctx.Err(); err != nil {
+			return res, err
+		}
 		if req.MaxSteps > 0 && res.ToolCalls >= req.MaxSteps {
 			return res, genai.ErrMaxSteps
 		}
@@ -246,6 +249,90 @@ func TestAiRunMaxSteps(t *testing.T) {
 	}
 	if d, _ := docs.Get(context.Background(), "d", SlotDraft); d != nil {
 		t.Fatal("draft stored by a failed run")
+	}
+}
+
+func TestAiRunValidationRetryLimit(t *testing.T) {
+	for _, mode := range []string{"tool", "arguments", "final", "mixed"} {
+		t.Run(mode, func(t *testing.T) {
+			var script []scriptStep
+			for i := 0; i < 10; i++ {
+				step := scriptStep{tool: "validate", args: map[string]any{"proposalJson": `{"schemaVersion":`}}
+				switch mode {
+				case "arguments":
+					step.args = []string{"not an arguments object"}
+				case "final":
+					step = scriptStep{final: "not JSON"}
+				case "mixed":
+					if i%2 == 1 {
+						step = scriptStep{final: "VALIDATED"}
+					}
+				}
+				script = append(script, step)
+			}
+			m, f, docs := aiSetup(t, AlwaysActive{}, ApprovalAuto, script)
+			if _, err := m.StartAiRun(context.Background(), "d", AiRunRequest{Selection: selA}); err != nil {
+				t.Fatal(err)
+			}
+			st := waitRun(t, m)
+			if st.Status != "failed" || st.Error != errValidationRetries.Error() || len(f.results) != 4 {
+				t.Fatalf("run %+v, %d attempts", st, len(f.results))
+			}
+			for _, slot := range []string{SlotDraft, SlotApplied} {
+				if raw, _ := docs.Get(context.Background(), "d", slot); raw != nil {
+					t.Fatalf("failed run stored %s", slot)
+				}
+			}
+		})
+	}
+}
+
+func TestAiRunCancellation(t *testing.T) {
+	for _, action := range []string{"cancel", "shutdown"} {
+		t.Run(action, func(t *testing.T) {
+			m, f, docs := aiSetup(t, AlwaysActive{}, ApprovalAuto, []scriptStep{{final: goodProposal}})
+			started := make(chan struct{})
+			m.SetProviders(func(ctx context.Context) (genai.Provider, error) {
+				close(started)
+				<-ctx.Done()
+				return nil, ctx.Err()
+			})
+			if _, err := m.CancelAiRun("d"); err == nil {
+				t.Fatal("cancellation without an active run succeeded")
+			}
+			if _, err := m.StartAiRun(context.Background(), "d", AiRunRequest{Selection: selA}); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-started:
+			case <-time.After(5 * time.Second):
+				t.Fatal("provider did not start")
+			}
+			if action == "shutdown" {
+				m.Stop()
+			} else if _, err := m.CancelAiRun("d"); err != nil {
+				t.Fatal(err)
+			}
+			st := waitRun(t, m)
+			if st.Status != "cancelled" || st.Applied || st.Finished.IsZero() {
+				t.Fatalf("cancelled run %+v", st)
+			}
+			if raw, _ := docs.Get(context.Background(), "d", SlotDraft); raw != nil {
+				t.Fatal("cancelled run stored a draft")
+			}
+			if _, err := m.CancelAiRun("d"); err == nil {
+				t.Fatal("completed run accepted cancellation")
+			}
+			if action == "cancel" {
+				m.SetProviders(func(context.Context) (genai.Provider, error) { return f, nil })
+				if _, err := m.StartAiRun(context.Background(), "d", AiRunRequest{Selection: selA}); err != nil {
+					t.Fatalf("cannot restart after cancellation: %v", err)
+				}
+				if st := waitRun(t, m); st.Status != "succeeded" {
+					t.Fatalf("restarted run %+v", st)
+				}
+			}
+		})
 	}
 }
 

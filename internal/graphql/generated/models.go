@@ -1099,7 +1099,7 @@ type UnsModelerAiEvent struct {
 
 type UnsModelerAiRun struct {
 	ID string `json:"id"`
-	// RUNNING, SUCCEEDED or FAILED
+	// RUNNING, SUCCEEDED, FAILED or CANCELLED
 	Status       string  `json:"status"`
 	Provider     string  `json:"provider"`
 	Model        *string `json:"model,omitempty"`
@@ -1262,6 +1262,8 @@ type UnsModelerMutations struct {
 	ImportProposal *UnsModelerMappingResult `json:"importProposal"`
 	// Starts an AI run that proposes a full mapping document (stored as the draft).
 	StartAiRun *UnsModelerAiRunResult `json:"startAiRun"`
+	// Requests cancellation of the running AI analysis. Already completed writes are not undone.
+	CancelAiRun *UnsModelerAiRunResult `json:"cancelAiRun"`
 }
 
 type UnsModelerObjectResult struct {

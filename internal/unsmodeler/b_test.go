@@ -531,7 +531,7 @@ func TestDirectionBArchiving(t *testing.T) {
 		t.Fatalf("expected non-existent archive group error, got %v", res.Issues)
 	}
 
-	// Document with archive enabled but no group when device default is off
+	// Disabled device archiving ignores proposal archive metadata.
 	sNoDefault := settingsB()
 	sNoDefault.OaArchiveEnabled = false
 	sNoDefault.OaArchiveGroup = ""
@@ -541,8 +541,12 @@ func TestDirectionBArchiving(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !hasIssue(res.Issues, SeverityError, "/types/0/elements/0/archive", "archive.group is required when archiving is enabled") {
-		t.Fatalf("expected missing archive group error, got %v", res.Issues)
+	if HasErrors(res.Issues) {
+		t.Fatalf("disabled archiving rejected an unused archive config: %v", res.Issues)
+	}
+	res, err = Validate(context.Background(), []byte(docNonExistent), ValidationEnv{Settings: sNoDefault, Roots: TopicRoots{}, OA: oa})
+	if err != nil || HasErrors(res.Issues) {
+		t.Fatalf("disabled archiving resolved an unused archive group: %v, %v", res, err)
 	}
 
 	// 3. CreateInWinCCOa with device default + overrides
@@ -641,4 +645,3 @@ func TestDirectionBArchiving(t *testing.T) {
 		t.Fatalf("label _archive.._archive = %+v, want true", v)
 	}
 }
-

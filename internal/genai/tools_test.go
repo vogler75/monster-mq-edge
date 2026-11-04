@@ -150,6 +150,21 @@ func TestToolDeclarationsFlat(t *testing.T) {
 	}
 }
 
+func TestToolLoopCancellationFromFinal(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m := &fakeModel{}
+	_, err := runToolLoop(ctx, m, "fake", nil, ToolRequest{
+		Final: func(string) (string, bool) {
+			cancel()
+			return "invalid document", false
+		},
+	}, nil)
+	if !errors.Is(err, context.Canceled) || len(m.calls) != 1 {
+		t.Fatalf("cancellation: %v, %d model calls", err, len(m.calls))
+	}
+}
+
 // stubServer answers the first request with a tool call and the second
 // with text, recording the request bodies.
 type stubServer struct {

@@ -80,21 +80,23 @@ type AiEvent struct {
 
 // AiRunStatus is the state of the running or last AI run of a device.
 type AiRunStatus struct {
-	ID           string    `json:"id"`
-	Device       string    `json:"device"`
-	Status       string    `json:"status"` // running, succeeded, failed
-	Provider     string    `json:"provider"`
-	Model        string    `json:"model"`
-	Started      time.Time `json:"started"`
-	Finished     time.Time `json:"finished"`
-	Steps        int       `json:"steps"`
-	ToolCalls    int       `json:"toolCalls"`
-	InputTokens  int       `json:"inputTokens"`
-	OutputTokens int       `json:"outputTokens"`
-	Error        string    `json:"error,omitempty"`
-	Applied      bool      `json:"applied"`
-	Issues       []Issue   `json:"issues,omitempty"`
-	Events       []AiEvent `json:"events"`
+	ID              string    `json:"id"`
+	Device          string    `json:"device"`
+	Status          string    `json:"status"` // running, succeeded, failed, cancelled
+	Provider        string    `json:"provider"`
+	Model           string    `json:"model"`
+	Started         time.Time `json:"started"`
+	Finished        time.Time `json:"finished"`
+	Steps           int       `json:"steps"`
+	ToolCalls       int       `json:"toolCalls"`
+	InputTokens     int       `json:"inputTokens"`
+	OutputTokens    int       `json:"outputTokens"`
+	Error           string    `json:"error,omitempty"`
+	Applied         bool      `json:"applied"`
+	Issues          []Issue   `json:"issues,omitempty"`
+	Events          []AiEvent `json:"events"`
+	cancel          context.CancelCauseFunc
+	cancelRequested bool
 }
 
 // AiRunRequest starts an AI run.
@@ -143,6 +145,23 @@ func (m *Manager) AiRun(device string) *AiRunStatus { return m.runs.get(device) 
 // ErrRunActive rejects a second run on the same device.
 var ErrRunActive = errors.New("an AI run is already running for this device")
 
+const maxValidationFailures = 4 // Initial attempt plus three corrections.
+
+var errValidationRetries = errors.New("AI validation failed after 4 attempts; select fewer topics or reduce the requested scope and try again")
+
+func (m *Manager) CancelAiRun(name string) (*AiRunStatus, error) {
+	m.runs.mu.Lock()
+	st := m.runs.last[name]
+	if st == nil || st.Status != "running" {
+		m.runs.mu.Unlock()
+		return nil, errors.New("no AI run is running for this device")
+	}
+	st.cancel(context.Canceled)
+	st.cancelRequested = true
+	m.runs.mu.Unlock()
+	return m.runs.get(name), nil
+}
+
 // StartAiRun starts an AI run in the background and returns its status.
 func (m *Manager) StartAiRun(ctx context.Context, name string, req AiRunRequest) (*AiRunStatus, error) {
 	_, s, err := m.deviceConfig(ctx, name)
@@ -180,9 +199,11 @@ func (m *Manager) StartAiRun(ctx context.Context, name string, req AiRunRequest)
 		return nil, ErrRunActive
 	}
 	st := &AiRunStatus{ID: NewNodeID(), Device: name, Status: "running", Started: time.Now().UTC(), Events: []AiEvent{}}
+	runCtx, cancel := context.WithCancelCause(context.Background())
+	st.cancel = cancel
 	m.runs.last[name] = st
 	m.runs.mu.Unlock()
-	go m.runAI(name, s, req, st, draftRaw)
+	go m.runAI(runCtx, name, s, req, st, draftRaw)
 	return m.runs.get(name), nil
 }
 
@@ -200,25 +221,34 @@ func (m *Manager) event(st *AiRunStatus, e AiEvent) {
 
 func (m *Manager) finishRun(st *AiRunStatus, err error, issues []Issue, applied bool) {
 	m.runs.update(st, func(s *AiRunStatus) {
+		if s.cancelRequested {
+			err = context.Canceled
+		}
 		s.Finished = time.Now().UTC()
 		s.Issues = issues
 		s.Applied = applied
 		if err != nil {
 			s.Status, s.Error = "failed", err.Error()
+			if errors.Is(err, context.Canceled) {
+				s.Status = "cancelled"
+			}
 		} else {
 			s.Status = "succeeded"
 		}
 	})
 	l := m.runLog(st)
-	if err != nil {
+	if errors.Is(err, context.Canceled) {
+		l.Info("uns ai run cancelled", "steps", st.Steps, "toolCalls", st.ToolCalls, "tokens", st.InputTokens+st.OutputTokens)
+	} else if err != nil {
 		l.Warn("uns ai run failed", "err", err, "steps", st.Steps, "toolCalls", st.ToolCalls, "tokens", st.InputTokens+st.OutputTokens)
 	} else {
 		l.Info("uns ai run succeeded", "steps", st.Steps, "toolCalls", st.ToolCalls, "tokens", st.InputTokens+st.OutputTokens, "applied", applied)
 	}
 }
 
-func (m *Manager) runAI(name string, s *Settings, req AiRunRequest, st *AiRunStatus, draftRaw []byte) {
-	ctx, cancel := genai.WithTimeout(context.Background(), s.AiTimeoutSec)
+func (m *Manager) runAI(parent context.Context, name string, s *Settings, req AiRunRequest, st *AiRunStatus, draftRaw []byte) {
+	defer st.cancel(nil)
+	ctx, cancel := genai.WithTimeout(parent, s.AiTimeoutSec)
 	defer cancel()
 	l := m.runLog(st)
 	prov, err := m.providers(ctx)
@@ -272,6 +302,15 @@ func (m *Manager) runAI(name string, s *Settings, req AiRunRequest, st *AiRunSta
 		system, prompt = m.promptB(s, req, draft)
 	}
 	var lastValid PreparedAnswer
+	var lastIssues []Issue
+	failures := 0
+	validationFailed := func(issues []Issue) {
+		lastIssues = issues
+		failures++
+		if failures >= maxValidationFailures {
+			st.cancel(errValidationRetries)
+		}
+	}
 	tools = append(tools, genai.Tool{
 		Name: "validate",
 		Description: "Validates a complete mapping document exactly like the final answer (server preparation, schema and semantic checks). " +
@@ -284,11 +323,14 @@ func (m *Manager) runAI(name string, s *Settings, req AiRunRequest, st *AiRunSta
 				ProposalJSON string `json:"proposalJson"`
 			}
 			if err := json.Unmarshal(args, &a); err != nil {
+				validationFailed(nil)
 				return "", fmt.Errorf("arguments: %v", err)
 			}
 			p := check(a.ProposalJSON)
 			if p.Doc != nil && !HasErrors(p.Issues) {
 				lastValid = p
+			} else {
+				validationFailed(p.Issues)
 			}
 			l.Info("uns ai validate", "issues", len(p.Issues), "errors", countSeverity(p.Issues, SeverityError))
 			return issuesText(p.Issues), nil
@@ -319,6 +361,7 @@ func (m *Manager) runAI(name string, s *Settings, req AiRunRequest, st *AiRunSta
 		Final: func(text string) (string, bool) {
 			if strings.EqualFold(strings.Trim(strings.TrimSpace(text), "`'\"."), "VALIDATED") {
 				if lastValid.Doc == nil {
+					validationFailed(nil)
 					return "No document passed validate without errors yet. Call validate with the complete document first.", false
 				}
 				final = lastValid
@@ -329,25 +372,33 @@ func (m *Manager) runAI(name string, s *Settings, req AiRunRequest, st *AiRunSta
 				final = p
 				return "", true
 			}
+			validationFailed(p.Issues)
 			return "The final answer is not an error-free mapping document:\n" + issuesText(p.Issues) +
 				"\nCorrect the document, call validate, and answer with the corrected complete document.", false
 		},
 	}, tools)
+	if cause := context.Cause(ctx); cause != nil {
+		err = cause
+	}
 	if resp != nil {
 		m.runs.update(st, func(x *AiRunStatus) {
 			x.InputTokens, x.OutputTokens = resp.InputTokens, resp.OutputTokens
 		})
 	}
 	if err != nil {
-		m.finishRun(st, err, nil, false)
+		m.finishRun(st, err, lastIssues, false)
 		return
 	}
 	if final.Doc == nil {
 		m.finishRun(st, errors.New("the AI run ended without an error-free document"), nil, false)
 		return
 	}
-	saveCtx, cancelSave := context.WithTimeout(context.Background(), 30*time.Second)
+	saveCtx, cancelSave := context.WithTimeout(ctx, 30*time.Second)
 	defer cancelSave()
+	if err := saveCtx.Err(); err != nil {
+		m.finishRun(st, err, final.Issues, false)
+		return
+	}
 	if err := m.saveDoc(saveCtx, name, SlotDraft, final.Doc); err != nil {
 		m.finishRun(st, fmt.Errorf("storing the proposal: %w", err), final.Issues, false)
 		return

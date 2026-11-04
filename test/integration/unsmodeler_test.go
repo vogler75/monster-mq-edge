@@ -3,8 +3,12 @@ package integration
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,6 +20,88 @@ import (
 )
 
 const unsDeviceFields = `success errors issues { severity path message } device { name enabled config { direction unsRoot allowWrite topicDefaults } status { running topics dpes published errors } }`
+
+func TestUnsModelerAiRunControl(t *testing.T) {
+	for _, action := range []string{"cancel", "retry-limit"} {
+		t.Run(action, func(t *testing.T) {
+			entered, cancelled, release := make(chan struct{}, 1), make(chan struct{}, 1), make(chan struct{})
+			var calls atomic.Int32
+			model := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = io.Copy(io.Discard, r.Body)
+				calls.Add(1)
+				select {
+				case entered <- struct{}{}:
+				default:
+				}
+				if action == "cancel" {
+					select {
+					case <-r.Context().Done():
+						cancelled <- struct{}{}
+					case <-release:
+					}
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"{\"schemaVersion\":"},"finish_reason":"stop"}]}`)
+			}))
+			t.Cleanup(model.Close)
+			t.Cleanup(func() { close(release) })
+			_, url := startNativeGraphQL(t, 27617, 28617, func(c *config.Config) {
+				c.GraphQL.Address = "127.0.0.1"
+				c.Features.GenAi, c.GenAI.Enabled = true, true
+				c.GenAI.Assistant.Provider = "openai"
+				c.GenAI.Assistant.Model = "mock"
+				c.GenAI.Assistant.DocsPath = t.TempDir()
+				c.GenAI.Providers.OpenAI.ApiKey = "test-token"
+				c.GenAI.Providers.OpenAI.Endpoint = model.URL
+			})
+			created := gqlQuery(t, url, `mutation { unsModeler { create(input: { name: "ai", config: { direction: MQTT_TO_WINCCOA, oaPrefix: "UNS_", approvalMode: AUTO } }) { success errors } } }`, nil)["unsModeler"].(map[string]any)["create"].(map[string]any)
+			if created["success"] != true {
+				t.Fatal(created)
+			}
+			start := gqlQuery(t, url, `mutation { unsModeler { startAiRun(name: "ai", input: { topicFilters: ["plant/#"], topicData: [{topic: "plant/x", value: "1.5"}] }) { success errors } } }`, nil)["unsModeler"].(map[string]any)["startAiRun"].(map[string]any)
+			if start["success"] != true {
+				t.Fatal(start)
+			}
+			select {
+			case <-entered:
+			case <-time.After(5 * time.Second):
+				t.Fatal("AI provider request did not start")
+			}
+			wantStatus := "FAILED"
+			if action == "cancel" {
+				wantStatus = "CANCELLED"
+				res := gqlQuery(t, url, `mutation { unsModeler { cancelAiRun(name: "ai") { success errors run { status } } } }`, nil)["unsModeler"].(map[string]any)["cancelAiRun"].(map[string]any)
+				if res["success"] != true {
+					t.Fatal(res)
+				}
+				select {
+				case <-cancelled:
+				case <-time.After(5 * time.Second):
+					t.Fatal("Stop did not cancel the in-flight provider HTTP request")
+				}
+			}
+			deadline := time.Now().Add(5 * time.Second)
+			for {
+				dev := gqlQuery(t, url, `{ unsModelers(name: "ai") { draft applied aiRun { status error applied } } }`, nil)["unsModelers"].([]any)[0].(map[string]any)
+				run := dev["aiRun"].(map[string]any)
+				if run["status"] != "RUNNING" {
+					if run["status"] != wantStatus || run["applied"] != false || dev["draft"] != nil || dev["applied"] != nil {
+						t.Fatalf("run outcome: %v", dev)
+					}
+					if action == "retry-limit" && (calls.Load() != 4 || !strings.Contains(fmt.Sprint(run["error"]), "after 4 attempts")) {
+						t.Fatalf("retry limit: %d requests, %v", calls.Load(), run)
+					}
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("AI run did not finish: %v", run)
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+		})
+	}
+}
 
 func unsCreate(t *testing.T, url, token, name, unsRoot string, extra string) map[string]any {
 	t.Helper()
@@ -300,12 +386,16 @@ func TestUnsModelerDirectionB(t *testing.T) {
 	if res["unsModeler"].(map[string]any)["create"].(map[string]any)["success"] != true {
 		t.Fatal(res)
 	}
+	cancel := gqlQueryAuth(t, url, `mutation { unsModeler { cancelAiRun(name: "onb") { success errors } } }`, nil, "")["unsModeler"].(map[string]any)["cancelAiRun"].(map[string]any)
+	if cancel["success"] != false || !strings.Contains(fmt.Sprint(cancel["errors"]), "no AI run") {
+		t.Fatalf("cancellation without an active run: %v", cancel)
+	}
 	pc := plPaho(t, env.port, "onb-pub")
 	plPahoPublish(t, pc, "plant/p1/data", 1, true, `{"flow": 1.5}`)
 	plPahoPublish(t, pc, "plant/p1/state", 1, true, `ON`)
 	proposal := `{"schemaVersion":1,"direction":"mqtt_to_winccoa","types":[{"name":"UNS_Pump","elements":[
-		{"path":"flow","elementType":"float","unit":"m3/h","pvRange":{"min":0,"max":100}},{"path":"motor.state","elementType":"string"}]}],
-		"datapoints":[{"name":"UNS_P1","type":"UNS_Pump","bindings":[{"element":"flow","topic":"plant/p1/data","jsonPath":"$.flow"},{"element":"motor.state","topic":"plant/p1/state"}]}]}`
+		{"path":"flow","elementType":"float","unit":"m3/h","pvRange":{"min":0,"max":100},"archive":{"enabled":true,"group":"EVENT"}},{"path":"motor.state","elementType":"string"}]}],
+		"datapoints":[{"name":"UNS_P1","type":"UNS_Pump","elements":[{"path":"motor.state","archive":{"enabled":true,"group":"EVENT"}}],"bindings":[{"element":"flow","topic":"plant/p1/data","jsonPath":"$.flow"},{"element":"motor.state","topic":"plant/p1/state"}]}]}`
 	imp := gqlQueryAuth(t, url, `mutation($d: String!) { unsModeler { importProposal(name: "onb", document: $d, topicFilters: ["plant/#"]) { success stored document errors issues { severity message } } } }`,
 		map[string]any{"d": proposal}, "")["unsModeler"].(map[string]any)["importProposal"].(map[string]any)
 	if imp["success"] != true || !strings.Contains(imp["document"].(string), `"topicFilters":["plant/#"]`) {
@@ -322,6 +412,11 @@ func TestUnsModelerDirectionB(t *testing.T) {
 	// No driver address config is created.
 	if v, _ := env.sim.Get("System1:UNS_P1.flow:_address.._type"); v.Kind != oahost.KindNull {
 		t.Fatalf("address config created: %+v", v)
+	}
+	for _, path := range []string{"flow", "motor.state"} {
+		if v, err := env.sim.Get("System1:UNS_P1." + path + ":_archive.._type"); err != nil || v.Kind != oahost.KindNull {
+			t.Fatalf("archiving disabled, but %s has archive config: %+v (%v)", path, v, err)
+		}
 	}
 	plPahoPublish(t, pc, "plant/p1/data", 1, false, `{"flow": 42}`)
 	plPahoPublish(t, pc, "plant/p1/state", 1, false, `RUNNING`)

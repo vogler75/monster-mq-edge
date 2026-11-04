@@ -196,6 +196,7 @@ models:
       saveDraft: { resolver: true }
       apply:     { resolver: true }
       startAiRun: { resolver: true }
+      cancelAiRun: { resolver: true }
       createInWinCCOa: { resolver: true }
       importProposal: { resolver: true }
   UnsModelerDevice:

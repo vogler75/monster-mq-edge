@@ -200,6 +200,8 @@ func (m *Manager) promptB(s *Settings, req AiRunRequest, draft *Document) (strin
 		"- Do not write source, aiRun or excluded; the server sets them.\n")
 	if s.OaArchiveEnabled && s.OaArchiveGroup != "" {
 		fmt.Fprintf(&b, "- Device default archiving is enabled with WinCC OA archive group %q. All created datapoint elements will be archived by default; set element archive metadata only when a different group or enabled: false is needed.\n", s.OaArchiveGroup)
+	} else {
+		b.WriteString("- WinCC OA archiving is disabled for this device. Do not add archive metadata or select an archive group; no _archive configuration will be written, even if the proposal contains archive metadata.\n")
 	}
 	b.WriteString("- Alert classes are names of _AlertClass datapoints, e.g. alert or warning.\n" +
 		"- Source time: when a JSON payload has a field that holds the time of a value, set timePath to that field and timeFormat " +

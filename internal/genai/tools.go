@@ -174,6 +174,9 @@ func runToolLoop(ctx context.Context, model llms.Model, modelName string, opts [
 	callOpts := append([]llms.CallOption{llms.WithTools(toLLMTools(tools))}, opts...)
 	res := &ToolResponse{Model: modelName}
 	for step := 1; ; step++ {
+		if err := ctx.Err(); err != nil {
+			return res, err
+		}
 		res.Steps = step
 		resp, err := model.GenerateContent(ctx, msgs, callOpts...)
 		if err != nil {
@@ -201,6 +204,9 @@ func runToolLoop(ctx context.Context, model llms.Model, modelName string, opts [
 				return res, nil
 			}
 			feedback, done := req.Final(res.Text)
+			if err := ctx.Err(); err != nil {
+				return res, err
+			}
 			if done {
 				return res, nil
 			}

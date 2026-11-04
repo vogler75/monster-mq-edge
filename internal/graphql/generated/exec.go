@@ -274,6 +274,7 @@ type UnsModelerMutationsResolver interface {
 	CreateInWinCCOa(ctx context.Context, obj *UnsModelerMutations, name string) (*UnsModelerCreateResult, error)
 	ImportProposal(ctx context.Context, obj *UnsModelerMutations, name string, document string, topicMode *string, archiveGroup *string, topicFilters []string, topicData []*TopicDataInput) (*UnsModelerMappingResult, error)
 	StartAiRun(ctx context.Context, obj *UnsModelerMutations, name string, input UnsModelerAiRunInput) (*UnsModelerAiRunResult, error)
+	CancelAiRun(ctx context.Context, obj *UnsModelerMutations, name string) (*UnsModelerAiRunResult, error)
 }
 type UserInfoResolver interface {
 	ACLRules(ctx context.Context, obj *UserInfo) ([]*ACLRuleInfo, error)
@@ -2295,7 +2296,7 @@ type UnsModelerAiEvent {
 
 type UnsModelerAiRun {
     id: String!
-    "RUNNING, SUCCEEDED or FAILED"
+    "RUNNING, SUCCEEDED, FAILED or CANCELLED"
     status: String!
     provider: String!
     model: String
@@ -2415,6 +2416,8 @@ type UnsModelerMutations {
     importProposal(name: String!, document: String!, topicMode: String, archiveGroup: String, topicFilters: [String!]!, topicData: [TopicDataInput!]): UnsModelerMappingResult!
     "Starts an AI run that proposes a full mapping document (stored as the draft)."
     startAiRun(name: String!, input: UnsModelerAiRunInput!): UnsModelerAiRunResult!
+    "Requests cancellation of the running AI analysis. Already completed writes are not undone."
+    cancelAiRun(name: String!): UnsModelerAiRunResult!
 }
 
 extend type Mutation {
@@ -4670,6 +4673,8 @@ func (ec *executionContext) childFields_UnsModelerMutations(ctx context.Context,
 		return ec.fieldContext_UnsModelerMutations_importProposal(ctx, field)
 	case "startAiRun":
 		return ec.fieldContext_UnsModelerMutations_startAiRun(ctx, field)
+	case "cancelAiRun":
+		return ec.fieldContext_UnsModelerMutations_cancelAiRun(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type UnsModelerMutations", field.Name)
 }
@@ -8109,6 +8114,20 @@ func (ec *executionContext) field_Topic_value_args(ctx context.Context, rawArgs 
 }
 
 func (ec *executionContext) field_UnsModelerMutations_apply_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name",
+		func(ctx context.Context, v any) (string, error) {
+			return ec.unmarshalNString2string(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["name"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_UnsModelerMutations_cancelAiRun_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
 	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name",
@@ -29180,6 +29199,50 @@ func (ec *executionContext) fieldContext_UnsModelerMutations_startAiRun(ctx cont
 	}()
 	ctx = graphql.WithFieldContext(ctx, fc)
 	if fc.Args, err = ec.field_UnsModelerMutations_startAiRun_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _UnsModelerMutations_cancelAiRun(ctx context.Context, field graphql.CollectedField, obj *UnsModelerMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_UnsModelerMutations_cancelAiRun(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.UnsModelerMutations().CancelAiRun(ctx, obj, fc.Args["name"].(string))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *UnsModelerAiRunResult) graphql.Marshaler {
+			return ec.marshalNUnsModelerAiRunResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐUnsModelerAiRunResult(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_UnsModelerMutations_cancelAiRun(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "UnsModelerMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_UnsModelerAiRunResult(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_UnsModelerMutations_cancelAiRun_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
 	}
@@ -50536,6 +50599,44 @@ func (ec *executionContext) _UnsModelerMutations(ctx context.Context, sel ast.Se
 					}
 				}()
 				res = ec._UnsModelerMutations_startAiRun(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.IsDeferred() {
+				deferredFieldSet.AddField(field)
+				fieldIndex := len(deferredFieldSet.Values) - 1
+				deferredFieldSet.Concurrently(fieldIndex, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, deferredFieldSet)
+				})
+
+				for _, deferrable := range field.Deferrables {
+					view, ok := deferLabelToView[deferrable.Label]
+					if !ok {
+						view = deferredFieldSet.NewView()
+						deferLabelToView[deferrable.Label] = view
+					}
+					view.AddIndices(fieldIndex)
+				}
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "cancelAiRun":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._UnsModelerMutations_cancelAiRun(ctx, field, obj)
 				if res == graphql.Null {
 					atomic.AddUint32(&fs.Invalids, 1)
 				}

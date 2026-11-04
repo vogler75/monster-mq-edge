@@ -147,7 +147,7 @@ type UnsModelerAiEvent {
 
 type UnsModelerAiRun {
     id: String!
-    "RUNNING, SUCCEEDED or FAILED"
+    "RUNNING, SUCCEEDED, FAILED or CANCELLED"
     status: String!
     provider: String!
     model: String
@@ -267,6 +267,8 @@ type UnsModelerMutations {
     importProposal(name: String!, document: String!, topicMode: String, archiveGroup: String, topicFilters: [String!]!, topicData: [TopicDataInput!]): UnsModelerMappingResult!
     "Starts an AI run that proposes a full mapping document (stored as the draft)."
     startAiRun(name: String!, input: UnsModelerAiRunInput!): UnsModelerAiRunResult!
+    "Requests cancellation of the running AI analysis. Already completed writes are not undone."
+    cancelAiRun(name: String!): UnsModelerAiRunResult!
 }
 
 extend type Mutation {
