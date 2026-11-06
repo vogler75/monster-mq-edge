@@ -1,0 +1,97 @@
+extend type Query {
+    kafkaServers: [KafkaServerInfo!]!
+    kafkaServer(name: String!): KafkaServerInfo
+    kafkaConsumerGroups: [KafkaConsumerGroupInfo!]!
+    kafkaMessages(serverName: String!, topic: String!, startOffset: Long, limit: Int): [KafkaMessageInfo!]!
+    kafkaTopicOffsets(serverName: String!, topic: String!): KafkaTopicOffsetInfo
+}
+
+
+extend type Mutation {
+    kafkaServer: KafkaServerMutations!
+}
+
+type KafkaServerMutations {
+    add(input: KafkaServerInput!): KafkaServerResult!
+    update(name: String!, input: KafkaServerInput!): KafkaServerResult!
+    delete(name: String!): Boolean!
+    toggle(name: String!, enabled: Boolean!): KafkaServerResult!
+    reassign(name: String!, nodeId: String!): KafkaServerResult!
+    deleteConsumerGroup(groupId: String!): Boolean!
+}
+
+type KafkaServerInfo {
+    name: String!
+    namespace: String!
+    nodeId: String!
+    enabled: Boolean!
+    host: String!
+    port: Int!
+    advertisedHost: String
+    advertisedPort: Int
+    storeType: String
+    streams: [KafkaStreamMappingInfo!]!
+    createdAt: String!
+    updatedAt: String!
+    isOnCurrentNode: Boolean!
+    status: String!
+}
+
+type KafkaStreamMappingInfo {
+    streamName: String!
+    topicFilter: String!
+    retentionHours: Int!
+    storeType: String
+    allowWrite: Boolean!
+}
+
+input KafkaServerInput {
+    name: String!
+    namespace: String!
+    nodeId: String!
+    enabled: Boolean = true
+    host: String = "0.0.0.0"
+    port: Int = 9092
+    advertisedHost: String
+    advertisedPort: Int
+    storeType: String
+    streams: [KafkaStreamMappingInput!]!
+}
+
+input KafkaStreamMappingInput {
+    streamName: String!
+    topicFilter: String!
+    retentionHours: Int = 168
+    storeType: String
+    allowWrite: Boolean = true
+}
+
+type KafkaServerResult {
+    success: Boolean!
+    server: KafkaServerInfo
+    errors: [String!]!
+}
+
+type KafkaConsumerGroupInfo {
+    groupId: String!
+    topics: [String!]!
+    lastCommitTime: String!
+    lag: Long!
+}
+
+type KafkaMessageInfo {
+    offset: Long!
+    topic: String!
+    partition: Int!
+    timestamp: String!
+    key: String
+    value: String
+    size: Int!
+}
+
+type KafkaTopicOffsetInfo {
+    topic: String!
+    earliestOffset: Long!
+    latestOffset: Long!
+}
+

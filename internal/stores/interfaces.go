@@ -256,3 +256,44 @@ type MetricsRow struct {
 	Timestamp time.Time
 	Payload   string // JSON
 }
+
+// KafkaQueueEntry is one row of a Kafka server stream queue: the queue offset
+// plus the MQTT message that was stored under it.
+type KafkaQueueEntry struct {
+	Offset  int64
+	Message BrokerMessage
+}
+
+// KafkaConsumerGroup lists the topics (stream names) a consumer group has
+// committed offsets for, with the most recent commit time.
+type KafkaConsumerGroup struct {
+	GroupID        string
+	Topics         []string
+	LastCommitTime time.Time
+}
+
+// KafkaQueueStore is the sequential per-stream queue behind the Kafka protocol
+// server (tables kafka_queue_<stream> / kafka_offsets_<stream>, same layout as
+// the main broker's IKafkaQueueStore). One instance serves exactly one stream;
+// the topic arguments are the Kafka topic and are only used for the offsets
+// table and the topic column filter-free reads of the whole stream table.
+type KafkaQueueStore interface {
+	// Enqueue appends messages in order; every message gets the next offset.
+	// A failure must be returned, never swallowed.
+	Enqueue(ctx context.Context, msgs []BrokerMessage) error
+	// Fetch returns up to limit entries with offset >= startOffset, ascending.
+	Fetch(ctx context.Context, topic string, startOffset int64, limit int) ([]KafkaQueueEntry, error)
+	// GetOffset returns the committed offset, ok=false if nothing was committed.
+	GetOffset(ctx context.Context, groupID, topic string, partition int) (offset int64, ok bool, err error)
+	CommitOffset(ctx context.Context, groupID, topic string, partition int, offset int64) error
+	// GetLatestOffset is MAX(offset_id), 0 for an empty queue.
+	GetLatestOffset(ctx context.Context, topic string) (int64, error)
+	// GetEarliestOffset is MIN(offset_id), 0 for an empty queue.
+	GetEarliestOffset(ctx context.Context, topic string) (int64, error)
+	// PruneExpired deletes entries created before olderThan and returns the count.
+	PruneExpired(ctx context.Context, olderThan time.Time) (int, error)
+	GetConsumerGroups(ctx context.Context) ([]KafkaConsumerGroup, error)
+	DeleteConsumerGroup(ctx context.Context, groupID string) (bool, error)
+	EnsureTable(ctx context.Context) error
+	Close() error
+}

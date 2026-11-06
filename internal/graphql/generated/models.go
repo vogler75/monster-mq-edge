@@ -510,6 +510,90 @@ type KafkaClientResult struct {
 	Errors  []string     `json:"errors"`
 }
 
+type KafkaConsumerGroupInfo struct {
+	GroupID        string   `json:"groupId"`
+	Topics         []string `json:"topics"`
+	LastCommitTime string   `json:"lastCommitTime"`
+	Lag            int64    `json:"lag"`
+}
+
+type KafkaMessageInfo struct {
+	Offset    int64   `json:"offset"`
+	Topic     string  `json:"topic"`
+	Partition int     `json:"partition"`
+	Timestamp string  `json:"timestamp"`
+	Key       *string `json:"key,omitempty"`
+	Value     *string `json:"value,omitempty"`
+	Size      int     `json:"size"`
+}
+
+type KafkaServerInfo struct {
+	Name            string                    `json:"name"`
+	Namespace       string                    `json:"namespace"`
+	NodeID          string                    `json:"nodeId"`
+	Enabled         bool                      `json:"enabled"`
+	Host            string                    `json:"host"`
+	Port            int                       `json:"port"`
+	AdvertisedHost  *string                   `json:"advertisedHost,omitempty"`
+	AdvertisedPort  *int                      `json:"advertisedPort,omitempty"`
+	StoreType       *string                   `json:"storeType,omitempty"`
+	Streams         []*KafkaStreamMappingInfo `json:"streams"`
+	CreatedAt       string                    `json:"createdAt"`
+	UpdatedAt       string                    `json:"updatedAt"`
+	IsOnCurrentNode bool                      `json:"isOnCurrentNode"`
+	Status          string                    `json:"status"`
+}
+
+type KafkaServerInput struct {
+	Name           string                     `json:"name"`
+	Namespace      string                     `json:"namespace"`
+	NodeID         string                     `json:"nodeId"`
+	Enabled        *bool                      `json:"enabled,omitempty"`
+	Host           *string                    `json:"host,omitempty"`
+	Port           *int                       `json:"port,omitempty"`
+	AdvertisedHost *string                    `json:"advertisedHost,omitempty"`
+	AdvertisedPort *int                       `json:"advertisedPort,omitempty"`
+	StoreType      *string                    `json:"storeType,omitempty"`
+	Streams        []*KafkaStreamMappingInput `json:"streams"`
+}
+
+type KafkaServerMutations struct {
+	Add                 *KafkaServerResult `json:"add"`
+	Update              *KafkaServerResult `json:"update"`
+	Delete              bool               `json:"delete"`
+	Toggle              *KafkaServerResult `json:"toggle"`
+	Reassign            *KafkaServerResult `json:"reassign"`
+	DeleteConsumerGroup bool               `json:"deleteConsumerGroup"`
+}
+
+type KafkaServerResult struct {
+	Success bool             `json:"success"`
+	Server  *KafkaServerInfo `json:"server,omitempty"`
+	Errors  []string         `json:"errors"`
+}
+
+type KafkaStreamMappingInfo struct {
+	StreamName     string  `json:"streamName"`
+	TopicFilter    string  `json:"topicFilter"`
+	RetentionHours int     `json:"retentionHours"`
+	StoreType      *string `json:"storeType,omitempty"`
+	AllowWrite     bool    `json:"allowWrite"`
+}
+
+type KafkaStreamMappingInput struct {
+	StreamName     string  `json:"streamName"`
+	TopicFilter    string  `json:"topicFilter"`
+	RetentionHours *int    `json:"retentionHours,omitempty"`
+	StoreType      *string `json:"storeType,omitempty"`
+	AllowWrite     *bool   `json:"allowWrite,omitempty"`
+}
+
+type KafkaTopicOffsetInfo struct {
+	Topic          string `json:"topic"`
+	EarliestOffset int64  `json:"earliestOffset"`
+	LatestOffset   int64  `json:"latestOffset"`
+}
+
 type LoginResult struct {
 	Success  bool    `json:"success"`
 	Message  *string `json:"message,omitempty"`

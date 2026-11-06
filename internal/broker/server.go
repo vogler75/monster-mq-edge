@@ -19,6 +19,7 @@ import (
 	"monstermq.io/edge/internal/archive"
 	mauth "monstermq.io/edge/internal/auth"
 	"monstermq.io/edge/internal/bridge/kafkaclient"
+	"monstermq.io/edge/internal/kafka"
 	"monstermq.io/edge/internal/bridge/mqttclient"
 	"monstermq.io/edge/internal/bridge/rtspcamera"
 	"monstermq.io/edge/internal/bridge/winccoa"
@@ -68,6 +69,7 @@ type Server struct {
 	collector   *metrics.Collector
 	bridges     *mqttclient.Manager
 	kafka       *kafkaclient.Manager
+	kafkaSrv    *kafka.Manager
 	winCCUa     *winccua.Manager
 	winCCOa     *winccoa.Manager
 	rtspCameras *rtspcamera.Manager
@@ -795,12 +797,28 @@ func build(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus, opts Optio
 		*undo = append(*undo, func() { _ = natsSrv.Close() })
 	}
 
+	// 8b. Kafka protocol servers (Kafka-Server devices).
+	var kafkaServers *kafka.Manager
+	if cfg.Features.KafkaServer && storage.DeviceConfig != nil {
+		inlinePub := NewInlinePublisher(server)
+		protoPub := NewProtocolPublish(unsHook, nativeHook, inlinePub)
+		kf := &kafkaStoreFactory{cfg: cfg, storage: storage, sqliteDB: sqliteDB, pgDB: pgDB, mongoDB: mongoDB}
+		kafkaServers = kafka.NewManager(storage.DeviceConfig, kafka.Deps{
+			Bus:                   bus,
+			Publish:               protoPub,
+			Release:               inlinePub.Release,
+			AuthCache:             authCache,
+			UserManagementEnabled: cfg.UserManagement.Enabled,
+		}, kf.factory(), cfg.NodeID, logger)
+	}
+
 	// 9. GraphQL server (HTTP + WebSocket)
 	var gqlSrv *gql.Server
 	if cfg.GraphQL.Enabled && (cfg.GraphQL.HTTPEnabled() || cfg.GraphQL.TLSEnabled()) {
 		resolver := resolvers.New(cfg, storage, bus, archives, bridges, winCCUa, winCCOa, authCache, collector, logBus, logger, server, publishFn, hmiMgr, redfishMgr, rtspCameras, scripts)
 		resolver.PeerLinkMgr = pl
 		resolver.KafkaClients = kafkaClients
+		resolver.KafkaServerMgr = kafkaServers
 		resolver.ProtocolSessions = protoSessions
 		resolver.VirtualTrees = vtMgr
 		if nativeOn {
@@ -903,7 +921,7 @@ func build(cfg *config.Config, logger *slog.Logger, logBus *mlog.Bus, opts Optio
 	return &Server{
 		cfg: cfg, logger: logger, mqtt: server,
 		storage: storage, bus: bus, subs: subs, archives: archives, authCache: authCache,
-		collector: collector, bridges: bridges, kafka: kafkaClients, winCCUa: winCCUa, winCCOa: winCCOa, rtspCameras: rtspCameras, scripts: scripts, gqlSrv: gqlSrv, unsModeler: unsMgr,
+		collector: collector, bridges: bridges, kafka: kafkaClients, kafkaSrv: kafkaServers, winCCUa: winCCUa, winCCOa: winCCOa, rtspCameras: rtspCameras, scripts: scripts, gqlSrv: gqlSrv, unsModeler: unsMgr,
 		mcpSrv: mcpSrv, prom: promSrv, redfishMgr: redfishMgr, hostMonitor: hostMonitor, hmiSync: hmiSync,
 		storageHook: storageHook, native: native, peer: pl, protoSessions: protoSessions, redis: redisSrv, nats: natsSrv, peerStatus: peerStatus, refreshStop: refreshStop,
 	}, nil
@@ -1175,6 +1193,11 @@ func (s *Server) Serve() error {
 			s.logger.Warn("kafka clients start error", "err", err)
 		}
 	}
+	if s.kafkaSrv != nil {
+		if err := s.kafkaSrv.Start(context.Background()); err != nil {
+			s.logger.Warn("kafka servers start error", "err", err)
+		}
+	}
 	if s.winCCUa != nil {
 		if err := s.winCCUa.Start(context.Background()); err != nil {
 			s.logger.Warn("winccua start error", "err", err)
@@ -1313,6 +1336,9 @@ func (s *Server) stopPublishers() {
 	}
 	if s.kafka != nil {
 		s.kafka.Stop()
+	}
+	if s.kafkaSrv != nil {
+		s.kafkaSrv.Stop()
 	}
 	if s.winCCUa != nil {
 		s.winCCUa.Stop()

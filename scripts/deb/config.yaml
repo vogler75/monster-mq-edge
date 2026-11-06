@@ -97,6 +97,7 @@ Features:
   GenAi: false
   Kafka: false
   RedisServer: false
+  KafkaServer: false
 
 Redfish:
   Enabled: false

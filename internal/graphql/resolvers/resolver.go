@@ -19,6 +19,7 @@ import (
 	"monstermq.io/edge/internal/archive"
 	"monstermq.io/edge/internal/auth"
 	"monstermq.io/edge/internal/bridge/kafkaclient"
+	"monstermq.io/edge/internal/kafka"
 	"monstermq.io/edge/internal/bridge/mqttclient"
 	"monstermq.io/edge/internal/bridge/rtspcamera"
 	"monstermq.io/edge/internal/bridge/winccoa"
@@ -67,6 +68,8 @@ type Resolver struct {
 	PeerLinkMgr *peerlink.Manager
 	// KafkaClients is nil while Features.Kafka is off.
 	KafkaClients *kafkaclient.Manager
+	// KafkaServerMgr is nil while Features.KafkaServer is off.
+	KafkaServerMgr *kafka.Manager
 	// Browse is the WinCC OA browse service; nil unless the broker runs
 	// embedded in WinCC OA.
 	Browse *winccoabrowse.Service
@@ -158,6 +161,9 @@ func (r *Resolver) enabledFeatures() []string {
 	}
 	if r.Cfg.Features.Kafka {
 		out = append(out, "Kafka")
+	}
+	if r.Cfg.Features.KafkaServer {
+		out = append(out, "KafkaServer")
 	}
 	if r.Cfg.Features.RedisServer {
 		out = append(out, "RedisServer")

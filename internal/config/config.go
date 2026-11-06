@@ -245,6 +245,7 @@ type FeaturesConfig struct {
 	GenAi              bool `yaml:"GenAi"`
 	Kafka              bool `yaml:"Kafka"`
 	RedisServer        bool `yaml:"RedisServer"`
+	KafkaServer        bool `yaml:"KafkaServer"`
 }
 
 // WinCCOaNativeConfig is the bootstrap configuration for running the broker
@@ -661,7 +662,7 @@ func Default() *Config {
 				},
 			},
 		},
-		Features: FeaturesConfig{MqttClient: false, WinCCUa: false, WinCCOa: false, DeviceImportExport: false, VirtualTopicTrees: false, Mcp: false, Hmi: false, Redfish: false, RtspCamera: false, PythonScripts: false, GenAi: false, Kafka: false, RedisServer: false},
+		Features: FeaturesConfig{MqttClient: false, WinCCUa: false, WinCCOa: false, DeviceImportExport: false, VirtualTopicTrees: false, Mcp: false, Hmi: false, Redfish: false, RtspCamera: false, PythonScripts: false, GenAi: false, Kafka: false, RedisServer: false, KafkaServer: false},
 		HostMonitoring: HostMonitoringConfig{
 			Enabled:         false,
 			BaseTopic:       "nodes/{NodeId}/host",

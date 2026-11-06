@@ -20,7 +20,10 @@ The short version:
   MongoDB (`mongo-driver/v2`).
 - Lightweight subset of MonsterMQ Core's device subsystems. Currently:
   MQTT bridge (`bridge/mqttclient/`), Kafka client bridge
-  (`bridge/kafkaclient/`, signed off 2026-10-16), WinCC Unified bridge
+  (`bridge/kafkaclient/`, signed off 2026-10-16), Kafka protocol server
+  (`internal/kafka/`, feature flag `KafkaServer`, GraphQL
+  `schema/kafkaservers.graphqls` verbatim from Core, signed off 2026-11-06),
+  WinCC Unified bridge
   (`bridge/winccua/`, GraphQL or Open Pipe transports), Redis protocol server
   (`internal/redisserver/`, signed off 2026-10-17) and NATS protocol
   server (`nats/`, signed off 2026-10-17; the outbound NATS client bridge
@@ -61,7 +64,7 @@ Concretely:
   *droppable* — entire schema files can be omitted, but individual fields
   inside a kept type must not be renamed away.
 - `enabledFeatures` reports the active subset, using the `Features` flag names
-  (`MqttClient`, `Kafka`, `WinCCUa`, ...; see `Resolver.enabledFeatures`).
+  (`MqttClient`, `Kafka`, `KafkaServer`, `WinCCUa`, ...; see `Resolver.enabledFeatures`).
   The dashboard uses this to hide pages.
 
 When in doubt, open the Kotlin schema file and copy verbatim. SDL files
@@ -106,6 +109,7 @@ internal/
   archive/                 # ArchiveGroup orchestrator + retention loop
   bridge/mqttclient/       # paho-based outbound MQTT bridge
   bridge/kafkaclient/      # MQTT <-> Kafka bridge (franz-go), KAFKA-Client devices
+  kafka/                   # Kafka protocol server (Kafka-Server devices), hand-rolled codec
   bridge/winccua/          # WinCC Unified bridge (GraphQL ws + Open Pipe)
   nats/                    # NATS protocol server and JetStream KV facade
   auth/                    # bcrypt + ACL cache
@@ -231,5 +235,5 @@ When porting a feature: read the Kotlin original first, mirror behavior,
 - Add a UI to this repo (an external dashboard is the consumer).
 - Add Hazelcast/Kafka-bus dependencies (the Kafka client bridge's franz-go
   client, approved 2026-10-16, is the exception; Kafka must never become the
-  internal message bus).
+  internal message bus; the Kafka protocol server uses no Kafka library).
 - Push to `main` directly, force-push shared branches, or skip git hooks.

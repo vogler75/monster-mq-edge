@@ -35,6 +35,7 @@ type ResolverRoot interface {
 	HmiMutations() HmiMutationsResolver
 	KafkaClient() KafkaClientResolver
 	KafkaClientMutations() KafkaClientMutationsResolver
+	KafkaServerMutations() KafkaServerMutationsResolver
 	MqttClient() MqttClientResolver
 	MqttClientMutations() MqttClientMutationsResolver
 	Mutation() MutationResolver
@@ -120,6 +121,14 @@ type KafkaClientMutationsResolver interface {
 	Toggle(ctx context.Context, obj *KafkaClientMutations, name string, enabled bool) (*KafkaClientResult, error)
 	Reassign(ctx context.Context, obj *KafkaClientMutations, name string, nodeID string) (*KafkaClientResult, error)
 }
+type KafkaServerMutationsResolver interface {
+	Add(ctx context.Context, obj *KafkaServerMutations, input KafkaServerInput) (*KafkaServerResult, error)
+	Update(ctx context.Context, obj *KafkaServerMutations, name string, input KafkaServerInput) (*KafkaServerResult, error)
+	Delete(ctx context.Context, obj *KafkaServerMutations, name string) (bool, error)
+	Toggle(ctx context.Context, obj *KafkaServerMutations, name string, enabled bool) (*KafkaServerResult, error)
+	Reassign(ctx context.Context, obj *KafkaServerMutations, name string, nodeID string) (*KafkaServerResult, error)
+	DeleteConsumerGroup(ctx context.Context, obj *KafkaServerMutations, groupID string) (bool, error)
+}
 type MqttClientResolver interface {
 	Metrics(ctx context.Context, obj *MqttClient) ([]*MqttClientMetrics, error)
 	MetricsHistory(ctx context.Context, obj *MqttClient, from *string, to *string, lastMinutes *int) ([]*MqttClientMetrics, error)
@@ -149,6 +158,7 @@ type MutationResolver interface {
 	Hmi(ctx context.Context) (*HmiMutations, error)
 	GenAiProvider(ctx context.Context) (*GenAiProviderMutations, error)
 	KafkaClient(ctx context.Context) (*KafkaClientMutations, error)
+	KafkaServer(ctx context.Context) (*KafkaServerMutations, error)
 	SaveRedfishMapping(ctx context.Context, name string, config RedfishMappingConfigInput, enabled *bool) (*RedfishResult, error)
 	DeleteRedfishMapping(ctx context.Context, name string) (bool, error)
 	ToggleRedfishMapping(ctx context.Context, name string, enabled bool) (*RedfishResult, error)
@@ -193,6 +203,11 @@ type QueryResolver interface {
 	GenAiProvider(ctx context.Context, name string) (*GenAiProvider, error)
 	Genai(ctx context.Context) (*GenAiQuery, error)
 	KafkaClients(ctx context.Context, name *string, node *string) ([]*KafkaClient, error)
+	KafkaServers(ctx context.Context) ([]*KafkaServerInfo, error)
+	KafkaServer(ctx context.Context, name string) (*KafkaServerInfo, error)
+	KafkaConsumerGroups(ctx context.Context) ([]*KafkaConsumerGroupInfo, error)
+	KafkaMessages(ctx context.Context, serverName string, topic string, startOffset *int64, limit *int) ([]*KafkaMessageInfo, error)
+	KafkaTopicOffsets(ctx context.Context, serverName string, topic string) (*KafkaTopicOffsetInfo, error)
 	PeerLink(ctx context.Context) (*PeerLinkInfo, error)
 	RedfishMappings(ctx context.Context) ([]*RedfishMapping, error)
 	RedfishMapping(ctx context.Context, name string) (*RedfishMapping, error)
@@ -364,6 +379,8 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 		ec.unmarshalInputHmiInput,
 		ec.unmarshalInputKafkaClientConfigInput,
 		ec.unmarshalInputKafkaClientInput,
+		ec.unmarshalInputKafkaServerInput,
+		ec.unmarshalInputKafkaStreamMappingInput,
 		ec.unmarshalInputMqttClientAddressInput,
 		ec.unmarshalInputMqttClientConnectionConfigInput,
 		ec.unmarshalInputMqttClientInput,
@@ -906,6 +923,104 @@ input KafkaClientInput {
     enabled: Boolean = true
     config: KafkaClientConfigInput!
 }
+`, BuiltIn: false},
+	{Name: "../schema/kafkaservers.graphqls", Input: `extend type Query {
+    kafkaServers: [KafkaServerInfo!]!
+    kafkaServer(name: String!): KafkaServerInfo
+    kafkaConsumerGroups: [KafkaConsumerGroupInfo!]!
+    kafkaMessages(serverName: String!, topic: String!, startOffset: Long, limit: Int): [KafkaMessageInfo!]!
+    kafkaTopicOffsets(serverName: String!, topic: String!): KafkaTopicOffsetInfo
+}
+
+
+extend type Mutation {
+    kafkaServer: KafkaServerMutations!
+}
+
+type KafkaServerMutations {
+    add(input: KafkaServerInput!): KafkaServerResult!
+    update(name: String!, input: KafkaServerInput!): KafkaServerResult!
+    delete(name: String!): Boolean!
+    toggle(name: String!, enabled: Boolean!): KafkaServerResult!
+    reassign(name: String!, nodeId: String!): KafkaServerResult!
+    deleteConsumerGroup(groupId: String!): Boolean!
+}
+
+type KafkaServerInfo {
+    name: String!
+    namespace: String!
+    nodeId: String!
+    enabled: Boolean!
+    host: String!
+    port: Int!
+    advertisedHost: String
+    advertisedPort: Int
+    storeType: String
+    streams: [KafkaStreamMappingInfo!]!
+    createdAt: String!
+    updatedAt: String!
+    isOnCurrentNode: Boolean!
+    status: String!
+}
+
+type KafkaStreamMappingInfo {
+    streamName: String!
+    topicFilter: String!
+    retentionHours: Int!
+    storeType: String
+    allowWrite: Boolean!
+}
+
+input KafkaServerInput {
+    name: String!
+    namespace: String!
+    nodeId: String!
+    enabled: Boolean = true
+    host: String = "0.0.0.0"
+    port: Int = 9092
+    advertisedHost: String
+    advertisedPort: Int
+    storeType: String
+    streams: [KafkaStreamMappingInput!]!
+}
+
+input KafkaStreamMappingInput {
+    streamName: String!
+    topicFilter: String!
+    retentionHours: Int = 168
+    storeType: String
+    allowWrite: Boolean = true
+}
+
+type KafkaServerResult {
+    success: Boolean!
+    server: KafkaServerInfo
+    errors: [String!]!
+}
+
+type KafkaConsumerGroupInfo {
+    groupId: String!
+    topics: [String!]!
+    lastCommitTime: String!
+    lag: Long!
+}
+
+type KafkaMessageInfo {
+    offset: Long!
+    topic: String!
+    partition: Int!
+    timestamp: String!
+    key: String
+    value: String
+    size: Int!
+}
+
+type KafkaTopicOffsetInfo {
+    topic: String!
+    earliestOffset: Long!
+    latestOffset: Long!
+}
+
 `, BuiltIn: false},
 	{Name: "../schema/peerlink.graphqls", Input: `# PeerLink configuration and live link state (doc/peerlink.md)
 #
@@ -3601,6 +3716,132 @@ func (ec *executionContext) childFields_KafkaClientResult(ctx context.Context, f
 	return nil, fmt.Errorf("no field named %q was found under type KafkaClientResult", field.Name)
 }
 
+func (ec *executionContext) childFields_KafkaConsumerGroupInfo(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "groupId":
+		return ec.fieldContext_KafkaConsumerGroupInfo_groupId(ctx, field)
+	case "topics":
+		return ec.fieldContext_KafkaConsumerGroupInfo_topics(ctx, field)
+	case "lastCommitTime":
+		return ec.fieldContext_KafkaConsumerGroupInfo_lastCommitTime(ctx, field)
+	case "lag":
+		return ec.fieldContext_KafkaConsumerGroupInfo_lag(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type KafkaConsumerGroupInfo", field.Name)
+}
+
+func (ec *executionContext) childFields_KafkaMessageInfo(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "offset":
+		return ec.fieldContext_KafkaMessageInfo_offset(ctx, field)
+	case "topic":
+		return ec.fieldContext_KafkaMessageInfo_topic(ctx, field)
+	case "partition":
+		return ec.fieldContext_KafkaMessageInfo_partition(ctx, field)
+	case "timestamp":
+		return ec.fieldContext_KafkaMessageInfo_timestamp(ctx, field)
+	case "key":
+		return ec.fieldContext_KafkaMessageInfo_key(ctx, field)
+	case "value":
+		return ec.fieldContext_KafkaMessageInfo_value(ctx, field)
+	case "size":
+		return ec.fieldContext_KafkaMessageInfo_size(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type KafkaMessageInfo", field.Name)
+}
+
+func (ec *executionContext) childFields_KafkaServerInfo(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "name":
+		return ec.fieldContext_KafkaServerInfo_name(ctx, field)
+	case "namespace":
+		return ec.fieldContext_KafkaServerInfo_namespace(ctx, field)
+	case "nodeId":
+		return ec.fieldContext_KafkaServerInfo_nodeId(ctx, field)
+	case "enabled":
+		return ec.fieldContext_KafkaServerInfo_enabled(ctx, field)
+	case "host":
+		return ec.fieldContext_KafkaServerInfo_host(ctx, field)
+	case "port":
+		return ec.fieldContext_KafkaServerInfo_port(ctx, field)
+	case "advertisedHost":
+		return ec.fieldContext_KafkaServerInfo_advertisedHost(ctx, field)
+	case "advertisedPort":
+		return ec.fieldContext_KafkaServerInfo_advertisedPort(ctx, field)
+	case "storeType":
+		return ec.fieldContext_KafkaServerInfo_storeType(ctx, field)
+	case "streams":
+		return ec.fieldContext_KafkaServerInfo_streams(ctx, field)
+	case "createdAt":
+		return ec.fieldContext_KafkaServerInfo_createdAt(ctx, field)
+	case "updatedAt":
+		return ec.fieldContext_KafkaServerInfo_updatedAt(ctx, field)
+	case "isOnCurrentNode":
+		return ec.fieldContext_KafkaServerInfo_isOnCurrentNode(ctx, field)
+	case "status":
+		return ec.fieldContext_KafkaServerInfo_status(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type KafkaServerInfo", field.Name)
+}
+
+func (ec *executionContext) childFields_KafkaServerMutations(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "add":
+		return ec.fieldContext_KafkaServerMutations_add(ctx, field)
+	case "update":
+		return ec.fieldContext_KafkaServerMutations_update(ctx, field)
+	case "delete":
+		return ec.fieldContext_KafkaServerMutations_delete(ctx, field)
+	case "toggle":
+		return ec.fieldContext_KafkaServerMutations_toggle(ctx, field)
+	case "reassign":
+		return ec.fieldContext_KafkaServerMutations_reassign(ctx, field)
+	case "deleteConsumerGroup":
+		return ec.fieldContext_KafkaServerMutations_deleteConsumerGroup(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type KafkaServerMutations", field.Name)
+}
+
+func (ec *executionContext) childFields_KafkaServerResult(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "success":
+		return ec.fieldContext_KafkaServerResult_success(ctx, field)
+	case "server":
+		return ec.fieldContext_KafkaServerResult_server(ctx, field)
+	case "errors":
+		return ec.fieldContext_KafkaServerResult_errors(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type KafkaServerResult", field.Name)
+}
+
+func (ec *executionContext) childFields_KafkaStreamMappingInfo(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "streamName":
+		return ec.fieldContext_KafkaStreamMappingInfo_streamName(ctx, field)
+	case "topicFilter":
+		return ec.fieldContext_KafkaStreamMappingInfo_topicFilter(ctx, field)
+	case "retentionHours":
+		return ec.fieldContext_KafkaStreamMappingInfo_retentionHours(ctx, field)
+	case "storeType":
+		return ec.fieldContext_KafkaStreamMappingInfo_storeType(ctx, field)
+	case "allowWrite":
+		return ec.fieldContext_KafkaStreamMappingInfo_allowWrite(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type KafkaStreamMappingInfo", field.Name)
+}
+
+func (ec *executionContext) childFields_KafkaTopicOffsetInfo(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "topic":
+		return ec.fieldContext_KafkaTopicOffsetInfo_topic(ctx, field)
+	case "earliestOffset":
+		return ec.fieldContext_KafkaTopicOffsetInfo_earliestOffset(ctx, field)
+	case "latestOffset":
+		return ec.fieldContext_KafkaTopicOffsetInfo_latestOffset(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type KafkaTopicOffsetInfo", field.Name)
+}
+
 func (ec *executionContext) childFields_LoginResult(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 	switch field.Name {
 	case "success":
@@ -6199,6 +6440,114 @@ func (ec *executionContext) field_KafkaClient_metricsHistory_args(ctx context.Co
 	return args, nil
 }
 
+func (ec *executionContext) field_KafkaServerMutations_add_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (KafkaServerInput, error) {
+			return ec.unmarshalNKafkaServerInput2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐKafkaServerInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_KafkaServerMutations_deleteConsumerGroup_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "groupId",
+		func(ctx context.Context, v any) (string, error) {
+			return ec.unmarshalNString2string(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["groupId"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_KafkaServerMutations_delete_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name",
+		func(ctx context.Context, v any) (string, error) {
+			return ec.unmarshalNString2string(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["name"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_KafkaServerMutations_reassign_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name",
+		func(ctx context.Context, v any) (string, error) {
+			return ec.unmarshalNString2string(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["name"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "nodeId",
+		func(ctx context.Context, v any) (string, error) {
+			return ec.unmarshalNString2string(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["nodeId"] = arg1
+	return args, nil
+}
+
+func (ec *executionContext) field_KafkaServerMutations_toggle_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name",
+		func(ctx context.Context, v any) (string, error) {
+			return ec.unmarshalNString2string(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["name"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "enabled",
+		func(ctx context.Context, v any) (bool, error) {
+			return ec.unmarshalNBoolean2bool(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["enabled"] = arg1
+	return args, nil
+}
+
+func (ec *executionContext) field_KafkaServerMutations_update_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name",
+		func(ctx context.Context, v any) (string, error) {
+			return ec.unmarshalNString2string(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["name"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (KafkaServerInput, error) {
+			return ec.unmarshalNKafkaServerInput2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐKafkaServerInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg1
+	return args, nil
+}
+
 func (ec *executionContext) field_MqttClientMutations_addAddress_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
@@ -7082,6 +7431,80 @@ func (ec *executionContext) field_Query_kafkaClients_args(ctx context.Context, r
 		return nil, err
 	}
 	args["node"] = arg1
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_kafkaMessages_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "serverName",
+		func(ctx context.Context, v any) (string, error) {
+			return ec.unmarshalNString2string(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["serverName"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "topic",
+		func(ctx context.Context, v any) (string, error) {
+			return ec.unmarshalNString2string(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["topic"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "startOffset",
+		func(ctx context.Context, v any) (*int64, error) {
+			return ec.unmarshalOLong2ᚖint64(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["startOffset"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "limit",
+		func(ctx context.Context, v any) (*int, error) {
+			return ec.unmarshalOInt2ᚖint(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["limit"] = arg3
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_kafkaServer_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name",
+		func(ctx context.Context, v any) (string, error) {
+			return ec.unmarshalNString2string(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["name"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_kafkaTopicOffsets_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "serverName",
+		func(ctx context.Context, v any) (string, error) {
+			return ec.unmarshalNString2string(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["serverName"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "topic",
+		func(ctx context.Context, v any) (string, error) {
+			return ec.unmarshalNString2string(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["topic"] = arg1
 	return args, nil
 }
 
@@ -16036,6 +16459,1116 @@ func (ec *executionContext) fieldContext_KafkaClientResult_errors(_ context.Cont
 	return graphql.NewScalarFieldContext("KafkaClientResult", field, false, false, errors.New("field of type String does not have child fields"))
 }
 
+func (ec *executionContext) _KafkaConsumerGroupInfo_groupId(ctx context.Context, field graphql.CollectedField, obj *KafkaConsumerGroupInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KafkaConsumerGroupInfo_groupId(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.GroupID, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_KafkaConsumerGroupInfo_groupId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("KafkaConsumerGroupInfo", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _KafkaConsumerGroupInfo_topics(ctx context.Context, field graphql.CollectedField, obj *KafkaConsumerGroupInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KafkaConsumerGroupInfo_topics(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Topics, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []string) graphql.Marshaler {
+			return ec.marshalNString2ᚕstringᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_KafkaConsumerGroupInfo_topics(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("KafkaConsumerGroupInfo", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _KafkaConsumerGroupInfo_lastCommitTime(ctx context.Context, field graphql.CollectedField, obj *KafkaConsumerGroupInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KafkaConsumerGroupInfo_lastCommitTime(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.LastCommitTime, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_KafkaConsumerGroupInfo_lastCommitTime(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("KafkaConsumerGroupInfo", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _KafkaConsumerGroupInfo_lag(ctx context.Context, field graphql.CollectedField, obj *KafkaConsumerGroupInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KafkaConsumerGroupInfo_lag(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Lag, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int64) graphql.Marshaler {
+			return ec.marshalNLong2int64(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_KafkaConsumerGroupInfo_lag(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("KafkaConsumerGroupInfo", field, false, false, errors.New("field of type Long does not have child fields"))
+}
+
+func (ec *executionContext) _KafkaMessageInfo_offset(ctx context.Context, field graphql.CollectedField, obj *KafkaMessageInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KafkaMessageInfo_offset(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Offset, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int64) graphql.Marshaler {
+			return ec.marshalNLong2int64(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_KafkaMessageInfo_offset(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("KafkaMessageInfo", field, false, false, errors.New("field of type Long does not have child fields"))
+}
+
+func (ec *executionContext) _KafkaMessageInfo_topic(ctx context.Context, field graphql.CollectedField, obj *KafkaMessageInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KafkaMessageInfo_topic(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Topic, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_KafkaMessageInfo_topic(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("KafkaMessageInfo", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _KafkaMessageInfo_partition(ctx context.Context, field graphql.CollectedField, obj *KafkaMessageInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KafkaMessageInfo_partition(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Partition, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int) graphql.Marshaler {
+			return ec.marshalNInt2int(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_KafkaMessageInfo_partition(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("KafkaMessageInfo", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _KafkaMessageInfo_timestamp(ctx context.Context, field graphql.CollectedField, obj *KafkaMessageInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KafkaMessageInfo_timestamp(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Timestamp, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_KafkaMessageInfo_timestamp(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("KafkaMessageInfo", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _KafkaMessageInfo_key(ctx context.Context, field graphql.CollectedField, obj *KafkaMessageInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KafkaMessageInfo_key(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Key, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *string) graphql.Marshaler {
+			return ec.marshalOString2ᚖstring(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_KafkaMessageInfo_key(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("KafkaMessageInfo", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _KafkaMessageInfo_value(ctx context.Context, field graphql.CollectedField, obj *KafkaMessageInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KafkaMessageInfo_value(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Value, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *string) graphql.Marshaler {
+			return ec.marshalOString2ᚖstring(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_KafkaMessageInfo_value(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("KafkaMessageInfo", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _KafkaMessageInfo_size(ctx context.Context, field graphql.CollectedField, obj *KafkaMessageInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KafkaMessageInfo_size(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Size, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int) graphql.Marshaler {
+			return ec.marshalNInt2int(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_KafkaMessageInfo_size(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("KafkaMessageInfo", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _KafkaServerInfo_name(ctx context.Context, field graphql.CollectedField, obj *KafkaServerInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KafkaServerInfo_name(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Name, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_KafkaServerInfo_name(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("KafkaServerInfo", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _KafkaServerInfo_namespace(ctx context.Context, field graphql.CollectedField, obj *KafkaServerInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KafkaServerInfo_namespace(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Namespace, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_KafkaServerInfo_namespace(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("KafkaServerInfo", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _KafkaServerInfo_nodeId(ctx context.Context, field graphql.CollectedField, obj *KafkaServerInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KafkaServerInfo_nodeId(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.NodeID, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_KafkaServerInfo_nodeId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("KafkaServerInfo", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _KafkaServerInfo_enabled(ctx context.Context, field graphql.CollectedField, obj *KafkaServerInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KafkaServerInfo_enabled(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Enabled, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_KafkaServerInfo_enabled(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("KafkaServerInfo", field, false, false, errors.New("field of type Boolean does not have child fields"))
+}
+
+func (ec *executionContext) _KafkaServerInfo_host(ctx context.Context, field graphql.CollectedField, obj *KafkaServerInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KafkaServerInfo_host(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Host, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_KafkaServerInfo_host(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("KafkaServerInfo", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _KafkaServerInfo_port(ctx context.Context, field graphql.CollectedField, obj *KafkaServerInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KafkaServerInfo_port(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Port, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int) graphql.Marshaler {
+			return ec.marshalNInt2int(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_KafkaServerInfo_port(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("KafkaServerInfo", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _KafkaServerInfo_advertisedHost(ctx context.Context, field graphql.CollectedField, obj *KafkaServerInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KafkaServerInfo_advertisedHost(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.AdvertisedHost, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *string) graphql.Marshaler {
+			return ec.marshalOString2ᚖstring(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_KafkaServerInfo_advertisedHost(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("KafkaServerInfo", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _KafkaServerInfo_advertisedPort(ctx context.Context, field graphql.CollectedField, obj *KafkaServerInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KafkaServerInfo_advertisedPort(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.AdvertisedPort, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *int) graphql.Marshaler {
+			return ec.marshalOInt2ᚖint(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_KafkaServerInfo_advertisedPort(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("KafkaServerInfo", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _KafkaServerInfo_storeType(ctx context.Context, field graphql.CollectedField, obj *KafkaServerInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KafkaServerInfo_storeType(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.StoreType, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *string) graphql.Marshaler {
+			return ec.marshalOString2ᚖstring(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_KafkaServerInfo_storeType(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("KafkaServerInfo", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _KafkaServerInfo_streams(ctx context.Context, field graphql.CollectedField, obj *KafkaServerInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KafkaServerInfo_streams(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Streams, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*KafkaStreamMappingInfo) graphql.Marshaler {
+			return ec.marshalNKafkaStreamMappingInfo2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐKafkaStreamMappingInfoᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_KafkaServerInfo_streams(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "KafkaServerInfo",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_KafkaStreamMappingInfo(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _KafkaServerInfo_createdAt(ctx context.Context, field graphql.CollectedField, obj *KafkaServerInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KafkaServerInfo_createdAt(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.CreatedAt, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_KafkaServerInfo_createdAt(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("KafkaServerInfo", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _KafkaServerInfo_updatedAt(ctx context.Context, field graphql.CollectedField, obj *KafkaServerInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KafkaServerInfo_updatedAt(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.UpdatedAt, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_KafkaServerInfo_updatedAt(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("KafkaServerInfo", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _KafkaServerInfo_isOnCurrentNode(ctx context.Context, field graphql.CollectedField, obj *KafkaServerInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KafkaServerInfo_isOnCurrentNode(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.IsOnCurrentNode, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_KafkaServerInfo_isOnCurrentNode(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("KafkaServerInfo", field, false, false, errors.New("field of type Boolean does not have child fields"))
+}
+
+func (ec *executionContext) _KafkaServerInfo_status(ctx context.Context, field graphql.CollectedField, obj *KafkaServerInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KafkaServerInfo_status(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Status, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_KafkaServerInfo_status(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("KafkaServerInfo", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _KafkaServerMutations_add(ctx context.Context, field graphql.CollectedField, obj *KafkaServerMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KafkaServerMutations_add(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.KafkaServerMutations().Add(ctx, obj, fc.Args["input"].(KafkaServerInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *KafkaServerResult) graphql.Marshaler {
+			return ec.marshalNKafkaServerResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐKafkaServerResult(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_KafkaServerMutations_add(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "KafkaServerMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_KafkaServerResult(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_KafkaServerMutations_add_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _KafkaServerMutations_update(ctx context.Context, field graphql.CollectedField, obj *KafkaServerMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KafkaServerMutations_update(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.KafkaServerMutations().Update(ctx, obj, fc.Args["name"].(string), fc.Args["input"].(KafkaServerInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *KafkaServerResult) graphql.Marshaler {
+			return ec.marshalNKafkaServerResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐKafkaServerResult(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_KafkaServerMutations_update(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "KafkaServerMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_KafkaServerResult(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_KafkaServerMutations_update_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _KafkaServerMutations_delete(ctx context.Context, field graphql.CollectedField, obj *KafkaServerMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KafkaServerMutations_delete(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.KafkaServerMutations().Delete(ctx, obj, fc.Args["name"].(string))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_KafkaServerMutations_delete(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "KafkaServerMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_KafkaServerMutations_delete_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _KafkaServerMutations_toggle(ctx context.Context, field graphql.CollectedField, obj *KafkaServerMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KafkaServerMutations_toggle(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.KafkaServerMutations().Toggle(ctx, obj, fc.Args["name"].(string), fc.Args["enabled"].(bool))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *KafkaServerResult) graphql.Marshaler {
+			return ec.marshalNKafkaServerResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐKafkaServerResult(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_KafkaServerMutations_toggle(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "KafkaServerMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_KafkaServerResult(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_KafkaServerMutations_toggle_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _KafkaServerMutations_reassign(ctx context.Context, field graphql.CollectedField, obj *KafkaServerMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KafkaServerMutations_reassign(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.KafkaServerMutations().Reassign(ctx, obj, fc.Args["name"].(string), fc.Args["nodeId"].(string))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *KafkaServerResult) graphql.Marshaler {
+			return ec.marshalNKafkaServerResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐKafkaServerResult(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_KafkaServerMutations_reassign(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "KafkaServerMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_KafkaServerResult(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_KafkaServerMutations_reassign_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _KafkaServerMutations_deleteConsumerGroup(ctx context.Context, field graphql.CollectedField, obj *KafkaServerMutations) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KafkaServerMutations_deleteConsumerGroup(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.KafkaServerMutations().DeleteConsumerGroup(ctx, obj, fc.Args["groupId"].(string))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_KafkaServerMutations_deleteConsumerGroup(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "KafkaServerMutations",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_KafkaServerMutations_deleteConsumerGroup_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _KafkaServerResult_success(ctx context.Context, field graphql.CollectedField, obj *KafkaServerResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KafkaServerResult_success(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Success, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_KafkaServerResult_success(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("KafkaServerResult", field, false, false, errors.New("field of type Boolean does not have child fields"))
+}
+
+func (ec *executionContext) _KafkaServerResult_server(ctx context.Context, field graphql.CollectedField, obj *KafkaServerResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KafkaServerResult_server(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Server, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *KafkaServerInfo) graphql.Marshaler {
+			return ec.marshalOKafkaServerInfo2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐKafkaServerInfo(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_KafkaServerResult_server(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "KafkaServerResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_KafkaServerInfo(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _KafkaServerResult_errors(ctx context.Context, field graphql.CollectedField, obj *KafkaServerResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KafkaServerResult_errors(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Errors, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []string) graphql.Marshaler {
+			return ec.marshalNString2ᚕstringᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_KafkaServerResult_errors(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("KafkaServerResult", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _KafkaStreamMappingInfo_streamName(ctx context.Context, field graphql.CollectedField, obj *KafkaStreamMappingInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KafkaStreamMappingInfo_streamName(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.StreamName, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_KafkaStreamMappingInfo_streamName(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("KafkaStreamMappingInfo", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _KafkaStreamMappingInfo_topicFilter(ctx context.Context, field graphql.CollectedField, obj *KafkaStreamMappingInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KafkaStreamMappingInfo_topicFilter(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.TopicFilter, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_KafkaStreamMappingInfo_topicFilter(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("KafkaStreamMappingInfo", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _KafkaStreamMappingInfo_retentionHours(ctx context.Context, field graphql.CollectedField, obj *KafkaStreamMappingInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KafkaStreamMappingInfo_retentionHours(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.RetentionHours, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int) graphql.Marshaler {
+			return ec.marshalNInt2int(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_KafkaStreamMappingInfo_retentionHours(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("KafkaStreamMappingInfo", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _KafkaStreamMappingInfo_storeType(ctx context.Context, field graphql.CollectedField, obj *KafkaStreamMappingInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KafkaStreamMappingInfo_storeType(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.StoreType, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *string) graphql.Marshaler {
+			return ec.marshalOString2ᚖstring(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_KafkaStreamMappingInfo_storeType(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("KafkaStreamMappingInfo", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _KafkaStreamMappingInfo_allowWrite(ctx context.Context, field graphql.CollectedField, obj *KafkaStreamMappingInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KafkaStreamMappingInfo_allowWrite(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.AllowWrite, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_KafkaStreamMappingInfo_allowWrite(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("KafkaStreamMappingInfo", field, false, false, errors.New("field of type Boolean does not have child fields"))
+}
+
+func (ec *executionContext) _KafkaTopicOffsetInfo_topic(ctx context.Context, field graphql.CollectedField, obj *KafkaTopicOffsetInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KafkaTopicOffsetInfo_topic(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Topic, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_KafkaTopicOffsetInfo_topic(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("KafkaTopicOffsetInfo", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _KafkaTopicOffsetInfo_earliestOffset(ctx context.Context, field graphql.CollectedField, obj *KafkaTopicOffsetInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KafkaTopicOffsetInfo_earliestOffset(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.EarliestOffset, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int64) graphql.Marshaler {
+			return ec.marshalNLong2int64(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_KafkaTopicOffsetInfo_earliestOffset(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("KafkaTopicOffsetInfo", field, false, false, errors.New("field of type Long does not have child fields"))
+}
+
+func (ec *executionContext) _KafkaTopicOffsetInfo_latestOffset(ctx context.Context, field graphql.CollectedField, obj *KafkaTopicOffsetInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KafkaTopicOffsetInfo_latestOffset(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.LatestOffset, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int64) graphql.Marshaler {
+			return ec.marshalNLong2int64(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_KafkaTopicOffsetInfo_latestOffset(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("KafkaTopicOffsetInfo", field, false, false, errors.New("field of type Long does not have child fields"))
+}
+
 func (ec *executionContext) _LoginResult_success(ctx context.Context, field graphql.CollectedField, obj *LoginResult) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -18476,6 +20009,38 @@ func (ec *executionContext) fieldContext_Mutation_kafkaClient(_ context.Context,
 		IsResolver: true,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return ec.childFields_KafkaClientMutations(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_kafkaServer(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_kafkaServer(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return ec.Resolvers.Mutation().KafkaServer(ctx)
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *KafkaServerMutations) graphql.Marshaler {
+			return ec.marshalNKafkaServerMutations2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐKafkaServerMutations(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_kafkaServer(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_KafkaServerMutations(ctx, field)
 		},
 	}
 	return fc, nil
@@ -21040,6 +22605,202 @@ func (ec *executionContext) fieldContext_Query_kafkaClients(ctx context.Context,
 	}()
 	ctx = graphql.WithFieldContext(ctx, fc)
 	if fc.Args, err = ec.field_Query_kafkaClients_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_kafkaServers(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_kafkaServers(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return ec.Resolvers.Query().KafkaServers(ctx)
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*KafkaServerInfo) graphql.Marshaler {
+			return ec.marshalNKafkaServerInfo2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐKafkaServerInfoᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Query_kafkaServers(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_KafkaServerInfo(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_kafkaServer(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_kafkaServer(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().KafkaServer(ctx, fc.Args["name"].(string))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *KafkaServerInfo) graphql.Marshaler {
+			return ec.marshalOKafkaServerInfo2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐKafkaServerInfo(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_Query_kafkaServer(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_KafkaServerInfo(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_kafkaServer_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_kafkaConsumerGroups(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_kafkaConsumerGroups(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return ec.Resolvers.Query().KafkaConsumerGroups(ctx)
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*KafkaConsumerGroupInfo) graphql.Marshaler {
+			return ec.marshalNKafkaConsumerGroupInfo2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐKafkaConsumerGroupInfoᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Query_kafkaConsumerGroups(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_KafkaConsumerGroupInfo(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_kafkaMessages(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_kafkaMessages(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().KafkaMessages(ctx, fc.Args["serverName"].(string), fc.Args["topic"].(string), fc.Args["startOffset"].(*int64), fc.Args["limit"].(*int))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*KafkaMessageInfo) graphql.Marshaler {
+			return ec.marshalNKafkaMessageInfo2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐKafkaMessageInfoᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Query_kafkaMessages(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_KafkaMessageInfo(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_kafkaMessages_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_kafkaTopicOffsets(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_kafkaTopicOffsets(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().KafkaTopicOffsets(ctx, fc.Args["serverName"].(string), fc.Args["topic"].(string))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *KafkaTopicOffsetInfo) graphql.Marshaler {
+			return ec.marshalOKafkaTopicOffsetInfo2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐKafkaTopicOffsetInfo(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_Query_kafkaTopicOffsets(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_KafkaTopicOffsetInfo(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_kafkaTopicOffsets_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
 	}
@@ -37554,6 +39315,174 @@ func (ec *executionContext) unmarshalInputKafkaClientInput(ctx context.Context, 
 	return it, nil
 }
 
+func (ec *executionContext) unmarshalInputKafkaServerInput(ctx context.Context, obj any) (KafkaServerInput, error) {
+	var it KafkaServerInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	if _, present := asMap["enabled"]; !present {
+		asMap["enabled"] = true
+	}
+	if _, present := asMap["host"]; !present {
+		asMap["host"] = "0.0.0.0"
+	}
+	if _, present := asMap["port"]; !present {
+		asMap["port"] = 9092
+	}
+
+	fieldsInOrder := [...]string{"name", "namespace", "nodeId", "enabled", "host", "port", "advertisedHost", "advertisedPort", "storeType", "streams"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "name":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("name"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Name = data
+		case "namespace":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("namespace"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Namespace = data
+		case "nodeId":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("nodeId"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.NodeID = data
+		case "enabled":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("enabled"))
+			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Enabled = data
+		case "host":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("host"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Host = data
+		case "port":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("port"))
+			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Port = data
+		case "advertisedHost":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("advertisedHost"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.AdvertisedHost = data
+		case "advertisedPort":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("advertisedPort"))
+			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.AdvertisedPort = data
+		case "storeType":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("storeType"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.StoreType = data
+		case "streams":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("streams"))
+			data, err := ec.unmarshalNKafkaStreamMappingInput2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐKafkaStreamMappingInputᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Streams = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputKafkaStreamMappingInput(ctx context.Context, obj any) (KafkaStreamMappingInput, error) {
+	var it KafkaStreamMappingInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	if _, present := asMap["retentionHours"]; !present {
+		asMap["retentionHours"] = 168
+	}
+	if _, present := asMap["allowWrite"]; !present {
+		asMap["allowWrite"] = true
+	}
+
+	fieldsInOrder := [...]string{"streamName", "topicFilter", "retentionHours", "storeType", "allowWrite"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "streamName":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("streamName"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.StreamName = data
+		case "topicFilter":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("topicFilter"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.TopicFilter = data
+		case "retentionHours":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("retentionHours"))
+			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.RetentionHours = data
+		case "storeType":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("storeType"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.StoreType = data
+		case "allowWrite":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("allowWrite"))
+			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.AllowWrite = data
+		}
+	}
+	return it, nil
+}
+
 func (ec *executionContext) unmarshalInputMqttClientAddressInput(ctx context.Context, obj any) (MqttClientAddressInput, error) {
 	var it MqttClientAddressInput
 	if obj == nil {
@@ -43943,6 +45872,645 @@ func (ec *executionContext) _KafkaClientResult(ctx context.Context, sel ast.Sele
 	return out
 }
 
+var kafkaConsumerGroupInfoImplementors = []string{"KafkaConsumerGroupInfo"}
+
+func (ec *executionContext) _KafkaConsumerGroupInfo(ctx context.Context, sel ast.SelectionSet, obj *KafkaConsumerGroupInfo) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, kafkaConsumerGroupInfoImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("KafkaConsumerGroupInfo")
+		case "groupId":
+			out.Values[i] = ec._KafkaConsumerGroupInfo_groupId(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "topics":
+			out.Values[i] = ec._KafkaConsumerGroupInfo_topics(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "lastCommitTime":
+			out.Values[i] = ec._KafkaConsumerGroupInfo_lastCommitTime(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "lag":
+			out.Values[i] = ec._KafkaConsumerGroupInfo_lag(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var kafkaMessageInfoImplementors = []string{"KafkaMessageInfo"}
+
+func (ec *executionContext) _KafkaMessageInfo(ctx context.Context, sel ast.SelectionSet, obj *KafkaMessageInfo) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, kafkaMessageInfoImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("KafkaMessageInfo")
+		case "offset":
+			out.Values[i] = ec._KafkaMessageInfo_offset(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "topic":
+			out.Values[i] = ec._KafkaMessageInfo_topic(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "partition":
+			out.Values[i] = ec._KafkaMessageInfo_partition(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "timestamp":
+			out.Values[i] = ec._KafkaMessageInfo_timestamp(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "key":
+			out.Values[i] = ec._KafkaMessageInfo_key(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		case "value":
+			out.Values[i] = ec._KafkaMessageInfo_value(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		case "size":
+			out.Values[i] = ec._KafkaMessageInfo_size(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var kafkaServerInfoImplementors = []string{"KafkaServerInfo"}
+
+func (ec *executionContext) _KafkaServerInfo(ctx context.Context, sel ast.SelectionSet, obj *KafkaServerInfo) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, kafkaServerInfoImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("KafkaServerInfo")
+		case "name":
+			out.Values[i] = ec._KafkaServerInfo_name(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "namespace":
+			out.Values[i] = ec._KafkaServerInfo_namespace(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "nodeId":
+			out.Values[i] = ec._KafkaServerInfo_nodeId(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "enabled":
+			out.Values[i] = ec._KafkaServerInfo_enabled(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "host":
+			out.Values[i] = ec._KafkaServerInfo_host(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "port":
+			out.Values[i] = ec._KafkaServerInfo_port(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "advertisedHost":
+			out.Values[i] = ec._KafkaServerInfo_advertisedHost(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		case "advertisedPort":
+			out.Values[i] = ec._KafkaServerInfo_advertisedPort(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		case "storeType":
+			out.Values[i] = ec._KafkaServerInfo_storeType(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		case "streams":
+			out.Values[i] = ec._KafkaServerInfo_streams(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "createdAt":
+			out.Values[i] = ec._KafkaServerInfo_createdAt(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "updatedAt":
+			out.Values[i] = ec._KafkaServerInfo_updatedAt(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "isOnCurrentNode":
+			out.Values[i] = ec._KafkaServerInfo_isOnCurrentNode(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "status":
+			out.Values[i] = ec._KafkaServerInfo_status(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var kafkaServerMutationsImplementors = []string{"KafkaServerMutations"}
+
+func (ec *executionContext) _KafkaServerMutations(ctx context.Context, sel ast.SelectionSet, obj *KafkaServerMutations) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, kafkaServerMutationsImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("KafkaServerMutations")
+		case "add":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._KafkaServerMutations_add(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.IsDeferred() {
+				deferredFieldSet.AddField(field)
+				fieldIndex := len(deferredFieldSet.Values) - 1
+				deferredFieldSet.Concurrently(fieldIndex, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, deferredFieldSet)
+				})
+
+				for _, deferrable := range field.Deferrables {
+					view, ok := deferLabelToView[deferrable.Label]
+					if !ok {
+						view = deferredFieldSet.NewView()
+						deferLabelToView[deferrable.Label] = view
+					}
+					view.AddIndices(fieldIndex)
+				}
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "update":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._KafkaServerMutations_update(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.IsDeferred() {
+				deferredFieldSet.AddField(field)
+				fieldIndex := len(deferredFieldSet.Values) - 1
+				deferredFieldSet.Concurrently(fieldIndex, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, deferredFieldSet)
+				})
+
+				for _, deferrable := range field.Deferrables {
+					view, ok := deferLabelToView[deferrable.Label]
+					if !ok {
+						view = deferredFieldSet.NewView()
+						deferLabelToView[deferrable.Label] = view
+					}
+					view.AddIndices(fieldIndex)
+				}
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "delete":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._KafkaServerMutations_delete(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.IsDeferred() {
+				deferredFieldSet.AddField(field)
+				fieldIndex := len(deferredFieldSet.Values) - 1
+				deferredFieldSet.Concurrently(fieldIndex, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, deferredFieldSet)
+				})
+
+				for _, deferrable := range field.Deferrables {
+					view, ok := deferLabelToView[deferrable.Label]
+					if !ok {
+						view = deferredFieldSet.NewView()
+						deferLabelToView[deferrable.Label] = view
+					}
+					view.AddIndices(fieldIndex)
+				}
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "toggle":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._KafkaServerMutations_toggle(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.IsDeferred() {
+				deferredFieldSet.AddField(field)
+				fieldIndex := len(deferredFieldSet.Values) - 1
+				deferredFieldSet.Concurrently(fieldIndex, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, deferredFieldSet)
+				})
+
+				for _, deferrable := range field.Deferrables {
+					view, ok := deferLabelToView[deferrable.Label]
+					if !ok {
+						view = deferredFieldSet.NewView()
+						deferLabelToView[deferrable.Label] = view
+					}
+					view.AddIndices(fieldIndex)
+				}
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "reassign":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._KafkaServerMutations_reassign(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.IsDeferred() {
+				deferredFieldSet.AddField(field)
+				fieldIndex := len(deferredFieldSet.Values) - 1
+				deferredFieldSet.Concurrently(fieldIndex, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, deferredFieldSet)
+				})
+
+				for _, deferrable := range field.Deferrables {
+					view, ok := deferLabelToView[deferrable.Label]
+					if !ok {
+						view = deferredFieldSet.NewView()
+						deferLabelToView[deferrable.Label] = view
+					}
+					view.AddIndices(fieldIndex)
+				}
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "deleteConsumerGroup":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._KafkaServerMutations_deleteConsumerGroup(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.IsDeferred() {
+				deferredFieldSet.AddField(field)
+				fieldIndex := len(deferredFieldSet.Values) - 1
+				deferredFieldSet.Concurrently(fieldIndex, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, deferredFieldSet)
+				})
+
+				for _, deferrable := range field.Deferrables {
+					view, ok := deferLabelToView[deferrable.Label]
+					if !ok {
+						view = deferredFieldSet.NewView()
+						deferLabelToView[deferrable.Label] = view
+					}
+					view.AddIndices(fieldIndex)
+				}
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var kafkaServerResultImplementors = []string{"KafkaServerResult"}
+
+func (ec *executionContext) _KafkaServerResult(ctx context.Context, sel ast.SelectionSet, obj *KafkaServerResult) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, kafkaServerResultImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("KafkaServerResult")
+		case "success":
+			out.Values[i] = ec._KafkaServerResult_success(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "server":
+			out.Values[i] = ec._KafkaServerResult_server(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		case "errors":
+			out.Values[i] = ec._KafkaServerResult_errors(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var kafkaStreamMappingInfoImplementors = []string{"KafkaStreamMappingInfo"}
+
+func (ec *executionContext) _KafkaStreamMappingInfo(ctx context.Context, sel ast.SelectionSet, obj *KafkaStreamMappingInfo) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, kafkaStreamMappingInfoImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("KafkaStreamMappingInfo")
+		case "streamName":
+			out.Values[i] = ec._KafkaStreamMappingInfo_streamName(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "topicFilter":
+			out.Values[i] = ec._KafkaStreamMappingInfo_topicFilter(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "retentionHours":
+			out.Values[i] = ec._KafkaStreamMappingInfo_retentionHours(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "storeType":
+			out.Values[i] = ec._KafkaStreamMappingInfo_storeType(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		case "allowWrite":
+			out.Values[i] = ec._KafkaStreamMappingInfo_allowWrite(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var kafkaTopicOffsetInfoImplementors = []string{"KafkaTopicOffsetInfo"}
+
+func (ec *executionContext) _KafkaTopicOffsetInfo(ctx context.Context, sel ast.SelectionSet, obj *KafkaTopicOffsetInfo) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, kafkaTopicOffsetInfoImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("KafkaTopicOffsetInfo")
+		case "topic":
+			out.Values[i] = ec._KafkaTopicOffsetInfo_topic(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "earliestOffset":
+			out.Values[i] = ec._KafkaTopicOffsetInfo_earliestOffset(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "latestOffset":
+			out.Values[i] = ec._KafkaTopicOffsetInfo_latestOffset(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
 var loginResultImplementors = []string{"LoginResult"}
 
 func (ec *executionContext) _LoginResult(ctx context.Context, sel ast.SelectionSet, obj *LoginResult) graphql.Marshaler {
@@ -45078,6 +47646,13 @@ func (ec *executionContext) _Mutation(ctx context.Context, sel ast.SelectionSet)
 		case "kafkaClient":
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Mutation_kafkaClient(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "kafkaServer":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_kafkaServer(ctx, field)
 			})
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
@@ -46231,6 +48806,116 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 				}()
 				res = ec._Query_kafkaClients(ctx, field)
 				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "kafkaServers":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_kafkaServers(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "kafkaServer":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_kafkaServer(ctx, field)
+				if res == graphql.RequiredNull {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "kafkaConsumerGroups":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_kafkaConsumerGroups(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "kafkaMessages":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_kafkaMessages(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "kafkaTopicOffsets":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_kafkaTopicOffsets(ctx, field)
+				if res == graphql.RequiredNull {
 					atomic.AddUint32(&fs.Invalids, 1)
 				}
 				return res
@@ -55651,6 +58336,58 @@ func (ec *executionContext) marshalNKafkaClientResult2ᚖmonstermqᚗioᚋedge�
 	return ec._KafkaClientResult(ctx, sel, v)
 }
 
+func (ec *executionContext) marshalNKafkaConsumerGroupInfo2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐKafkaConsumerGroupInfoᚄ(ctx context.Context, sel ast.SelectionSet, v []*KafkaConsumerGroupInfo) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNKafkaConsumerGroupInfo2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐKafkaConsumerGroupInfo(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNKafkaConsumerGroupInfo2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐKafkaConsumerGroupInfo(ctx context.Context, sel ast.SelectionSet, v *KafkaConsumerGroupInfo) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._KafkaConsumerGroupInfo(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNKafkaMessageInfo2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐKafkaMessageInfoᚄ(ctx context.Context, sel ast.SelectionSet, v []*KafkaMessageInfo) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNKafkaMessageInfo2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐKafkaMessageInfo(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNKafkaMessageInfo2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐKafkaMessageInfo(ctx context.Context, sel ast.SelectionSet, v *KafkaMessageInfo) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._KafkaMessageInfo(ctx, sel, v)
+}
+
 func (ec *executionContext) unmarshalNKafkaPayloadFormat2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐKafkaPayloadFormat(ctx context.Context, v any) (KafkaPayloadFormat, error) {
 	var res KafkaPayloadFormat
 	err := res.UnmarshalGQL(v)
@@ -55659,6 +58396,102 @@ func (ec *executionContext) unmarshalNKafkaPayloadFormat2monstermqᚗioᚋedge�
 
 func (ec *executionContext) marshalNKafkaPayloadFormat2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐKafkaPayloadFormat(ctx context.Context, sel ast.SelectionSet, v KafkaPayloadFormat) graphql.Marshaler {
 	return v
+}
+
+func (ec *executionContext) marshalNKafkaServerInfo2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐKafkaServerInfoᚄ(ctx context.Context, sel ast.SelectionSet, v []*KafkaServerInfo) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNKafkaServerInfo2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐKafkaServerInfo(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNKafkaServerInfo2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐKafkaServerInfo(ctx context.Context, sel ast.SelectionSet, v *KafkaServerInfo) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._KafkaServerInfo(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalNKafkaServerInput2monstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐKafkaServerInput(ctx context.Context, v any) (KafkaServerInput, error) {
+	res, err := ec.unmarshalInputKafkaServerInput(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNKafkaServerMutations2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐKafkaServerMutations(ctx context.Context, sel ast.SelectionSet, v *KafkaServerMutations) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._KafkaServerMutations(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNKafkaServerResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐKafkaServerResult(ctx context.Context, sel ast.SelectionSet, v *KafkaServerResult) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._KafkaServerResult(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNKafkaStreamMappingInfo2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐKafkaStreamMappingInfoᚄ(ctx context.Context, sel ast.SelectionSet, v []*KafkaStreamMappingInfo) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNKafkaStreamMappingInfo2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐKafkaStreamMappingInfo(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNKafkaStreamMappingInfo2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐKafkaStreamMappingInfo(ctx context.Context, sel ast.SelectionSet, v *KafkaStreamMappingInfo) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._KafkaStreamMappingInfo(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalNKafkaStreamMappingInput2ᚕᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐKafkaStreamMappingInputᚄ(ctx context.Context, v any) ([]*KafkaStreamMappingInput, error) {
+	vSlice := graphql.CoerceList(v)
+	var err error
+	res := make([]*KafkaStreamMappingInput, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNKafkaStreamMappingInput2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐKafkaStreamMappingInput(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) unmarshalNKafkaStreamMappingInput2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐKafkaStreamMappingInput(ctx context.Context, v any) (*KafkaStreamMappingInput, error) {
+	res, err := ec.unmarshalInputKafkaStreamMappingInput(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
 }
 
 func (ec *executionContext) unmarshalNLong2int64(ctx context.Context, v any) (int64, error) {
@@ -58091,6 +60924,20 @@ func (ec *executionContext) marshalOKafkaPayloadFormat2ᚖmonstermqᚗioᚋedge�
 		return graphql.Null
 	}
 	return v
+}
+
+func (ec *executionContext) marshalOKafkaServerInfo2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐKafkaServerInfo(ctx context.Context, sel ast.SelectionSet, v *KafkaServerInfo) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._KafkaServerInfo(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalOKafkaTopicOffsetInfo2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐKafkaTopicOffsetInfo(ctx context.Context, sel ast.SelectionSet, v *KafkaTopicOffsetInfo) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._KafkaTopicOffsetInfo(ctx, sel, v)
 }
 
 func (ec *executionContext) marshalOLoginResult2ᚖmonstermqᚗioᚋedgeᚋinternalᚋgraphqlᚋgeneratedᚐLoginResult(ctx context.Context, sel ast.SelectionSet, v *LoginResult) graphql.Marshaler {

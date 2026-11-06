@@ -15,13 +15,14 @@ on devices like the Raspberry Pi 4/5.
 - **Prometheus & Grafana API** — `/metrics` scrape endpoint and PromQL HTTP API (`/api/v1/query`, `/api/v1/query_range`, `/api/v1/series`, `/api/v1/labels`) for Grafana's Prometheus data source. See [doc/grafana.md](doc/grafana.md).
 - **MQTT bridge** — forward local topics to a remote broker and vice versa, over MQTT 5 or MQTT 3.1.1 (per `protocolVersion`).
 - **Kafka client bridge** — consume a Kafka topic into MQTT and produce MQTT topics to Kafka, record-compatible with MonsterMQ Core. See [doc/kafka-client.md](doc/kafka-client.md).
+- **Kafka protocol server** — standard Kafka clients produce into and consume from MQTT topics (`Kafka-Server` devices, `Features.KafkaServer`), compatible with MonsterMQ Core's Kafka server. See [doc/kafka-server.md](doc/kafka-server.md).
 - **PeerLink** — pull-based, in-memory forwarding of publishes between MonsterMQ Edge brokers (pairs and full meshes), with QoS, retain, MQTT 5 properties, publisher and publish time preserved. See [PeerLink](#peerlink-forwarding-between-brokers).
 - **Camera snapshots** — RTSP MJPEG and H.264 I/P/B streams to MQTT JPEG topics; [native Go decoder API and current limits](pkg/h264/README.md).
 - **Users + ACL** with bcrypt password hashing.
 - **Periodic metrics** surfaced via `Broker.metrics`/`metricsHistory`; history can be persisted or kept in memory.
 - **WinCC Unified bridge** — GraphQL/WebSocket or Open Pipe transport into local MQTT topics.
 - **WinCC Open Architecture bridge** — GraphQL/WebSocket subscriptions from `dpQueryConnectSingle` into local MQTT topics, or embedded C++ API manager ([winccoa/README.md](winccoa/README.md)).
-- No OPC UA / Kafka / Sparkplug / GenAI / flows.
+- No OPC UA / Sparkplug / GenAI / flows.
 
 ## Getting Started
 
@@ -161,6 +162,8 @@ Features:
   changes into MQTT.
 - `Kafka` enables the Kafka client bridge (`KAFKA-Client` devices), see
   [doc/kafka-client.md](doc/kafka-client.md).
+- `KafkaServer` enables the Kafka protocol server (`Kafka-Server` devices), see
+  [doc/kafka-server.md](doc/kafka-server.md).
 - `RedisServer` enables the Redis protocol server (RESP2) for KV and Pub/Sub access, see
   [doc/redis-server.md](doc/redis-server.md).
 - `RtspCamera` enables the RTSP / HTTP / WebSocket / USB (V4L2) video stream
@@ -883,6 +886,7 @@ internal/
   archive/               → archive group orchestrator + retention
   bridge/mqttclient/     → MQTT-to-MQTT bridge (paho.golang for MQTT 5, paho.mqtt.golang for MQTT 3.1.1)
   bridge/kafkaclient/    → MQTT <-> Kafka bridge (franz-go)
+  kafka/                 → Kafka protocol server (hand-rolled codec, Kafka-Server devices)
   bridge/rtspcamera/     → RTSP/HTTP/WS camera stream & snapshot bridge (MJPEG & H.264)
   bridge/winccua/        → WinCC Unified bridge (GraphQL/Open Pipe)
   bridge/winccoa/        → WinCC Open Architecture bridge (GraphQL)

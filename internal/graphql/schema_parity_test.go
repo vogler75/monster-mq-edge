@@ -59,13 +59,23 @@ func definitions(doc *ast.SchemaDocument) map[string]*ast.Definition {
 // The Kafka client schema must stay a strict subset of Core's, so the same
 // dashboard works against both brokers (AGENTS.md, GraphQL parity rule).
 func TestKafkaClientSchemaIsSubsetOfCore(t *testing.T) {
+	checkSubsetOfCore(t, "schema/kafkaclient.graphqls")
+}
+
+// The Kafka server schema is a verbatim copy of Core's schema-kafka-servers.graphqls.
+func TestKafkaServerSchemaIsSubsetOfCore(t *testing.T) {
+	checkSubsetOfCore(t, "schema/kafkaservers.graphqls")
+}
+
+func checkSubsetOfCore(t *testing.T, edgeFile string) {
+	t.Helper()
 	core := loadSDL(t, filepath.Join(coreSchemaDir, "schema-*.graphqls"))
 	if core == nil {
 		t.Skip("Core schema not checked out next to edge")
 	}
-	edge := loadSDL(t, "schema/kafkaclient.graphqls")
+	edge := loadSDL(t, edgeFile)
 	if edge == nil {
-		t.Fatal("schema/kafkaclient.graphqls missing")
+		t.Fatal(edgeFile + " missing")
 	}
 	coreDefs := definitions(core)
 	for name, ed := range definitions(edge) {

@@ -4,7 +4,7 @@
 Revised 2026-10-16 after checking the plan against Core (`main/broker`) and edge. Deliberate
 differences from Core are marked **[edge-only]** and listed in one place under "Edge-only extensions".
 **Scope:** port MonsterMQ Core's `KAFKA-Client` device (an MQTT <-> Kafka bridge) to the Go edge broker.
-This is not the Kafka *server*; that is `plan-kafka-server.md` (issue #22).
+This is not the Kafka *server*; that is `dev/done/plan-kafka-server.md` (issue #22).
 
 ## Sign-off points (confirmed)
 

@@ -8,7 +8,7 @@ existing MQTT core. Reuses the shared building blocks S1-S7 from
 ## Context
 
 Edge already speaks MQTT 3.1.1/5 (native), NATS (`internal/nats/`) and Redis RESP2 Pub/Sub
-(`internal/redisserver/`); a Kafka server is planned ([plan-kafka-server.md](plan-kafka-server.md)). All
+(`internal/redisserver/`); a Kafka server exists ([plan-kafka-server.md](../done/plan-kafka-server.md)). All
 protocol servers are in-process adapters over the MQTT core: they publish through `ProtocolPublish` (S1),
 subscribe through `pubsub.Bus` (S3), register sessions in `SessionStore` (S5) and recheck read ACLs at
 delivery (S7).

@@ -22,6 +22,7 @@ require (
 	github.com/rs/xid v1.6.0
 	github.com/tmc/langchaingo v0.1.13
 	github.com/twmb/franz-go v1.22.2
+	github.com/twmb/franz-go/pkg/kmsg v1.15.0
 	github.com/vektah/gqlparser/v2 v2.5.58
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78
 	go.mongodb.org/mongo-driver/v2 v2.9.1
@@ -80,7 +81,6 @@ require (
 	github.com/segmentio/asm v1.2.1 // indirect
 	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/sosodev/duration v1.4.0 // indirect
-	github.com/twmb/franz-go/pkg/kmsg v1.15.0 // indirect
 	github.com/urfave/cli/v3 v3.11.0 // indirect
 	github.com/xdg-go/pbkdf2 v1.0.0 // indirect
 	github.com/xdg-go/scram v1.2.0 // indirect

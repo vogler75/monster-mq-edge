@@ -360,7 +360,8 @@
         "PythonScripts":      { "type": "boolean", "description": "Enable standalone Python/Starlark scripting engine." },
         "GenAi":              { "type": "boolean", "description": "Enable Generative AI provider connections and AI assistant features." },
         "Kafka":              { "type": "boolean", "description": "Enable the Kafka client bridge (KAFKA-Client devices: MQTT <-> Kafka)." },
-        "RedisServer":        { "type": "boolean", "default": false, "description": "Redis-compatible protocol listener on port 6379" }
+        "RedisServer":        { "type": "boolean", "default": false, "description": "Redis-compatible protocol listener on port 6379" },
+        "KafkaServer":        { "type": "boolean", "default": false, "description": "Enable the Kafka protocol server (Kafka-Server devices: Kafka clients <-> MQTT streams)." }
       }
     },
     "GenAI": {

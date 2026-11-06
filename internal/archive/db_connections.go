@@ -129,3 +129,7 @@ func RequiredDatabaseConnectionTypes(lastVal stores.MessageStoreType, archiveTyp
 func IsDefaultDatabaseConnectionName(name string) bool {
 	return strings.EqualFold(strings.TrimSpace(name), DefaultDatabaseConnectionName)
 }
+
+// PostgresDSN builds a connection string from a stored database connection
+// (URL plus optional username and password).
+func PostgresDSN(raw, username, password string) string { return postgresDSN(raw, username, password) }

@@ -1,6 +1,6 @@
 # Kafka Protocol Server Implementation Plan
 
-Status: proposed, awaiting owner sign-off and GraphQL commitment (2026-10-03).
+Status: implemented on branch `feature/kafka-server` (2026-11-06); owner signed off and committed to the GraphQL extension. User documentation: [doc/kafka-server.md](../../doc/kafka-server.md).
 
 Edge gets the main broker's Kafka server (`KafkaServer` feature) as a 1:1 port:
 same config keys, same wire behaviour, same GraphQL schema, same storage
@@ -241,14 +241,23 @@ store backends and about 1,800 lines of protocol code. It stays off by default:
 
 ### Decisions needed
 
-- [ ] Sign-off: allow the Kafka server on edge; AGENTS.md lists it as
-      off-limits today.
-- [ ] Commitment to add `schema-kafka-servers.graphqls` to the edge GraphQL
-      interface.
-- [ ] For the defects listed above: fix them in both repos (recommended) or copy
-      them into edge.
-- [ ] Footprint budget on Pi 3 / ARMv7 with the Kafka server on, measured after
-      implementation.
+- [x] Sign-off: allow the Kafka server on edge (2026-11-06); AGENTS.md updated.
+- [x] Commitment to add `schema-kafka-servers.graphqls` to the edge GraphQL
+      interface, verbatim from Core (2026-11-06); `TestKafkaServerSchemaIsSubsetOfCore`
+      guards the parity.
+- [x] Defects: fixed in both repos. Edge fixes them in `internal/kafka`; Core's
+      are tracked in vogler75/monster-mq#237.
+- [ ] Footprint on Pi 3 / ARMv7 with the Kafka server on: binary growth measured
+      (+0.8 % linux/arm64, +0.9 % windows/amd64, see doc/kafka-server.md);
+      runtime memory on real hardware still to be measured.
+
+Implemented deviations from Core (all documented in doc/kafka-server.md): Fetch
+high watermark `latest+1`, ApiVersions above v0 answers error 35, `acks=0` sends
+no response, SASL mechanism error 33, partition other than 0 error 3, fetch ACL
+on the stream filter. The Kafka-queue store backends are
+`stores/{sqlite,postgres,mongodb}/kafka_queue_store.go`; the device manager is
+`internal/kafka/manager.go`, the store-type resolution
+`internal/broker/kafka_store_factory.go`.
 
 Settled by copying the main broker: hand-rolled codec, no protocol library;
 storage tables `kafka_queue` and `kafka_offsets`; Kafka keys used verbatim as

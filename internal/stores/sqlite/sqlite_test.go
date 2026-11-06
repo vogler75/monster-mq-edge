@@ -525,3 +525,44 @@ func TestMetricsStoreKafkaClientKind(t *testing.T) {
 	storetest.CheckKafkaMetrics(t, ms)
 }
 
+
+func TestKafkaQueueStore(t *testing.T) {
+	db := tempDB(t)
+	s := NewKafkaQueueStore(db, "sensors_temp")
+	if err := s.EnsureTable(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.EnsureTable(context.Background()); err != nil { // idempotent
+		t.Fatal(err)
+	}
+	storetest.CheckKafkaQueue(t, s)
+}
+
+func TestKafkaQueueStoreUnsuffixedFiltersByTopic(t *testing.T) {
+	db := tempDB(t)
+	s := NewKafkaQueueStore(db, "")
+	ctx := context.Background()
+	if err := s.EnsureTable(ctx); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err := s.Enqueue(ctx, []stores.BrokerMessage{
+		{MessageUUID: "1", TopicName: "x", Payload: []byte("1"), Time: now},
+		{MessageUUID: "2", TopicName: "y", Payload: []byte("2"), Time: now},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Fetch(ctx, "y", 0, 10)
+	if err != nil || len(got) != 1 || got[0].Message.TopicName != "y" {
+		t.Fatalf("got %+v err=%v", got, err)
+	}
+}
+
+func TestKafkaQueueStoreEnqueueFailureReturned(t *testing.T) {
+	db := tempDB(t)
+	s := NewKafkaQueueStore(db, "never_created") // no EnsureTable
+	err := s.Enqueue(context.Background(), []stores.BrokerMessage{{MessageUUID: "1", TopicName: "x", Time: time.Now()}})
+	if err == nil {
+		t.Fatal("expected an error for a missing table")
+	}
+}

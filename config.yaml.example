@@ -128,6 +128,7 @@ Features:
   GenAi: true
   Kafka: false
   RedisServer: false
+  KafkaServer: false
 
 GenAI:
   Enabled: true
