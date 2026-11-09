@@ -36,6 +36,10 @@ func (s *Server) allowTopic(ctx context.Context, topic string, write bool) bool 
 	if !s.cfg.UserManagement.Enabled {
 		return true
 	}
+	// The synthetic localhost administrator is not in the user store.
+	if s.cfg.UserManagement.AllowAnonymousLocalhost && auth.IsLocalhostPrincipal(ctx) {
+		return true
+	}
 	username := ""
 	if user, ok := auth.Principal(ctx); ok {
 		username = user.Username

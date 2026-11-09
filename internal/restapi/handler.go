@@ -73,7 +73,7 @@ func (h *Handler) authenticate(next http.Handler) http.Handler {
 			return
 		}
 		if h.cfg.UserManagement.AllowAnonymousLocalhost && auth.IsLocalhostRequest(r) && r.Header.Get("Authorization") == "" {
-			ctx := auth.WithPrincipal(r.Context(), auth.LocalhostUser)
+			ctx := auth.WithLocalhostPrincipal(r.Context())
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}

@@ -285,7 +285,7 @@ func httpAuthMiddleware(cfg *config.Config, cache *auth.Cache, next http.Handler
 			return
 		}
 		if cfg.UserManagement.AllowAnonymousLocalhost && auth.IsLocalhostRequest(r) && r.Header.Get("Authorization") == "" {
-			ctx := auth.WithPrincipal(r.Context(), auth.LocalhostUser)
+			ctx := auth.WithLocalhostPrincipal(r.Context())
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}

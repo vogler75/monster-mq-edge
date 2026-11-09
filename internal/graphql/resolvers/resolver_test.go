@@ -262,3 +262,42 @@ func TestDeviceToGenericGraphQLVirtualTopicTreeStripping(t *testing.T) {
 		t.Errorf("expected revision to be stripped from exported virtual topic tree, got %v", rev)
 	}
 }
+
+// The synthetic localhost administrator (AllowAnonymousLocalhost) is not in the
+// user store: topic checks must allow it, but not a principal that is merely
+// named "localhost", and not when the option is off.
+func TestAllowTopicLocalhostPrincipal(t *testing.T) {
+	ctx := context.Background()
+	cfg := config.Default()
+	cfg.UserManagement.Enabled = true
+	cfg.UserManagement.AnonymousEnabled = false
+	cfg.UserManagement.AllowAnonymousLocalhost = true
+	cfg.SQLite.Path = filepath.Join(t.TempDir(), "monstermq.db")
+
+	storage, db, err := storesqlite.Build(ctx, cfg)
+	if err != nil {
+		t.Fatalf("build storage: %v", err)
+	}
+	defer db.Close()
+	authCache := auth.NewCache(storage.Users, false, true)
+	if err := authCache.Refresh(ctx); err != nil {
+		t.Fatalf("refresh authCache: %v", err)
+	}
+	r := &Resolver{Cfg: cfg, Storage: storage, AuthCache: authCache}
+
+	local := auth.WithLocalhostPrincipal(ctx)
+	if !r.allowTopic(local, "test/x", true) || !r.allowTopic(local, "test/#", false) {
+		t.Fatalf("expected the localhost principal to publish and subscribe")
+	}
+	named := auth.WithPrincipal(ctx, auth.LocalhostUser)
+	if r.allowTopic(named, "test/x", true) {
+		t.Errorf("expected a principal only named localhost to be checked against the user store")
+	}
+	if r.allowTopic(ctx, "test/x", false) {
+		t.Errorf("expected an unauthenticated caller to be refused")
+	}
+	cfg.UserManagement.AllowAnonymousLocalhost = false
+	if r.allowTopic(local, "test/x", true) {
+		t.Errorf("expected the localhost principal to be refused with AllowAnonymousLocalhost off")
+	}
+}
