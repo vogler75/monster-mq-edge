@@ -264,6 +264,35 @@
           "title": "Custom Dashboard Path",
           "description": "Filesystem path to override dashboard files for live UI development. Leave empty to serve from embedded bundle.",
           "default": ""
+        },
+        "Branding": {
+          "type": "object",
+          "title": "Dashboard Branding",
+          "description": "Rebrand the dashboard (served as /config/branding.json). Leave empty to keep the MonsterMQ branding.",
+          "additionalProperties": false,
+          "properties": {
+            "Brand": {
+              "type": "string",
+              "title": "Icon Pack",
+              "description": "Logo and favicon pack shipped with the dashboard (case-insensitive).",
+              "enum": ["monstermq", "nexusmq", "MonsterMQ", "NexusMQ"]
+            },
+            "ProductName": {
+              "type": "string",
+              "title": "Product Name",
+              "description": "Replaces every \"MonsterMQ\" in titles, header, menu, login page and page text (including \"MonsterMQ Edge/Core\"), e.g. \"WinCCMQ\"."
+            },
+            "DashboardName": {
+              "type": "string",
+              "title": "Dashboard Name",
+              "description": "Name in the About dialog. Defaults to \"<ProductName> Dashboard\"."
+            },
+            "Tagline": {
+              "type": "string",
+              "title": "Tagline",
+              "description": "Subtitle in the About dialog."
+            }
+          }
         }
       }
     },

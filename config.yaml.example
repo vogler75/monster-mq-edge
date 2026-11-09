@@ -84,6 +84,10 @@ GraphQL:
 Dashboard:
   Enabled: true
   # Path: "" # Optional: filesystem path to override dashboard files for live UI development
+  # Branding:                      # Optional: rebrand the dashboard (default: MonsterMQ)
+  #   Brand: nexusmq               # icon pack: monstermq or nexusmq
+  #   ProductName: WinCCMQ         # replaces "MonsterMQ" in titles, header, menu and text
+  #   DashboardName: ""            # About dialog, default "<ProductName> Dashboard"
 
 RestApi:
   Enabled: true

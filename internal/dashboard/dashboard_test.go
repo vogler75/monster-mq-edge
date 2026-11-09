@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,7 +12,7 @@ import (
 )
 
 func TestEmbeddedHandler(t *testing.T) {
-	h := Handler("", nil)
+	h := Handler("", nil, nil)
 
 	t.Run("serves placeholder or index", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/placeholder.html", nil)
@@ -54,7 +55,7 @@ func TestFilesystemHandler(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := Handler(tempDir, nil)
+	h := Handler(tempDir, nil, nil)
 
 	t.Run("serves root index.html", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -120,6 +121,54 @@ func TestFilesystemHandler(t *testing.T) {
 			if rec.Code != http.StatusNotFound {
 				t.Fatalf("expected 404 for %s, got %d", p, rec.Code)
 			}
+		}
+	})
+}
+
+func TestBrandingJSON(t *testing.T) {
+	get := func(h http.Handler) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, BrandingPath, nil))
+		return rec
+	}
+
+	t.Run("served from config", func(t *testing.T) {
+		rec := get(Handler(t.TempDir(), &Branding{Brand: " NexusMQ ", ProductName: "WinCCMQ"}, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+			t.Fatalf("expected application/json, got %q", ct)
+		}
+		var got map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		want := map[string]any{"brand": "nexusmq", "productName": "WinCCMQ"}
+		if len(got) != len(want) || got["brand"] != want["brand"] || got["productName"] != want["productName"] {
+			t.Fatalf("expected %v, got %v", want, got)
+		}
+	})
+
+	t.Run("config wins over a bundled file", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(dir, "config"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "config", "branding.json"), []byte(`{"productName":"Bundled"}`), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if body := get(Handler(dir, &Branding{ProductName: "WinCCMQ"}, nil)).Body.String(); !strings.Contains(body, "WinCCMQ") {
+			t.Fatalf("expected configured branding, got %s", body)
+		}
+		if body := get(Handler(dir, nil, nil)).Body.String(); !strings.Contains(body, "Bundled") {
+			t.Fatalf("expected bundled branding without config, got %s", body)
+		}
+	})
+
+	t.Run("not configured returns 404", func(t *testing.T) {
+		if rec := get(Handler(t.TempDir(), nil, nil)); rec.Code != http.StatusNotFound {
+			t.Fatalf("expected 404, got %d", rec.Code)
 		}
 	})
 }

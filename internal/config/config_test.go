@@ -259,3 +259,47 @@ func TestValidateClientBufferSizes(t *testing.T) {
 		t.Fatalf("negative ClientReadBufferSize: err = %v", err)
 	}
 }
+
+func TestDashboardBranding(t *testing.T) {
+	t.Run("loads from YAML", func(t *testing.T) {
+		tmp := filepath.Join(t.TempDir(), "config.yaml")
+		yaml := []byte("Dashboard:\n  Branding:\n    Brand: nexusmq\n    ProductName: WinCCMQ\n")
+		if err := os.WriteFile(tmp, yaml, 0600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := Load(tmp)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		b := cfg.Dashboard.Branding
+		if b.IsZero() || b.Brand != "nexusmq" || b.ProductName != "WinCCMQ" {
+			t.Fatalf("unexpected branding: %+v", b)
+		}
+		if !cfg.Dashboard.Enabled {
+			t.Fatal("Dashboard.Enabled default lost")
+		}
+	})
+
+	t.Run("default is unbranded", func(t *testing.T) {
+		if !Default().Dashboard.Branding.IsZero() {
+			t.Fatal("expected no branding by default")
+		}
+	})
+
+	t.Run("brand is case-insensitive", func(t *testing.T) {
+		cfg := Default()
+		cfg.Dashboard.Branding.Brand = "NexusMQ"
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("Validate: %v", err)
+		}
+	})
+
+	t.Run("unknown brand is rejected", func(t *testing.T) {
+		cfg := Default()
+		cfg.Dashboard.Branding.Brand = "acme"
+		err := cfg.Validate()
+		if err == nil || !strings.Contains(err.Error(), "Dashboard.Branding.Brand") {
+			t.Fatalf("expected Brand validation error, got %v", err)
+		}
+	})
+}

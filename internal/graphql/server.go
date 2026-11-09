@@ -236,7 +236,16 @@ func NewServer(cfg *config.Config, resolver *resolvers.Resolver, hmiMgr *hmi.Man
 	})
 
 	if cfg.Dashboard.Enabled {
-		dashHandler := dashboard.Handler(cfg.Dashboard.Path, logger)
+		var branding *dashboard.Branding
+		if b := cfg.Dashboard.Branding; !b.IsZero() {
+			branding = &dashboard.Branding{
+				Brand:         b.Brand,
+				ProductName:   b.ProductName,
+				DashboardName: b.DashboardName,
+				Tagline:       b.Tagline,
+			}
+		}
+		dashHandler := dashboard.Handler(cfg.Dashboard.Path, branding, logger)
 		r.Handle("/*", dashHandler)
 	}
 

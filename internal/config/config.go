@@ -190,8 +190,41 @@ func (g *GraphQLConfig) UnmarshalYAML(value *yaml.Node) error {
 }
 
 type DashboardConfig struct {
-	Enabled bool   `yaml:"Enabled"`
-	Path    string `yaml:"Path"`
+	Enabled  bool                    `yaml:"Enabled"`
+	Path     string                  `yaml:"Path"`
+	Branding DashboardBrandingConfig `yaml:"Branding"`
+}
+
+// DashboardBrandingConfig rebrands the embedded dashboard (e.g. "WinCCMQ"
+// with the NexusMQ icon pack). It is served as /config/branding.json; an
+// empty section keeps the dashboard's built-in MonsterMQ branding.
+type DashboardBrandingConfig struct {
+	// Brand selects the icon pack shipped with the dashboard (/brands/<Brand>/).
+	Brand string `yaml:"Brand"`
+	// ProductName replaces "MonsterMQ" in titles, header, menu, login and text.
+	ProductName   string `yaml:"ProductName"`
+	DashboardName string `yaml:"DashboardName"`
+	Tagline       string `yaml:"Tagline"`
+}
+
+// DashboardBrands lists the icon packs shipped with the dashboard.
+var DashboardBrands = []string{"monstermq", "nexusmq"}
+
+// IsZero reports whether no branding is configured.
+func (b DashboardBrandingConfig) IsZero() bool {
+	return b == DashboardBrandingConfig{}
+}
+
+func (b DashboardBrandingConfig) validate() error {
+	if b.Brand == "" {
+		return nil
+	}
+	for _, known := range DashboardBrands {
+		if strings.EqualFold(b.Brand, known) {
+			return nil
+		}
+	}
+	return fmt.Errorf("invalid Dashboard.Branding.Brand %q (must be one of %s)", b.Brand, strings.Join(DashboardBrands, ", "))
 }
 
 type RestApiConfig struct {
@@ -768,6 +801,9 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("NATS port must be between 0 and 65535")
 	}
 	if err := c.WinCCOaNative.validate(); err != nil {
+		return err
+	}
+	if err := c.Dashboard.Branding.validate(); err != nil {
 		return err
 	}
 	if c.DefaultStoreType == "" {
