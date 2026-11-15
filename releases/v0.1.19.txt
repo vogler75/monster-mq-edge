@@ -1,0 +1,27 @@
+Release v0.1.19
+Built from commit: 42f13e2
+Date: 2026-11-15 14:09:49
+
+Changes since v0.1.18:
+---
+42f13e2 dashboard: configurable branding (Dashboard.Branding)
+d8d1636 auth: allow topic access for the synthetic localhost principal
+e81e371 deps: bump Go modules and regenerate gqlgen exec
+ac20233 feat(kafka): port Kafka protocol server (Kafka-Server devices, KafkaServer feature)
+5da9706 unsmodeler: honor explicit element archive settings when default is disabled
+cae3d24 unsmodeler: cancellable AI runs, bounded validation retries, disabled archiving
+d604be9 genai: strip thinking blocks from Claude responses
+3796bc6 genai: drop temperature for Claude models that reject it
+8b1d8fc genai: add custom Endpoint for Claude and Gemini providers
+e09d589 Merge branch 'main' into vogler75-virtual-topic-trees-f7f
+39d240a Apply MQTT 4.7.2 $-topic rule to remaining topic matchers
+b6c4db9 Archive: wildcard filters no longer match $SYS topics (MQTT 4.7.2)
+d6fa478 Merge remote-tracking branch 'origin/main' into vogler75-virtual-topic-trees-f7f
+d6c30bf Merge pull request #42 from KevinJoosten/fix/anonymous-user-bypass
+fa406a6 perf(virtualtrees): skip presentation list when virtual trees are off
+1c664c5 chore(config): add VirtualTopicTrees feature flag disabled by default
+f34c363 fix(virtualtrees): enforce dual ACL on GraphQL publish and strip export revision
+35a83b9 Wire virtual topic trees into MQTT and GraphQL reads
+e9a74e6 Add virtual MQTT topic trees (Edge)
+f077c9d fix(auth): reject login as Anonymous when anonymous access is disabled
+6fdc896 chore(version): prepare next version 0.1.19-dev
