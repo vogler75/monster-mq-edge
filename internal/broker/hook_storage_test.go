@@ -596,9 +596,8 @@ func TestStorageHookSelectRetainedSkipsExpired(t *testing.T) {
 	}
 }
 
-// The engine stamps every publish with the server's maximum expiry (24 h) when
-// it has none. A retained message stored with that cap was purged a day after
-// its last publish, so a value published once (a site model) silently vanished.
+// A retained message published without an expiry is stored without one, so
+// PurgeExpired never removes it.
 func TestStorageHookRetainedWithoutExpiryNeverExpires(t *testing.T) {
 	e := newPeerEnv(t, false)
 	if err := e.srv.Publish("dfm/model", []byte("v1"), true, 0); err != nil {

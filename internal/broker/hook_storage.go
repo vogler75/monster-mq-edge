@@ -549,9 +549,8 @@ func retainedMessage(pk *packets.Packet, clientID, username string) stores.Broke
 		Username:  username,
 		Time:      createdAt,
 	}
-	// Only a publisher's own expiry counts: the engine also stamps messages
-	// without one with the server maximum, which would purge the retained
-	// value a day after its last publish.
+	// The row gets an expiry only when the publisher set one; pk.Expiry also
+	// holds the server maximum for messages without one.
 	if pk.Properties.MessageExpiryInterval == 0 {
 		return msg
 	}
