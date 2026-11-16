@@ -596,6 +596,45 @@ func TestStorageHookSelectRetainedSkipsExpired(t *testing.T) {
 	}
 }
 
+// The engine stamps every publish with the server's maximum expiry (24 h) when
+// it has none. A retained message stored with that cap was purged a day after
+// its last publish, so a value published once (a site model) silently vanished.
+func TestStorageHookRetainedWithoutExpiryNeverExpires(t *testing.T) {
+	e := newPeerEnv(t, false)
+	if err := e.srv.Publish("dfm/model", []byte("v1"), true, 0); err != nil {
+		t.Fatal(err)
+	}
+	m, err := e.retained.Get(context.Background(), "dfm/model")
+	if err != nil || m == nil {
+		t.Fatalf("retained message not stored: %v", err)
+	}
+	if m.MessageExpiryInterval != nil {
+		t.Fatalf("stored MessageExpiryInterval = %d, want none", *m.MessageExpiryInterval)
+	}
+}
+
+func TestStorageHookRetainedKeepsPublisherExpiry(t *testing.T) {
+	e := newPeerEnv(t, false)
+	cl := e.srv.NewClient(nil, "local", "pub", true)
+	cl.Properties.ProtocolVersion = 5
+	pk := packets.Packet{
+		FixedHeader: packets.FixedHeader{Type: packets.Publish, Retain: true},
+		TopicName:   "t/short",
+		Payload:     []byte("v"),
+	}
+	pk.Properties.MessageExpiryInterval = 600
+	if err := e.srv.InjectPacket(cl, pk); err != nil {
+		t.Fatal(err)
+	}
+	m, err := e.retained.Get(context.Background(), "t/short")
+	if err != nil || m == nil {
+		t.Fatalf("retained message not stored: %v", err)
+	}
+	if m.MessageExpiryInterval == nil || *m.MessageExpiryInterval != 600 {
+		t.Fatalf("stored MessageExpiryInterval = %v, want 600", m.MessageExpiryInterval)
+	}
+}
+
 // A retained message replayed from the store keeps its publisher as origin,
 // so No Local skips a client's own retained message, as on the in-memory path.
 func TestStorageHookSelectRetainedKeepsOrigin(t *testing.T) {
