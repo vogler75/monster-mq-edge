@@ -202,7 +202,9 @@ func (w *connWriter) encode(pk *packets.Packet) {
 // message dropped for its size, which returned its send quota.
 func (w *connWriter) encodeOne(pk *packets.Packet) (quotaReturned bool) {
 	cl := w.cl
-	if pk.Expiry > 0 {
+	// Only a publisher's own expiry is forwarded; pk.Expiry also holds the
+	// server maximum for messages without one.
+	if pk.Expiry > 0 && pk.Properties.MessageExpiryInterval > 0 {
 		if w.now == 0 {
 			w.now = time.Now().Unix()
 		}
