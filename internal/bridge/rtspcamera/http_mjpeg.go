@@ -9,7 +9,6 @@ import (
 	"mime/multipart"
 	"net/http"
 	"strings"
-	"sync/atomic"
 	"time"
 )
 
@@ -101,7 +100,7 @@ func (c *Connector) connectHTTPStream(ctx context.Context) error {
 			c.logger.Debug("skipping invalid HTTP MJPEG frame")
 			continue
 		}
-		atomic.AddUint64(&c.framesReceived, 1)
+		c.framesReceived.Add(1)
 		c.setLatestFrame(frame)
 	}
 }

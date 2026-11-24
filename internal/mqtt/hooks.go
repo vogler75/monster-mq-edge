@@ -143,13 +143,13 @@ type Hooks struct {
 	internal   atomic.Value                   // a slice of []Hook
 	byEvent    atomic.Pointer[hookEventTable] // pre-indexed hooks per event byte
 	wg         sync.WaitGroup                 // a waitgroup for syncing hook shutdown
-	qty        int64                          // the number of hooks in use
+	qty        atomic.Int64                   // the number of hooks in use
 	sync.Mutex                                // a mutex for locking when adding hooks
 }
 
 // Len returns the number of hooks added.
 func (h *Hooks) Len() int64 {
-	return atomic.LoadInt64(&h.qty)
+	return h.qty.Load()
 }
 
 func (h *Hooks) getFor(b byte) []Hook {
@@ -223,7 +223,7 @@ func (h *Hooks) Add(hook Hook, config any) error {
 	}
 	h.byEvent.Store(tbl)
 
-	atomic.AddInt64(&h.qty, 1)
+	h.qty.Add(1)
 	h.wg.Add(1)
 
 	return nil

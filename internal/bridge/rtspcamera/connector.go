@@ -52,8 +52,8 @@ type Connector struct {
 	mu                 sync.RWMutex
 	publishMu          sync.Mutex
 	connected          bool
-	framesReceived     uint64
-	snapshotsPublished uint64
+	framesReceived     atomic.Uint64
+	snapshotsPublished atomic.Uint64
 	currentSlot        uint32
 	lastSnapshotAt     time.Time
 	lastError          string
@@ -151,8 +151,8 @@ func (c *Connector) Metrics() Metrics {
 
 	return Metrics{
 		Connected:          c.connected,
-		FramesReceived:     float64(atomic.LoadUint64(&c.framesReceived)),
-		SnapshotsPublished: float64(atomic.LoadUint64(&c.snapshotsPublished)),
+		FramesReceived:     float64(c.framesReceived.Load()),
+		SnapshotsPublished: float64(c.snapshotsPublished.Load()),
 		CurrentSlot:        currentSlot,
 		LastSnapshotAt:     lastSnapStr,
 		LastError:          c.lastError,
@@ -461,7 +461,7 @@ func (c *Connector) connectAndStream(ctx context.Context) error {
 				return
 			}
 			if len(enc) > 0 {
-				atomic.AddUint64(&c.framesReceived, 1)
+				c.framesReceived.Add(1)
 				c.setLatestFrame(enc)
 			}
 		}
@@ -639,7 +639,7 @@ func (c *Connector) publishSnapshotLocked(frame []byte, triggerSource string) er
 		}
 	}
 
-	atomic.AddUint64(&c.snapshotsPublished, 1)
+	c.snapshotsPublished.Add(1)
 	c.mu.Lock()
 	c.lastSnapshotAt = now
 	c.mu.Unlock()

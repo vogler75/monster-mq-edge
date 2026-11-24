@@ -185,8 +185,8 @@ type ClientState struct {
 	stopCause         atomic.Value       // reason for stopping
 	Inflight          *Inflight          // a map of in-flight qos messages
 	Subscriptions     *Subscriptions     // a map of the subscription filters a client maintains
-	disconnected      int64              // the time the client disconnected in unix time, for calculating expiry
-	disconnectedNano  int64              // the time the client disconnected in unix nanoseconds
+	disconnected      atomic.Int64       // the time the client disconnected in unix time, for calculating expiry
+	disconnectedNano  atomic.Int64       // the time the client disconnected in unix nanoseconds
 	outbound          *outboundQueue     // live publishes for the writer; dropped when full
 	control           chan writeItem     // every other packet for the writer; never dropped
 	endOnce           sync.Once          // only end once
@@ -203,7 +203,7 @@ type ClientState struct {
 	droppedInOverload atomic.Int64       // packets dropped during current overload window
 	MetricClientIn    *atomic.Int64      // cached metrics collector counter for inbound messages
 	MetricClientOut   *atomic.Int64      // cached metrics collector counter for outbound messages
-	lastDeadline      int64              // last unix second and keepalive applied via SetDeadline
+	lastDeadline      atomic.Int64       // last unix second and keepalive applied via SetDeadline
 	Keepalive         uint16             // the number of seconds the connection can wait
 	ServerKeepalive   bool               // keepalive was set by the server
 }
@@ -306,17 +306,17 @@ func (cl *Client) refreshDeadline(keepalive uint16) {
 		return
 	}
 	if keepalive == 0 {
-		if atomic.SwapInt64(&cl.State.lastDeadline, -1) != -1 {
+		if cl.State.lastDeadline.Swap(-1) != -1 {
 			_ = cl.Net.Conn.SetDeadline(time.Time{}) // [MQTT-3.1.2-22]
 		}
 		return
 	}
 	now := time.Now()
 	stamp := (now.Unix() << 16) | int64(keepalive)
-	if atomic.LoadInt64(&cl.State.lastDeadline) == stamp {
+	if cl.State.lastDeadline.Load() == stamp {
 		return
 	}
-	atomic.StoreInt64(&cl.State.lastDeadline, stamp)
+	cl.State.lastDeadline.Store(stamp)
 	expiry := now.Add(time.Duration(keepalive+(keepalive/2)) * time.Second) // [MQTT-3.1.2-22]
 	_ = cl.Net.Conn.SetDeadline(expiry)                                     // [MQTT-3.1.2-22]
 }
@@ -513,8 +513,8 @@ func (cl *Client) Stop(err error) {
 		}
 
 		now := time.Now()
-		atomic.StoreInt64(&cl.State.disconnectedNano, now.UnixNano())
-		atomic.StoreInt64(&cl.State.disconnected, now.Unix())
+		cl.State.disconnectedNano.Store(now.UnixNano())
+		cl.State.disconnected.Store(now.Unix())
 	})
 }
 
@@ -522,9 +522,9 @@ func (cl *Client) Stop(err error) {
 // outlived its Session Expiry Interval (or maxExpiry, the server maximum,
 // for clients without one) at now [MQTT-3.1.2-23].
 func (cl *Client) sessionExpired(now time.Time, maxExpiry uint32) bool {
-	stopped := atomic.LoadInt64(&cl.State.disconnectedNano)
+	stopped := cl.State.disconnectedNano.Load()
 	if stopped == 0 {
-		if sec := atomic.LoadInt64(&cl.State.disconnected); sec > 0 {
+		if sec := cl.State.disconnected.Load(); sec > 0 {
 			stopped = sec * int64(time.Second) // restored from storage: seconds only
 		} else {
 			return false
@@ -547,7 +547,7 @@ func (cl *Client) StopCause() error {
 
 // StopTime returns the the time the client disconnected in unix time, else zero.
 func (cl *Client) StopTime() int64 {
-	return atomic.LoadInt64(&cl.State.disconnected)
+	return cl.State.disconnected.Load()
 }
 
 // Closed returns true if client connection is closed.

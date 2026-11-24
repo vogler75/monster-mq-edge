@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -392,7 +391,7 @@ func (c *Connector) connectV4L2Stream(ctx context.Context) error {
 			used = len(data)
 		}
 		if buf.Flags&v4l2BufFlagError == 0 {
-			atomic.AddUint64(&c.framesReceived, 1)
+			c.framesReceived.Add(1)
 			switch pix.PixelFormat {
 			case v4l2PixFmtYUYV:
 				if time.Since(lastRawStored) >= v4l2MinRawFrameInterval {

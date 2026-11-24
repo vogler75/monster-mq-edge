@@ -32,7 +32,7 @@ type graphqlConnector struct {
 
 	mu            sync.Mutex
 	ws            *websocket.Conn
-	subSeq        int64
+	subSeq        atomic.Int64
 	subscriptions map[string]Address
 	authToken     string
 
@@ -240,7 +240,7 @@ func (g *graphqlConnector) setupSubscriptions() error {
 }
 
 func (g *graphqlConnector) sendSubscribe(addr Address) error {
-	id := fmt.Sprintf("%s-dpquery-%d", g.name, atomic.AddInt64(&g.subSeq, 1))
+	id := fmt.Sprintf("%s-dpquery-%d", g.name, g.subSeq.Add(1))
 	queryArg, _ := json.Marshal(addr.Query)
 	subQuery := fmt.Sprintf(`subscription {
         dpQueryConnectSingle(query: %s, answer: %t) {

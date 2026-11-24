@@ -41,7 +41,7 @@ type pipeConnector struct {
 
 	mu             sync.Mutex
 	conn           io.ReadWriteCloser
-	cookieSeq      int64
+	cookieSeq      atomic.Int64
 	activeSubs     map[string]Address // cookie → address
 	pendingBrowses map[string]*browseState
 
@@ -261,7 +261,7 @@ func (p *pipeConnector) sendCommand(req map[string]any) error {
 }
 
 func (p *pipeConnector) nextCookie(prefix string) string {
-	return fmt.Sprintf("%s-%s-%d", p.name, prefix, atomic.AddInt64(&p.cookieSeq, 1))
+	return fmt.Sprintf("%s-%s-%d", p.name, prefix, p.cookieSeq.Add(1))
 }
 
 // ---- subscription setup --------------------------------------------------

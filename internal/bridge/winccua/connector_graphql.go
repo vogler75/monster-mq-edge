@@ -45,7 +45,7 @@ type graphqlConnector struct {
 
 	mu            sync.Mutex
 	ws            *websocket.Conn
-	subSeq        int64
+	subSeq        atomic.Int64
 	subscriptions map[string]Address // subscription id → address
 	authToken     string
 
@@ -385,7 +385,7 @@ func (g *graphqlConnector) setupActiveAlarmsSubscription(addr Address) error {
 }
 
 func (g *graphqlConnector) sendSubscribe(addr Address, kind, query string) error {
-	id := fmt.Sprintf("%s-%s-%d", g.name, kind, atomic.AddInt64(&g.subSeq, 1))
+	id := fmt.Sprintf("%s-%s-%d", g.name, kind, g.subSeq.Add(1))
 	msg := map[string]any{
 		"id":      id,
 		"type":    "subscribe",

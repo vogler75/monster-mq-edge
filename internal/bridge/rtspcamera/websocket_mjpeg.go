@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -79,7 +78,7 @@ func (c *Connector) connectWebSocketStream(ctx context.Context) error {
 			return decodeErr
 		}
 		for _, frame := range frames {
-			atomic.AddUint64(&c.framesReceived, 1)
+			c.framesReceived.Add(1)
 			c.setLatestFrame(frame)
 		}
 	}

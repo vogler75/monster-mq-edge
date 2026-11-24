@@ -3,7 +3,6 @@ package rtspcamera
 import (
 	"errors"
 	"fmt"
-	"sync/atomic"
 	"time"
 
 	"github.com/bluenviron/gortsplib/v5/pkg/format"
@@ -107,7 +106,7 @@ func (c *Connector) h264PacketHandler(f *format.H264, fatal chan<- error) (func(
 			lastKeyframe = selectedAt
 		}
 		for _, frame := range frames {
-			atomic.AddUint64(&c.framesReceived, 1)
+			c.framesReceived.Add(1)
 			c.setLatestDecoded(frame)
 			c.mu.Lock()
 			hadError := c.lastError != ""
