@@ -549,10 +549,15 @@ func retainedMessage(pk *packets.Packet, clientID, username string) stores.Broke
 		Username:  username,
 		Time:      createdAt,
 	}
+	// The row gets an expiry only when the publisher set one; pk.Expiry also
+	// holds the server maximum for messages without one.
+	if pk.Properties.MessageExpiryInterval == 0 {
+		return msg
+	}
 	if pk.Expiry > pk.Created && pk.Created > 0 {
 		v := uint32(pk.Expiry - pk.Created)
 		msg.MessageExpiryInterval = &v
-	} else if pk.Properties.MessageExpiryInterval > 0 {
+	} else {
 		v := pk.Properties.MessageExpiryInterval
 		msg.MessageExpiryInterval = &v
 	}
