@@ -1,0 +1,7 @@
+Release v0.1.20
+Built from commit: de6a983
+Date: 2026-11-24 21:38:55
+
+Changes since v0.1.19:
+---
+de6a983 fix: use atomic.Int64/Uint64 fields for 32-bit alignment safety
